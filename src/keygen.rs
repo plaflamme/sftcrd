@@ -123,7 +123,6 @@ fn imported_rsa_secret(
         rsa::PrivateKey::from_p_q(p, q, BoxedUint::from_be_slice_vartime(&RSA_EXPONENT)).ok()?;
 
     if key.n().clone().get() != BoxedUint::from_be_slice_vartime(n) {
-        tracing::error!("invalid n");
         return None;
     }
 

@@ -248,35 +248,29 @@ fn slot_rsa_raw(key: &SlotKey, block: &[u8]) -> Response {
     use rsa::hazmat::rsa_decrypt;
     use rsa::traits::PublicKeyParts;
 
-    tracing::info!("slot_rsa_raw");
-
     let Ok(key) = PrivateKey::from_pkcs1_der(key.secret.as_slice()) else {
         return iso7816::Status::IncorrectDataParameter.into();
     };
-    tracing::info!("1");
+
     let n = key.n().to_be_bytes();
     if block.len() != n.len() {
         return iso7816::Status::IncorrectDataParameter.into();
     }
-    tracing::info!("2");
+
     let c = BoxedUint::from_be_slice_vartime(block);
     if c >= key.n().clone().get() {
         return iso7816::Status::IncorrectDataParameter.into();
     }
-    tracing::info!("3");
 
     let Ok(m) = rsa_decrypt::<rand::rngs::SysRng>(None, &key, &c) else {
         return iso7816::Status::IncorrectDataParameter.into();
     };
-    tracing::info!("4");
 
     // Zero-extend the residue to the full modulus size.
     let m_be = m.to_be_bytes();
     let mut out = vec![0u8; n.len()];
     let offset = n.len() - m_be.len();
     out[offset..].copy_from_slice(&m_be);
-    tracing::info!("5");
-
     ga_response(GA_TAG_RESPONSE, &out)
 }
 
