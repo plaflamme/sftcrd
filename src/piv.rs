@@ -1,242 +1,201 @@
-use keyroost_piv::{
-    KeyAlg, PublicKey, Slot,
-    x509::{SigHash, X509Error},
-};
-use keyroost_transport::PivSession;
-use sha2::Digest;
-use ssh_agent_lib::{
-    proto::{Identity, PublicCredential},
-    secrecy::{self, ExposeSecret},
-    ssh_key::{
-        Algorithm, HashAlg, Mpint, Signature,
-        public::{EcdsaPublicKey, Ed25519PublicKey, KeyData, RsaPublicKey},
-        sec1::EncodedPoint,
-    },
-};
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct RetiredIndex(u8);
 
-struct PivIdentity {
-    slot: Slot,
-    key_alg: KeyAlg,
-    ssh_identity: Identity,
-}
+impl RetiredIndex {
+    /// Returns the retired slot's value in 0..20
+    pub(crate) const fn value(self) -> u8 {
+        self.0
+    }
 
-impl From<PivIdentity> for Identity {
-    fn from(value: PivIdentity) -> Self {
-        value.ssh_identity
+    const fn from_u8(value: u8) -> Self {
+        Self(value - 0x82)
+    }
+
+    const fn into_u8(self) -> u8 {
+        self.0 + 0x82
     }
 }
 
-#[derive(Clone)]
-pub(super) struct PivSshAgent {
-    reader: String,
-    slots: Vec<Slot>,
-    pinentry_binary: Option<String>,
+/// The four PIV asymmetric key slots, identified by their key reference and the
+/// certificate data object that holds the slot's X.509 certificate.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum Slot {
+    /// `9A` — PIV Authentication.
+    Authentication,
+    /// `9C` — Digital Signature.
+    Signature,
+    /// `9D` — Key Management (decryption).
+    KeyManagement,
+    /// `9E` — Card Authentication.
+    CardAuthentication,
+    /// Yubico retired key-management slots (fw 5.7+). 0x82..=0x95 (represented as Retired(0..20))
+    Retired(RetiredIndex),
 }
 
-impl PivSshAgent {
-    // TODO: manually select slots
-    pub(super) fn new(reader: String, pinentry_binary: Option<String>) -> Self {
-        // default signature-related slots
-        let sign_slots: &[Slot] = &[
-            Slot::Authentication,
-            Slot::CardAuthentication,
-            Slot::Signature,
+impl Slot {
+    /// The key-reference byte (`9A`/`9C`/`9D`/`9E`, or `82`..=`95` for retired).
+    #[must_use]
+    pub const fn into_u8(self) -> u8 {
+        match self {
+            Slot::Authentication => 0x9A,
+            Slot::Signature => 0x9C,
+            Slot::KeyManagement => 0x9D,
+            Slot::CardAuthentication => 0x9E,
+            Slot::Retired(n) => n.into_u8(),
+        }
+    }
+
+    /// Checked constructor for a retired slot: `Some` for n in 1..=20, else `None`.
+    /// All retired-slot construction must go through here so an invalid ref can
+    /// never be built.
+    #[must_use]
+    pub(crate) fn retired(n: u8) -> Option<Slot> {
+        if (1..=20).contains(&n) {
+            Some(Self::Retired(RetiredIndex(n - 1)))
+        } else {
+            None
+        }
+    }
+
+    pub(crate) fn from_u8(value: u8) -> Option<Self> {
+        match value {
+            0x9A => Some(Self::Authentication),
+            0x9C => Some(Self::Signature),
+            0x9D => Some(Self::KeyManagement),
+            0x9E => Some(Self::CardAuthentication),
+            0x82..=0x95 => Some(Self::Retired(RetiredIndex::from_u8(value))),
+            _ => None,
+        }
+    }
+
+    #[cfg(test)]
+    pub(crate) fn all() -> impl Iterator<Item = Slot> {
+        let named = [
+            Self::Authentication,
+            Self::Signature,
+            Self::KeyManagement,
+            Self::CardAuthentication,
         ];
-
-        Self {
-            reader,
-            pinentry_binary,
-            slots: Vec::from_iter([sign_slots, &Slot::retired_all()].concat()),
-        }
-    }
-
-    pub(super) fn request_identities(&self) -> Result<Vec<Identity>, crate::Error> {
-        PivSession::with_transaction(&self.reader, |session| {
-            let identities = self.list_identities(session);
-            Ok(identities
-                .into_iter()
-                .inspect(|id| tracing::info!("found usable identity on slot {:?}", id.slot))
-                .map(Into::into)
-                .collect())
-        })
-    }
-
-    pub(super) fn sign(
-        &self,
-        public_credential: &PublicCredential,
-        data: &[u8],
-        rsa_sig_hash: Option<HashAlg>,
-    ) -> Result<Option<Signature>, crate::Error> {
-        PivSession::with_transaction(&self.reader, |session| {
-            let piv_identity = self
-                .list_identities(session)
-                .into_iter()
-                .find(|id| &id.ssh_identity.credential == public_credential);
-
-            let Some(piv_identity) = piv_identity else {
-                tracing::debug!("not matching PIV identity for requested public key");
-                return Ok(None);
-            };
-
-            // TODO: slot policy
-            let Some(pin) = self.prompt_pin()? else {
-                return Ok(None);
-            };
-
-            session.verify_pin(pin.expose_secret().as_bytes())?;
-
-            let sig_hash = match keyroost_piv::x509::signature_hash(piv_identity.key_alg) {
-                Ok(sig_hash) => sig_hash,
-                Err(X509Error::UnsupportedAlgorithm) => return Ok(None),
-                Err(other) => return Err(crate::Error::Other(Box::new(other))),
-            };
-
-            let prepared = match sig_hash {
-                SigHash::Sha256 => sha2::Sha256::digest(data).to_vec(),
-                SigHash::Sha384 => sha2::Sha384::digest(data).to_vec(),
-                SigHash::Sha512 => sha2::Sha512::digest(data).to_vec(),
-                SigHash::None => data.to_vec(),
-            };
-
-            let signature = session.sign(piv_identity.slot, piv_identity.key_alg, &prepared)?;
-
-            let signature = match piv_identity.key_alg {
-                KeyAlg::EccP256 => {
-                    Signature::try_from(ecdsa::Signature::<p256::NistP256>::from_der(&signature)?)?
-                }
-                KeyAlg::EccP384 => {
-                    Signature::try_from(ecdsa::Signature::<p384::NistP384>::from_der(&signature)?)?
-                }
-                KeyAlg::EccP521 => {
-                    Signature::try_from(ecdsa::Signature::<p521::NistP521>::from_der(&signature)?)?
-                }
-
-                KeyAlg::Ed25519 => {
-                    Signature::new(ssh_agent_lib::ssh_key::Algorithm::Ed25519, signature)?
-                }
-                KeyAlg::Rsa1024 | KeyAlg::Rsa2048 | KeyAlg::Rsa3072 | KeyAlg::Rsa4096 => {
-                    let signature = match rsa_sig_hash {
-                        Some(HashAlg::Sha256) => sha2::Sha256::digest(signature).to_vec(),
-                        Some(HashAlg::Sha512) => sha2::Sha512::digest(signature).to_vec(),
-                        None => signature,
-                        Some(other) => {
-                            return Err(crate::Error::Other(
-                                format!("Unsupported RSA hash algorithm {other}").into(),
-                            ));
-                        }
-                    };
-                    Signature::new(Algorithm::Rsa { hash: rsa_sig_hash }, signature)?
-                }
-                KeyAlg::X25519 => {
-                    return Err(crate::Error::Other(
-                        "Unsupported signature algorithm X25519".into(),
-                    ));
-                }
-            };
-
-            Ok(Some(signature))
-        })
-    }
-
-    fn prompt_pin(&self) -> Result<Option<secrecy::SecretBox<str>>, crate::Error> {
-        let pinentry = match self.pinentry_binary.as_ref() {
-            Some(binary_name) => pinentry::PassphraseInput::with_binary(binary_name),
-            None => pinentry::PassphraseInput::with_default_binary(),
-        };
-
-        let Some(mut pinentry) = pinentry else {
-            return Err(crate::Error::Other("pinentry binary not found".into()));
-        };
-
-        let pin = pinentry
-            .with_prompt("PIN") // TODO: show card serial number
-            .with_description("Please unlock the card")
-            .required("PIN cannot be empty")
-            .interact();
-
-        match pin {
-            Ok(pin) => Ok(Some(pin)),
-            Err(pinentry::Error::Cancelled) => Ok(None),
-            Err(other) => {
-                tracing::warn!("pinentry failed {other}");
-                Ok(None)
-            }
-        }
-    }
-
-    fn list_identities<'a: 'b, 'b>(
-        &'a self,
-        session: &'b mut PivSession,
-    ) -> impl Iterator<Item = PivIdentity> + 'b {
-        self.slots.iter().filter_map(|slot| {
-            // TODO: deal with Err here, probably logging is sufficient
-            slot_to_ssh_identity(session, *slot)
-                .inspect_err(|e| {
-                    tracing::warn!("failed to configure slot {slot:?} as PIV identity: {e}");
-                })
-                .ok()
-                .flatten()
-        })
+        let retired = (1..=20).filter_map(Slot::retired);
+        std::iter::chain(named, retired)
     }
 }
 
-fn slot_to_ssh_identity(
-    session: &mut PivSession,
-    slot: Slot,
-) -> Result<Option<PivIdentity>, crate::Error> {
-    let Some(cert) = session.read_certificate(slot)? else {
-        return Ok(None);
-    };
-
-    let (key_alg, public_key) = keyroost_piv::x509_parse::parse_certificate_public_key(&cert)?;
-
-    let comment = if let Some(serial) = session.status().ok().and_then(|status| status.serial) {
-        format!("PIV {serial}:{slot:?}")
-    } else {
-        format!("PIV {slot:?}")
-    };
-    Ok(Some(PivIdentity {
-        slot,
-        key_alg,
-        ssh_identity: Identity {
-            credential: ssh_public_credentials(key_alg, public_key)?,
-            comment,
-        },
-    }))
+/// Management-key (9B) cipher algorithm.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum MgmtAlg {
+    /// 3DES (TDEA) — pre-5.7 `YubiKey` default; 24-byte key, 8-byte block.
+    TripleDes = 0x03,
+    /// AES-128 — 16-byte key, 16-byte block.
+    Aes128 = 0x08,
+    /// AES-192 — 24-byte key, 16-byte block; the `YubiKey` 5.7+ default.
+    Aes192 = 0x0A,
+    /// AES-256 — 32-byte key, 16-byte block.
+    Aes256 = 0x0C,
 }
 
-fn ssh_public_credentials(
-    key_alg: KeyAlg,
-    public_key: PublicKey,
-) -> Result<PublicCredential, crate::Error> {
-    let key_data = match public_key {
-        PublicKey::Rsa { modulus, exponent } => KeyData::Rsa(RsaPublicKey {
-            n: Mpint::from_bytes(&modulus)?,
-            e: Mpint::from_bytes(&exponent)?,
-        }),
-        PublicKey::Ecc { point } => match key_alg {
-            KeyAlg::EccP256 => {
-                KeyData::Ecdsa(EcdsaPublicKey::NistP256(EncodedPoint::from_bytes(&point)?))
-            }
-            KeyAlg::EccP384 => {
-                KeyData::Ecdsa(EcdsaPublicKey::NistP384(EncodedPoint::from_bytes(&point)?))
-            }
-            KeyAlg::EccP521 => {
-                KeyData::Ecdsa(EcdsaPublicKey::NistP521(EncodedPoint::from_bytes(&point)?))
-            }
-            KeyAlg::Ed25519 => KeyData::Ed25519(Ed25519PublicKey::try_from(point.as_slice())?),
-            KeyAlg::Rsa1024 | KeyAlg::Rsa2048 | KeyAlg::Rsa3072 | KeyAlg::Rsa4096 => {
-                return Err(crate::Error::Other(
-                    format!("Invalid KeyAlg {key_alg:?} and for PublicKey::Ecc").into(),
-                ));
-            }
-            KeyAlg::X25519 => {
-                // NOTE: this is technically unreachable because keyroost_piv::x509::signature_hash will already have returned "not supported"
-                return Err(crate::Error::SshKey(
-                    ssh_agent_lib::ssh_key::Error::AlgorithmUnknown,
-                ));
-            }
-        },
-    };
-    Ok(PublicCredential::Key(key_data))
+impl MgmtAlg {
+    pub(crate) fn key_len(self) -> usize {
+        #[allow(clippy::match_same_arms)]
+        match self {
+            MgmtAlg::TripleDes => 24,
+            MgmtAlg::Aes128 => 16,
+            MgmtAlg::Aes192 => 24,
+            MgmtAlg::Aes256 => 32,
+        }
+    }
+
+    pub(crate) fn block_size(self) -> usize {
+        match self {
+            MgmtAlg::TripleDes => 8,
+            MgmtAlg::Aes128 | MgmtAlg::Aes192 | Self::Aes256 => 16,
+        }
+    }
+
+    pub(crate) fn from_u8(value: u8) -> Option<Self> {
+        match value {
+            0x03 => Some(Self::TripleDes),
+            0x08 => Some(Self::Aes128),
+            0x0A => Some(Self::Aes192),
+            0x0C => Some(Self::Aes256),
+            _ => None,
+        }
+    }
+}
+
+/// Asymmetric key algorithm
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum KeyAlg {
+    Rsa1024 = 0x06,
+    Rsa2048 = 0x07,
+    Rsa3072 = 0x05,
+    Rsa4096 = 0x16,
+    EccP256 = 0x11,
+    EccP384 = 0x14,
+    EccP521 = 0x15,
+    Ed25519 = 0xE0,
+    X25519 = 0xE1,
+}
+
+impl KeyAlg {
+    pub(crate) fn from_u8(value: u8) -> Option<Self> {
+        match value {
+            0x06 => Some(Self::Rsa1024),
+            0x07 => Some(Self::Rsa2048),
+            0x05 => Some(Self::Rsa3072),
+            0x16 => Some(Self::Rsa4096),
+            0x11 => Some(Self::EccP256),
+            0x14 => Some(Self::EccP384),
+            0x15 => Some(Self::EccP521),
+            0xE0 => Some(Self::Ed25519),
+            0xE1 => Some(Self::X25519),
+            _ => None,
+        }
+    }
+}
+
+/// Pin and Touch policies can be set to their "default" state.
+/// But the "default" member is only ever used when writing the policy to the slot.
+/// So instead of adding "Default" members to those enums, we use this type which can represent the default value
+/// only when writing the policies. This eliminates the need to handle the "default" member later on when using the policies.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum Defaultable<T> {
+    Default,
+    Specified(T),
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum PinPolicy {
+    Never = 0x01,
+    Once = 0x02,
+    Always = 0x03,
+}
+
+impl PinPolicy {
+    pub(crate) fn from_u8(value: u8) -> Option<Defaultable<Self>> {
+        match value {
+            0x00 => Some(Defaultable::Default),
+            0x01 => Some(Defaultable::Specified(Self::Never)),
+            0x02 => Some(Defaultable::Specified(Self::Once)),
+            0x03 => Some(Defaultable::Specified(Self::Always)),
+            _ => None,
+        }
+    }
+}
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum TouchPolicy {
+    Never = 0x01,
+    Always = 0x02,
+    Cached = 0x03,
+}
+impl TouchPolicy {
+    pub(crate) fn from_u8(value: u8) -> Option<Defaultable<Self>> {
+        match value {
+            0x00 => Some(Defaultable::Default),
+            0x01 => Some(Defaultable::Specified(Self::Never)),
+            0x02 => Some(Defaultable::Specified(Self::Always)),
+            0x03 => Some(Defaultable::Specified(Self::Cached)),
+            _ => None,
+        }
+    }
 }

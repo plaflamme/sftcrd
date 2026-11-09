@@ -1,3 +1,3 @@
-# keyroost-agent
+# sftcard
 
-An SSH agent backed by smartcart PIV identities using [keyroost](https://github.com/framefilter/keyroost) APIs.
+A [Smart Card](https://en.wikipedia.org/wiki/Smart_card) software implementation for the purposes of testing other software that rely on them.

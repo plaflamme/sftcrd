@@ -1,8 +1,8 @@
 {
   nixConfig = {
-    extra-substituters = [ "https://keyroost-agent.cachix.org" ];
+    extra-substituters = [ "https://sftcrd.cachix.org" ];
     extra-trusted-public-keys = [
-      "keyroost-agent.cachix.org-1:nrFszUmhznRvl52Zes9nEhgu7NjjJt/otBRAILg2Uo0="
+      "sftcrd.cachix.org-1:78q7W+VdLfgWcJqL8VxpjzzRxnacO9HA68mgwR880sE="
     ];
   };
   inputs = {
@@ -42,28 +42,15 @@
           pkgs,
           ...
         }:
-        let
-          keyroost-piv-applet = config.packages.keyroost-piv-applet;
-        in
         {
           rust-project = {
             crates = {
-              # The workspace root package is not in `members`, so
-              # rust-flake does not find it on its own; point it at the
-              # workspace source explicitly.
-              keyroost-agent =
-                { rust-project, ... }:
+              sftcrd =
+                { ... }:
                 {
-                  path = rust-project.src + "/";
                   crane = {
                     extraBuildArgs = {
                       CARGO_PROFILE = "dev"; # TODO: how do we output both release and dev profiles?
-                    };
-                    args = {
-                      nativeBuildInputs = with pkgs; [
-                        pkg-config
-                      ];
-                      buildInputs = [ pkgs.pcsclite ];
                     };
                   };
                 };
@@ -71,35 +58,38 @@
           };
 
           packages = {
-            default = config.packages.keyroost-agent;
+            default = config.packages.sftcrd;
           };
 
           checks =
+            let
+              sftcrd = config.packages.sftcrd;
+            in
             { }
             // pkgs.lib.optionalAttrs (system == "x86_64-linux") {
               piv-info = pkgs.callPackage ./nix/checks/piv-info.nix {
-                inherit keyroost keyroost-piv-applet system;
+                inherit keyroost sftcrd system;
               };
               piv-pin-change = pkgs.callPackage ./nix/checks/piv-pin-change.nix {
-                inherit keyroost keyroost-piv-applet system;
+                inherit keyroost sftcrd system;
               };
               piv-puk-change = pkgs.callPackage ./nix/checks/piv-puk-change.nix {
-                inherit keyroost keyroost-piv-applet system;
+                inherit keyroost sftcrd system;
               };
               piv-pin-block = pkgs.callPackage ./nix/checks/piv-pin-block.nix {
-                inherit keyroost keyroost-piv-applet system;
+                inherit keyroost sftcrd system;
               };
               piv-reset = pkgs.callPackage ./nix/checks/piv-reset.nix {
-                inherit keyroost keyroost-piv-applet system;
+                inherit keyroost sftcrd system;
               };
               piv-algorithms = pkgs.callPackage ./nix/checks/piv-algorithms.nix {
-                inherit keyroost keyroost-piv-applet system;
+                inherit keyroost sftcrd system;
               };
               piv-multi-slot = pkgs.callPackage ./nix/checks/piv-multi-slot.nix {
-                inherit keyroost keyroost-piv-applet system;
+                inherit keyroost sftcrd system;
               };
               piv-attest = pkgs.callPackage ./nix/checks/piv-attest.nix {
-                inherit keyroost keyroost-piv-applet system;
+                inherit keyroost sftcrd system;
               };
             };
 

@@ -1,7 +1,7 @@
 {
   pkgs,
   keyroost,
-  keyroost-piv-applet,
+  sftcrd,
   system,
 }:
 
@@ -10,7 +10,7 @@ import ./make-piv-check.nix
     inherit
       pkgs
       keyroost
-      keyroost-piv-applet
+      sftcrd
       system
       ;
   }

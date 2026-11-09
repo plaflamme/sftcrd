@@ -1,7 +1,7 @@
 {
   pkgs,
   keyroost,
-  keyroost-piv-applet,
+  sftcrd,
   system,
 }:
 
@@ -15,7 +15,7 @@ let
   commonSetup = ''
     start_all()
     host.wait_for_unit("pcscd.socket")
-    host.wait_for_unit("piv-vsmartcard.service")
+    host.wait_for_unit("sftcrd.service")
 
     def keyroostctl(args, pin="123456", mgmt="010203040506070801020304050607080102030405060708", **kwargs):
         env_parts = []
@@ -47,11 +47,11 @@ pkgs.testers.runNixOSTest {
           keyroost.packages.${system}.keyroostctl
         ];
 
-        systemd.services.piv-vsmartcard = {
+        systemd.services.sftcrd = {
           wantedBy = [ "multi-user.target" ];
           serviceConfig = {
             Environment = "RUST_LOG=trace";
-            ExecStart = "${keyroost-piv-applet}/bin/piv-vsmartcard";
+            ExecStart = "${sftcrd}/bin/sftcrd";
           };
         };
       };
