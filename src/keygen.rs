@@ -226,7 +226,7 @@ impl PivApplet {
                     KeyAlg::Rsa4096 => 4096,
                     _ => unreachable!("alg is an RSA key size"),
                 };
-                let Ok(key) = rsa::PrivateKey::new(&mut getrandom::SysRng, bits) else {
+                let Ok(key) = rsa::PrivateKey::new(&mut rand::rngs::SysRng, bits) else {
                     return iso7816::Status::IncorrectDataParameter.into();
                 };
                 // The card's storage form: the key's PKCS#1 encoding,
@@ -1080,7 +1080,7 @@ mod tests {
     }
 
     fn host_rsa_1024() -> HostRsa {
-        let host = rsa::PrivateKey::new(&mut getrandom::SysRng, 1024).expect("a 1024-bit key");
+        let host = rsa::PrivateKey::new(&mut rand::rngs::SysRng, 1024).expect("a 1024-bit key");
         let (p, q) = (&host.primes()[0], &host.primes()[1]);
         HostRsa {
             p: p.to_be_bytes().to_vec(),

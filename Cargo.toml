@@ -5,41 +5,25 @@ edition = "2024"
 description = "Pure-Rust PIV (NIST SP 800-73-4 / FIPS 201) card-side applet."
 
 [dependencies]
-iso7816 = "0.2"
+aes = "0.9"
 apdu-app = "0.2"
 apdu-dispatch = "0.4"
-# The P-256 key material the key-slot commands generate, import and sign
-# with: the same crates (and feature paths) the root host crate uses. The
-# `ecdh` feature adds the shared-secret computation the slot key-agreement
-# half of GENERAL AUTHENTICATE answers.
+cipher = "0.5"
+clap = { version = "4", features = ["derive"] }
+des = "0.9"
+ecdsa = { version = "0.17.0", features = ["der"] }
+elliptic-curve = "0.14"
+iso7816 = "0.2"
 p256 = { version = "0.14.0", features = ["ecdh"] }
-# The P-384 and P-521 slots (T9): the same curve-crate family as p256.
 p384 = { version = "0.14.0", features = ["ecdh"] }
 p521 = { version = "0.14.0", features = ["ecdh"] }
-# The generic secret-key / prime-curve API the three NIST curves share
-# (the same elliptic-curve major the 0.13 curve crates are built on).
-elliptic-curve = "0.14"
-ecdsa = { version = "0.17.0", features = ["der"] }
-# SHA-256 of the attestation TBS certificate (the ecdsa-with-SHA-256
-# signature algorithm the `F9` key signs with).
-sha2 = "0.11"
-rsa = { version = "0.10", features = ["serde", "hazmat"] }
-# Secret card state (PIN/PUK, management key, private key material) lives in
-# Zeroizing containers.
-zeroize = { version = "1", default-features = false, features = ["alloc"] }
-aes = "0.9"
-cipher = "0.5"
-des = "0.9"
-# The CSPRNG feeding p256's key generation (`rand_core::OsRng`); the same
-# pairing the GA witness/challenge values use.
 rand = { version = "0.10" }
-getrandom = "0.4"
-# CLI and logging for the `piv-vsmartcard` front end.
-clap = { version = "4", features = ["derive"] }
+rsa = { version = "0.10", features = ["hazmat"] }
+sha2 = "0.11"
 tracing = "0.1"
 tracing-subscriber = { version = "0.3", features = ["env-filter"] }
-serde = "1.0.229"
 x509-cert = { version = "0.3.0", features = ["builder"] }
+zeroize = { version = "1", default-features = false, features = ["alloc"] }
 
 [dev-dependencies]
 keyroost-piv = "0.15.0"

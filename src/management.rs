@@ -93,7 +93,7 @@ impl MgmtKey {
     /// never the stale tail.
     pub(crate) fn issue(&mut self) -> Vec<u8> {
         let mut buf = [0u8; 16];
-        getrandom::fill(&mut buf).expect("OsRng failure");
+        rand::fill(&mut buf);
         self.state = GaState::Challenged(buf);
         self.encrypt(&buf[..self.alg.block_size()])
     }
