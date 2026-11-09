@@ -8,6 +8,9 @@ multi-ecosystem-groups:
       # Run as late as possible to run after rust-overlay's updates
       # https://github.com/oxalica/rust-overlay/blob/master/.github/workflows/sync-channels.yaml#L4-L5
       time: "23:59"
+    commit-message:
+      prefix: "chore(deps)"
+      include: "scope"
 
 updates:
   - package-ecosystem: "github-actions"
