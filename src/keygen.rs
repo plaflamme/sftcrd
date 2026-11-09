@@ -21,9 +21,8 @@
 //! `6A86`.
 
 use elliptic_curve::{FieldBytes, Generate, PrimeCurve};
-use pkcs1::EncodeRsaPrivateKey;
-use rsa::BigUint;
-use rsa::RsaPrivateKey;
+use rsa::BoxedUint;
+use rsa::pkcs1::EncodeRsaPrivateKey;
 use rsa::traits::{PrivateKeyParts, PublicKeyParts};
 use zeroize::Zeroizing;
 
@@ -115,30 +114,27 @@ fn imported_rsa_secret(
     {
         return None;
     }
-    for component in [&p, &q, &n] {
-        let value = BigUint::from_bytes_be(component);
-        if value == BigUint::default()
-            || value == BigUint::from(1u32)
-            || value % BigUint::from(2u32) == BigUint::default()
-        {
-            return None;
-        }
-    }
-    let (p, q) = (BigUint::from_bytes_be(p), BigUint::from_bytes_be(q));
+    let (p, q) = (
+        BoxedUint::from_be_slice_vartime(p),
+        BoxedUint::from_be_slice_vartime(q),
+    );
 
-    let mut key = RsaPrivateKey::from_p_q(p, q, BigUint::from_bytes_be(&RSA_EXPONENT)).ok()?;
+    let mut key =
+        rsa::PrivateKey::from_p_q(p, q, BoxedUint::from_be_slice_vartime(&RSA_EXPONENT)).ok()?;
 
-    if key.n() != &BigUint::from_bytes_be(n) {
+    if key.n().clone().get() != BoxedUint::from_be_slice_vartime(n) {
+        tracing::error!("invalid n");
         return None;
     }
 
     key.precompute().ok()?;
-    if key.dp()? != &BigUint::from_bytes_be(dp) {
+    if key.dp()? != &BoxedUint::from_be_slice_vartime(dp) {
         return None;
     }
-    if key.dq()? != &BigUint::from_bytes_be(dq) {
+    if key.dq()? != &BoxedUint::from_be_slice_vartime(dq) {
         return None;
     }
+
     Some(key.to_pkcs1_der().ok()?.as_bytes().to_vec())
 }
 
@@ -230,7 +226,7 @@ impl PivApplet {
                     KeyAlg::Rsa4096 => 4096,
                     _ => unreachable!("alg is an RSA key size"),
                 };
-                let Ok(key) = RsaPrivateKey::new(&mut rsa::rand_core::OsRng, bits) else {
+                let Ok(key) = rsa::PrivateKey::new(&mut getrandom::SysRng, bits) else {
                     return iso7816::Status::IncorrectDataParameter.into();
                 };
                 // The card's storage form: the key's PKCS#1 encoding,
@@ -599,7 +595,7 @@ mod tests {
     };
     use p256::ecdsa::signature::hazmat::{PrehashSigner, PrehashVerifier};
     use p256::ecdsa::{SigningKey, VerifyingKey};
-    use pkcs1::DecodeRsaPrivateKey;
+    use rsa::pkcs1::DecodeRsaPrivateKey;
     use rsa::traits::{PrivateKeyParts, PublicKeyParts};
 
     /// A management-unlocked applet: the factory 3DES handshake ran, the
@@ -1050,9 +1046,13 @@ mod tests {
             "the answer is zero-extended to the modulus size"
         );
         assert_eq!(
-            BigUint::from_bytes_be(s)
-                .modpow(&BigUint::from_bytes_be(e), &BigUint::from_bytes_be(n)),
-            BigUint::from(m),
+            BoxedUint::from_be_slice_vartime(s).pow_mod(
+                &BoxedUint::from_be_slice_vartime(e),
+                &BoxedUint::from_be_slice_vartime(n)
+                    .to_odd()
+                    .expect("is odd")
+            ),
+            BoxedUint::from(m),
         );
     }
 
@@ -1080,17 +1080,15 @@ mod tests {
     }
 
     fn host_rsa_1024() -> HostRsa {
-        let host = RsaPrivateKey::new(&mut rsa::rand_core::OsRng, 1024).expect("a 1024-bit key");
+        let host = rsa::PrivateKey::new(&mut getrandom::SysRng, 1024).expect("a 1024-bit key");
         let (p, q) = (&host.primes()[0], &host.primes()[1]);
-        let d = host.d().clone();
-        let one = BigUint::from(1u32);
         HostRsa {
-            p: p.to_bytes_be(),
-            q: q.to_bytes_be(),
-            dp: (d.clone() % (p.clone() - &one)).to_bytes_be(),
-            dq: (d.clone() % (q.clone() - &one)).to_bytes_be(),
-            d: d.to_bytes_be(),
-            n: host.n().to_bytes_be(),
+            p: p.to_be_bytes().to_vec(),
+            q: q.to_be_bytes().to_vec(),
+            dp: host.dp().expect("dp is valid").to_be_bytes().to_vec(),
+            dq: host.dq().expect("dp is valid").to_be_bytes().to_vec(),
+            d: host.d().to_be_bytes().to_vec(),
+            n: host.n().to_be_bytes().to_vec(),
         }
     }
 
@@ -1117,9 +1115,9 @@ mod tests {
             .as_ref()
             .expect("the generated key");
         let stored =
-            RsaPrivateKey::from_pkcs1_der(key.secret.as_slice()).expect("a PKCS#1 RSAPrivateKey");
-        assert_eq!(stored.n().to_bytes_be(), n);
-        assert_eq!(stored.e().to_bytes_be(), e);
+            rsa::PrivateKey::from_pkcs1_der(key.secret.as_slice()).expect("a PKCS#1 RSAPrivateKey");
+        assert_eq!(stored.n().to_be_bytes().to_vec(), n);
+        assert_eq!(stored.e(), &rsa::BoxedUint::from_be_slice_vartime(&e));
         rsa_sign_check(&mut app, alg, 0x9E, &n, &e, 0x2B);
     }
 
@@ -1156,9 +1154,9 @@ mod tests {
                 .key
                 .as_ref()
                 .expect("the imported key");
-            let stored = RsaPrivateKey::from_pkcs1_der(key.secret.as_slice())
+            let stored = rsa::PrivateKey::from_pkcs1_der(key.secret.as_slice())
                 .expect("a PKCS#1 RSAPrivateKey");
-            assert_eq!(stored.n().to_bytes_be(), host.n);
+            assert_eq!(stored.n().to_be_bytes().to_vec(), host.n);
             rsa_sign_check(
                 &mut app,
                 keyroost_piv::KeyAlg::Rsa1024,

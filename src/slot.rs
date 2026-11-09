@@ -25,9 +25,7 @@ use std::ops::{Index, IndexMut};
 use crate::piv::{KeyAlg, PinPolicy, TouchPolicy};
 use elliptic_curve::sec1::ToSec1Point;
 use iso7816::Status;
-use pkcs1::DecodeRsaPrivateKey;
-use rsa::RsaPrivateKey;
-use rsa::traits::PublicKeyParts;
+use rsa::{pkcs1::DecodeRsaPrivateKey, traits::PublicKeyParts};
 use zeroize::Zeroizing;
 
 use crate::PivApplet;
@@ -129,10 +127,13 @@ impl SlotKey {
                 // The slot key's PKCS#1 encoding: serve the modulus under
                 // `81` and the public exponent under `82`, as the
                 // reference applet's `getKeyDetails` does.
-                let Ok(key) = RsaPrivateKey::from_pkcs1_der(self.secret.as_slice()) else {
+                let Ok(key) = rsa::PrivateKey::from_pkcs1_der(self.secret.as_slice()) else {
                     return None;
                 };
-                let (n, e) = (key.n().to_bytes_be(), key.e().to_bytes_be());
+                let (n, e) = (
+                    key.n().to_be_bytes(),
+                    key.e().to_be_bytes_trimmed_vartime(), // NOTE: keyroost is sensitive to leading zeroes.
+                );
                 let mut inner = Vec::with_capacity(2 + n.len() + 5);
                 crate::data::push_tlv(&mut inner, &[0x81], &n);
                 crate::data::push_tlv(&mut inner, &[0x82], &e);

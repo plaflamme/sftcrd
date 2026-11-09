@@ -18,6 +18,7 @@ use std::str::FromStr;
 
 use elliptic_curve::Generate;
 use p256::ecdsa::SigningKey;
+use rsa::pkcs1::DecodeRsaPrivateKey;
 use rsa::pkcs8::EncodePublicKey;
 use x509_cert::builder::{Builder, Profile};
 use x509_cert::der::asn1::OctetString;
@@ -31,8 +32,7 @@ use crate::constants::VERSION;
 use crate::piv::{KeyAlg, PinPolicy, TouchPolicy};
 use crate::slot::SlotKey;
 use crate::{PivApplet, Response};
-use pkcs1::DecodeRsaPrivateKey;
-use rsa::RsaPrivateKey;
+use rsa::PrivateKey;
 
 const OID_YUBICO_FIRMWARE: ObjectIdentifier = ObjectIdentifier::new_unwrap("1.3.6.1.4.1.41482.3.3");
 const OID_YUBICO_SERIAL: ObjectIdentifier = ObjectIdentifier::new_unwrap("1.3.6.1.4.1.41482.3.7");
@@ -138,7 +138,7 @@ fn target_public_key(key: &SlotKey) -> Option<x509_cert::SubjectPublicKeyInfo> {
             x509_cert::SubjectPublicKeyInfo::from_key(&secret_key.public_key()).ok()
         }
         KeyAlg::Rsa1024 | KeyAlg::Rsa2048 | KeyAlg::Rsa3072 | KeyAlg::Rsa4096 => {
-            let rsa_key = RsaPrivateKey::from_pkcs1_der(key.secret.as_slice()).ok()?;
+            let rsa_key = PrivateKey::from_pkcs1_der(key.secret.as_slice()).ok()?;
             let der = rsa_key.to_public_key().to_public_key_der().ok()?;
             x509_cert::SubjectPublicKeyInfo::from_der(&der.to_vec()).ok()
         }

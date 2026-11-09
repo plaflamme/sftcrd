@@ -23,22 +23,10 @@ ecdsa = { version = "0.17.0", features = ["der"] }
 # SHA-256 of the attestation TBS certificate (the ecdsa-with-SHA-256
 # signature algorithm the `F9` key signs with).
 sha2 = "0.11"
-# RSA slots (T10, staged by spike keyroost-agent-rpx): the RustCrypto RSA
-# line. Both crates are already in the workspace lockfile (ssh-key pulls
-# rsa 0.9.10), so this resolves offline with no new versions.
-rsa = { version = "0.9", features = ["serde", "hazmat"] }
-# PKCS#1 ("RSAPrivateKey") is the on-card storage format for RSA slots: the
-# slot keeps the `rsa` crate's key serialized with `to_pkcs1_der` in the same
-# `secret` buffer the EC slots use for their scalar, and deserializes it for
-# each operation. `alloc` for the byte-vector document API, `pkcs8` for the
-# blanket `Encode/DecodeRsaPrivateKey` impls the `rsa` crate relies on.
-pkcs1 = { version = "0.7", features = ["alloc", "pkcs8"] }
+rsa = { version = "0.10", features = ["serde", "hazmat"] }
 # Secret card state (PIN/PUK, management key, private key material) lives in
 # Zeroizing containers.
 zeroize = { version = "1", default-features = false, features = ["alloc"] }
-# The RustCrypto block-cipher line for the 9B management-key symmetric auth
-# (GENERAL AUTHENTICATE witness/challenge round) — the same crates the
-# host's keyroost-transport uses for its half of the exchange.
 aes = "0.9"
 cipher = "0.5"
 des = "0.9"

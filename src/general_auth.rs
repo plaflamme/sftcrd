@@ -3,6 +3,7 @@
 //! ECDSA signing and ECDH key agreement of the NIST-curve slots.
 
 use iso7816::Status;
+use rsa::pkcs1::DecodeRsaPrivateKey;
 
 use crate::constants::{
     GA_MAX_CHALLENGE, GA_TAG_CHALLENGE, GA_TAG_DYN_AUTH, GA_TAG_EXP, GA_TAG_RESPONSE,
@@ -242,32 +243,40 @@ fn slot_sign(key: &SlotKey, digest: &[u8]) -> Response {
 /// (`rng = None`), no check — which works the key's CRT exponents when
 /// they are present and falls back to `c^d mod n` otherwise.
 fn slot_rsa_raw(key: &SlotKey, block: &[u8]) -> Response {
-    use pkcs1::DecodeRsaPrivateKey;
-    use rsa::BigUint;
-    use rsa::RsaPrivateKey;
+    use rsa::BoxedUint;
+    use rsa::PrivateKey;
     use rsa::hazmat::rsa_decrypt;
     use rsa::traits::PublicKeyParts;
 
-    let Ok(key) = RsaPrivateKey::from_pkcs1_der(key.secret.as_slice()) else {
+    tracing::info!("slot_rsa_raw");
+
+    let Ok(key) = PrivateKey::from_pkcs1_der(key.secret.as_slice()) else {
         return iso7816::Status::IncorrectDataParameter.into();
     };
-    let n = key.n().to_bytes_be();
+    tracing::info!("1");
+    let n = key.n().to_be_bytes();
     if block.len() != n.len() {
         return iso7816::Status::IncorrectDataParameter.into();
     }
-    let c = BigUint::from_bytes_be(block);
-    if &c >= key.n() {
+    tracing::info!("2");
+    let c = BoxedUint::from_be_slice_vartime(block);
+    if c >= key.n().clone().get() {
         return iso7816::Status::IncorrectDataParameter.into();
     }
-    let Ok(m) = rsa_decrypt::<rsa::rand_core::OsRng>(None, &key, &c) else {
+    tracing::info!("3");
+
+    let Ok(m) = rsa_decrypt::<rand::rngs::SysRng>(None, &key, &c) else {
         return iso7816::Status::IncorrectDataParameter.into();
     };
+    tracing::info!("4");
 
     // Zero-extend the residue to the full modulus size.
-    let m_be = m.to_bytes_be();
+    let m_be = m.to_be_bytes();
     let mut out = vec![0u8; n.len()];
     let offset = n.len() - m_be.len();
     out[offset..].copy_from_slice(&m_be);
+    tracing::info!("5");
+
     ga_response(GA_TAG_RESPONSE, &out)
 }
 
@@ -1088,11 +1097,15 @@ pub(crate) mod tests {
             n.len(),
             "the answer is zero-extended to the modulus size"
         );
-        use rsa::BigUint;
+        use rsa::BoxedUint;
         assert_eq!(
-            BigUint::from_bytes_be(s)
-                .modpow(&BigUint::from_bytes_be(&e), &BigUint::from_bytes_be(&n)),
-            BigUint::from(0x2Bu8),
+            BoxedUint::from_be_slice_vartime(s).pow_mod(
+                &BoxedUint::from_be_slice_vartime(&e),
+                BoxedUint::from_be_slice_vartime(&n)
+                    .as_odd_vartime()
+                    .expect("is odd")
+            ),
+            BoxedUint::from(0x2Bu8),
             "s^e == m (mod n)"
         );
         // A short block is the wrong length, whatever it says.
