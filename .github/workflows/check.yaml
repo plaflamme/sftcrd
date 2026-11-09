@@ -6,7 +6,7 @@ on:
   pull_request:
 
 jobs:
-  build:
+  check:
     strategy:
       fail-fast: false
       matrix:
@@ -32,3 +32,12 @@ jobs:
           authToken: "${{ secrets.CACHIX_AUTH_TOKEN }}"
       - run: nix build
       - run: nix flake check
+
+  # aggregate the result of both matrix jobs to allow branch protection to point at a specific job
+  checks-status:
+    if: always()
+    runs-on: ubuntu-latest
+    needs:
+      - check
+    steps:
+    - run: ${{!contains(needs.*.result, 'failure')}}
