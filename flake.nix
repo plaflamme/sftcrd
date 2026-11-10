@@ -43,23 +43,23 @@
           ...
         }:
         {
-          rust-project = {
-            crates = {
-              sftcrd =
-                { ... }:
-                {
-                  crane = {
-                    extraBuildArgs = {
-                      CARGO_PROFILE = "dev"; # TODO: how do we output both release and dev profiles?
-                    };
-                  };
-                };
-            };
-          };
 
-          packages = {
-            default = config.packages.sftcrd;
-          };
+          packages =
+            let
+              craneLib = config.rust-project.crane-lib;
+              src = config.rust-project.src;
+            in
+            {
+              default = config.packages.sftcrd;
+              sftcrd-debug = craneLib.buildPackage (
+                config.rust-project.crates.sftcrd.crane.args
+                // {
+                  inherit src;
+                  pname = "sftcrd-debug";
+                  CARGO_PROFILE = "dev";
+                }
+              );
+            };
 
           checks =
             let
