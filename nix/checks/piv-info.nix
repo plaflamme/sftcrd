@@ -1,17 +1,14 @@
 {
   pkgs,
-  keyroost,
-  sftcrd,
-  system,
+  keyroostctl,
+  nixosModule,
 }:
-
 import ./make-piv-check.nix
   {
     inherit
       pkgs
-      keyroost
-      sftcrd
-      system
+      keyroostctl
+      nixosModule
       ;
   }
   {

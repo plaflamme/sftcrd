@@ -1,8 +1,8 @@
 {
   pkgs,
-  keyroost,
-  sftcrd,
-  system,
+  keyroostctl,
+  nixosModule,
+  ...
 }:
 
 # Helper function to create a PIV test check
@@ -10,7 +10,6 @@
 # Each check only needs to define its testScript - the rest is boilerplate
 
 { name, testScript }:
-
 let
   commonSetup = ''
     start_all()
@@ -30,30 +29,28 @@ let
         return host.succeed(cmd)
   '';
 in
-pkgs.testers.runNixOSTest {
+pkgs.testers.nixosTest {
   inherit name;
   sshBackdoor.enable = true;
   nodes = {
     host =
       { pkgs, ... }:
       {
-        services.pcscd.enable = true;
-        services.vsmartcard-vpcd.enable = true;
-        services.vsmartcard-vpcd.hostname = "127.0.0.1";
+        imports = [
+          nixosModule
+        ];
+
+        services.sftcrd = {
+          enable = true;
+          log-level = "trace";
+        };
 
         environment.systemPackages = [
           pkgs.openssl
           pkgs.yubico-piv-tool
-          keyroost.packages.${system}.keyroostctl
+          keyroostctl
         ];
 
-        systemd.services.sftcrd = {
-          wantedBy = [ "multi-user.target" ];
-          serviceConfig = {
-            Environment = "RUST_LOG=trace";
-            ExecStart = "${sftcrd}/bin/sftcrd";
-          };
-        };
       };
   };
   testScript = commonSetup + testScript;
