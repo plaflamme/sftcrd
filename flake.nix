@@ -53,6 +53,13 @@
           }:
           let
             keyroostctl = keyroost.packages.${system}.keyroostctl;
+            eval = pkgs.lib.evalModules {
+              modules = [
+                nixosModule
+                { _module.check = false; }
+              ];
+            };
+            optionsDoc = pkgs.nixosOptionsDoc { options = eval.options; };
           in
           {
 
@@ -71,6 +78,8 @@
                     CARGO_PROFILE = "dev";
                   }
                 );
+
+                docs = pkgs.callPackage ./nix/docs.nix { inherit optionsDoc; };
               };
 
             checks =

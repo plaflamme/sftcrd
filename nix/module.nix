@@ -18,6 +18,9 @@ in
         sysContext: sysContext.config.packages.sftcrd
       );
       defaultText = lib.literalMD "packages.sftcrd from this flake";
+      description = ''
+        The package used by the sftcrd systemd service.
+      '';
     };
 
     atr = lib.mkOption {
