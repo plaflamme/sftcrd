@@ -76,6 +76,14 @@ pub(crate) enum KeyMaterial {
     },
 }
 
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(crate) enum RsaBits {
+    Rsa1024 = 1024,
+    Rsa2048 = 2048,
+    Rsa3072 = 3072,
+    Rsa4096 = 4096,
+}
+
 /// A key held in a slot.
 ///
 /// An EC key's material is the curve's private scalar — a zeroized
@@ -90,7 +98,7 @@ pub(crate) enum SlotKey {
     EccP256(elliptic_curve::SecretKey<p256::NistP256>),
     EccP384(elliptic_curve::SecretKey<p384::NistP384>),
     EccP521(elliptic_curve::SecretKey<p521::NistP521>),
-    Rsa(usize, rsa::PrivateKey),
+    Rsa(RsaBits, rsa::PrivateKey),
 }
 
 fn encode_public_point(point: &[u8]) -> Vec<u8> {
@@ -113,13 +121,13 @@ impl SlotKey {
             )),
             KeyAlg::Rsa1024 | KeyAlg::Rsa2048 | KeyAlg::Rsa3072 | KeyAlg::Rsa4096 => {
                 let bits = match alg {
-                    KeyAlg::Rsa1024 => 1024,
-                    KeyAlg::Rsa2048 => 2048,
-                    KeyAlg::Rsa3072 => 3072,
-                    KeyAlg::Rsa4096 => 4096,
+                    KeyAlg::Rsa1024 => RsaBits::Rsa1024,
+                    KeyAlg::Rsa2048 => RsaBits::Rsa2048,
+                    KeyAlg::Rsa3072 => RsaBits::Rsa3072,
+                    KeyAlg::Rsa4096 => RsaBits::Rsa4096,
                     _ => unreachable!("alg is an RSA key size"),
                 };
-                let Ok(key) = rsa::PrivateKey::new(&mut rand::rng(), bits) else {
+                let Ok(key) = rsa::PrivateKey::new(&mut rand::rng(), bits as usize) else {
                     return Err(iso7816::Status::IncorrectDataParameter);
                 };
                 Ok(Self::Rsa(bits, key))
@@ -133,11 +141,10 @@ impl SlotKey {
             SlotKey::EccP256(_) => KeyAlg::EccP256,
             SlotKey::EccP384(_) => KeyAlg::EccP384,
             SlotKey::EccP521(_) => KeyAlg::EccP521,
-            SlotKey::Rsa(1024, _) => KeyAlg::Rsa1024,
-            SlotKey::Rsa(2048, _) => KeyAlg::Rsa2048,
-            SlotKey::Rsa(3072, _) => KeyAlg::Rsa3072,
-            SlotKey::Rsa(4096, _) => KeyAlg::Rsa4096,
-            SlotKey::Rsa(bits, _) => unreachable!("invalid RSA bits {bits}"),
+            SlotKey::Rsa(RsaBits::Rsa1024, _) => KeyAlg::Rsa1024,
+            SlotKey::Rsa(RsaBits::Rsa2048, _) => KeyAlg::Rsa2048,
+            SlotKey::Rsa(RsaBits::Rsa3072, _) => KeyAlg::Rsa3072,
+            SlotKey::Rsa(RsaBits::Rsa4096, _) => KeyAlg::Rsa4096,
         }
     }
 
@@ -339,10 +346,10 @@ fn import_rsa_secret(
     n: &[u8],
 ) -> Option<SlotKey> {
     let (bits, modulus_len) = match alg {
-        KeyAlg::Rsa1024 => (1024, 128),
-        KeyAlg::Rsa2048 => (2048, 256),
-        KeyAlg::Rsa3072 => (3072, 384),
-        KeyAlg::Rsa4096 => (4096, 512),
+        KeyAlg::Rsa1024 => (RsaBits::Rsa1024, 128),
+        KeyAlg::Rsa2048 => (RsaBits::Rsa2048, 256),
+        KeyAlg::Rsa3072 => (RsaBits::Rsa3072, 384),
+        KeyAlg::Rsa4096 => (RsaBits::Rsa4096, 512),
         _ => return None,
     };
     let half = modulus_len / 2;
