@@ -318,10 +318,14 @@ mod tests {
     fn attest_answers_a_certificate_for_a_generated_key() {
         let mut applet = PivApplet::new();
         let slot = &mut applet.slots[crate::piv::Slot::Authentication];
-        let key = elliptic_curve::SecretKey::<p256::NistP256>::generate_from_rng(&mut rand::rng());
-        let signing_key = ecdsa::SigningKey::<p256::NistP256>::from(&key);
-        slot.key =
-            Some(SlotKey::import(KeyAlg::EccP256, &key.to_bytes()).expect("can import P256"));
+        let slot_key = SlotKey::generate(KeyAlg::EccP256).expect("can generate key");
+        let (key, signing_key) = if let SlotKey::EccP256(key) = &slot_key {
+            (key.clone(), ecdsa::SigningKey::from(key))
+        } else {
+            todo!()
+        };
+        slot.key = Some(slot_key);
+
         let cert = x509_cert::builder::CertificateBuilder::new(
             x509_cert::builder::profile::cabf::Root::new(
                 false,

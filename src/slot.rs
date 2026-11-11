@@ -27,12 +27,16 @@ use ecdsa::SignatureEncoding;
 use elliptic_curve::Generate;
 use iso7816::Status;
 use rsa::{
-    pkcs1::{DecodeRsaPrivateKey, EncodeRsaPrivateKey},
+    BoxedUint,
+    pkcs1::EncodeRsaPrivateKey,
     signature::hazmat::PrehashSigner,
-    traits::PublicKeyParts,
+    traits::{PrivateKeyParts, PublicKeyParts},
 };
 
 use crate::PivApplet;
+
+/// Public RSA exponent
+const RSA_EXPONENT: u64 = 65537;
 
 /// One key slot: its key material (or the absence of one), its policies
 /// and its certificate data object.
@@ -60,6 +64,17 @@ pub(crate) struct Slot {
     /// wrapped value GET DATA returns verbatim), or `None` when the slot
     /// holds no certificate.
     pub(crate) cert: Option<Vec<u8>>,
+}
+
+pub(crate) enum KeyMaterial {
+    Scalar(Vec<u8>),
+    Rsa {
+        p: Vec<u8>,
+        q: Vec<u8>,
+        dp: Vec<u8>,
+        dq: Vec<u8>,
+        n: Vec<u8>,
+    },
 }
 
 /// A key held in a slot.
@@ -111,40 +126,6 @@ impl SlotKey {
                 Ok(Self::Rsa(bits, key))
             }
             _ => Err(iso7816::Status::IncorrectDataParameter),
-        }
-    }
-
-    pub(crate) fn import(alg: KeyAlg, secret: &[u8]) -> Result<Self, iso7816::Status> {
-        match alg {
-            KeyAlg::EccP256 => Ok(Self::EccP256(
-                elliptic_curve::SecretKey::<p256::NistP256>::from_slice(secret)
-                    .expect("todo remove expect"),
-            )),
-            KeyAlg::EccP384 => Ok(Self::EccP384(
-                elliptic_curve::SecretKey::<p384::NistP384>::from_slice(secret)
-                    .expect("todo remove expect"),
-            )),
-            KeyAlg::EccP521 => Ok(Self::EccP521(
-                elliptic_curve::SecretKey::<p521::NistP521>::from_slice(secret)
-                    .expect("todo remove expect"),
-            )),
-            KeyAlg::Rsa1024 => Ok(Self::Rsa(
-                1024,
-                rsa::PrivateKey::from_pkcs1_der(secret).expect("todo remove expect"),
-            )),
-            KeyAlg::Rsa2048 => Ok(Self::Rsa(
-                2048,
-                rsa::PrivateKey::from_pkcs1_der(secret).expect("todo remove expect"),
-            )),
-            KeyAlg::Rsa3072 => Ok(Self::Rsa(
-                3072,
-                rsa::PrivateKey::from_pkcs1_der(secret).expect("todo remove expect"),
-            )),
-            KeyAlg::Rsa4096 => Ok(Self::Rsa(
-                4096,
-                rsa::PrivateKey::from_pkcs1_der(secret).expect("todo remove expect"),
-            )),
-            _ => Err(iso7816::Status::IncorrectP1OrP2Parameter),
         }
     }
 
@@ -248,16 +229,107 @@ impl SlotKey {
     }
 }
 
-/// The modulus size in bytes of an RSA algorithm id — `None` for
-/// non-RSA algorithms.
-pub(crate) fn rsa_modulus_len(alg: KeyAlg) -> Option<usize> {
-    match alg {
-        KeyAlg::Rsa1024 => Some(128),
-        KeyAlg::Rsa2048 => Some(256),
-        KeyAlg::Rsa3072 => Some(384),
-        KeyAlg::Rsa4096 => Some(512),
-        _ => None,
+impl TryFrom<(KeyAlg, KeyMaterial)> for SlotKey {
+    type Error = ();
+
+    fn try_from((key_alg, key_material): (KeyAlg, KeyMaterial)) -> Result<Self, Self::Error> {
+        match key_material {
+            KeyMaterial::Scalar(scalar) => {
+                let slot_key = match key_alg {
+                    KeyAlg::EccP256 => elliptic_curve::SecretKey::<p256::NistP256>::from_bytes(
+                        &p256::FieldBytes::try_from(scalar).map_err(|_| ())?,
+                    )
+                    .map(SlotKey::EccP256),
+                    KeyAlg::EccP384 => elliptic_curve::SecretKey::<p384::NistP384>::from_bytes(
+                        &p384::FieldBytes::try_from(scalar).map_err(|_| ())?,
+                    )
+                    .map(SlotKey::EccP384),
+                    KeyAlg::EccP521 => elliptic_curve::SecretKey::<p521::NistP521>::from_bytes(
+                        &p521::FieldBytes::try_from(scalar).map_err(|_| ())?,
+                    )
+                    .map(SlotKey::EccP521),
+                    _ => return Err(()),
+                };
+                slot_key.map_err(|_| ())
+            }
+            KeyMaterial::Rsa { p, q, dp, dq, n } => match key_alg {
+                KeyAlg::Rsa1024 | KeyAlg::Rsa2048 | KeyAlg::Rsa3072 | KeyAlg::Rsa4096 => {
+                    let Some(slot_key) = import_rsa_secret(key_alg, &p, &q, &dp, &dq, &n) else {
+                        return Err(());
+                    };
+                    Ok(slot_key)
+                }
+                _ => Err(()),
+            },
+        }
     }
+}
+
+/// An imported RSA key validated against its modulus size and rebuilt as
+/// the card's PKCS#1 storage form. The on-wire set is the reference
+/// applet's CRT member set — `01 p`, `02 q`, `03 dP`, `04 dQ`, `05 n`:
+/// every component present, `p`/`q` exactly half the modulus size, `n`
+/// the full size, `dP`/`dQ` non-zero and at most half the size,
+/// `p`/`q`/`n` odd and greater than 1, `p != q` and `p * q == n` (checked
+/// numerically with `BigUint`). Stricter than the reference applet, which
+/// does none of this — a broken CRT set would otherwise be stored and fail
+/// on first use. The exponent is assumed to be the PIV standard 65537
+/// (see `RSA_EXPONENT`).
+///
+/// The wire carries the CRT halves but the card stores the full key, so
+/// the private exponent is rebuilt from the primes instead:
+/// `RsaPrivateKey::from_p_q` derives `d = e^{-1} mod lcm(p-1, q-1)`
+/// (NIST SP 800-56B 6.2.1) and the modulus `n = p * q` itself, validates
+/// the full key (`d * e ≡ 1` modulo both prime orders) and precomputes the
+/// CRT exponents `to_pkcs1_der` needs. The on-wire `dP`/`dQ` are then only
+/// checked for consistency with the derived `d` (`d ≡ dP (mod p-1)`,
+/// `d ≡ dQ (mod q-1)`) — a mismatched set is refused, never stored.
+fn import_rsa_secret(
+    alg: KeyAlg,
+    p: &[u8],
+    q: &[u8],
+    dp: &[u8],
+    dq: &[u8],
+    n: &[u8],
+) -> Option<SlotKey> {
+    let (bits, modulus_len) = match alg {
+        KeyAlg::Rsa1024 => (1024, 128),
+        KeyAlg::Rsa2048 => (2048, 256),
+        KeyAlg::Rsa3072 => (3072, 384),
+        KeyAlg::Rsa4096 => (4096, 512),
+        _ => return None,
+    };
+    let half = modulus_len / 2;
+    if p.len() != half
+        || q.len() != half
+        || n.len() != modulus_len
+        || dp.is_empty()
+        || dq.is_empty()
+        || dp.len() > half
+        || dq.len() > half
+    {
+        return None;
+    }
+    let (p, q) = (
+        BoxedUint::from_be_slice_vartime(p),
+        BoxedUint::from_be_slice_vartime(q),
+    );
+
+    let mut key = rsa::PrivateKey::from_p_q(p, q, BoxedUint::from(RSA_EXPONENT)).ok()?;
+
+    if key.n().clone().get() != BoxedUint::from_be_slice_vartime(n) {
+        return None;
+    }
+
+    key.precompute().ok()?;
+    if key.dp()? != &BoxedUint::from_be_slice_vartime(dp) {
+        return None;
+    }
+    if key.dq()? != &BoxedUint::from_be_slice_vartime(dq) {
+        return None;
+    }
+
+    Some(SlotKey::Rsa(bits, key))
 }
 
 impl Slot {

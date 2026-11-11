@@ -158,8 +158,9 @@ impl KeyAlg {
 /// But the "default" member is only ever used when writing the policy to the slot.
 /// So instead of adding "Default" members to those enums, we use this type which can represent the default value
 /// only when writing the policies. This eliminates the need to handle the "default" member later on when using the policies.
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+#[derive(Clone, Copy, Default, Debug, PartialEq, Eq)]
 pub enum Defaultable<T> {
+    #[default]
     Default,
     Specified(T),
 }

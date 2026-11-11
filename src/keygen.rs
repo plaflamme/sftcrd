@@ -20,11 +20,7 @@
 //! structure or an unknown or repeated member refusing the command with
 //! `6A86`.
 
-use elliptic_curve::{FieldBytes, Generate, PrimeCurve};
-use rsa::BoxedUint;
-use rsa::pkcs1::EncodeRsaPrivateKey;
-use rsa::traits::{PrivateKeyParts, PublicKeyParts};
-use zeroize::Zeroizing;
+use elliptic_curve::Generate;
 
 use crate::piv::Defaultable;
 use crate::piv::Slot;
@@ -33,109 +29,7 @@ use crate::piv::{KeyAlg, PinPolicy, TouchPolicy};
 use crate::PivApplet;
 use crate::Response;
 use crate::data::push_tlv;
-use crate::slot::{SlotKey, rsa_modulus_len};
-
-/// The public exponent every PIV RSA key carries: `0x01 0x00 0x01` (65537).
-/// GENERATE keys use it because `RsaPrivateKey::new` fixes it; IMPORT
-/// assumes it, exactly as the reference applet does (the import body
-/// carries only the CRT components, never the exponent).
-const RSA_EXPONENT: [u8; 3] = [0x01, 0x00, 0x01];
-
-/// The NIST group orders `n`, big endian. The largest scalar the IMPORT
-/// command will accept is `n - 1`. Taken from the `p256`, `p384` and
-/// `p521` crates' own `ORDER` constants.
-const P256_ORDER: [u8; 32] = [
-    0xFF, 0xFF, 0xFF, 0xFF, 0x00, 0x00, 0x00, 0x00, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF,
-    0xBC, 0xE6, 0xFA, 0xAD, 0xA7, 0x17, 0x9E, 0x84, 0xF3, 0xB9, 0xCA, 0xC2, 0xFC, 0x63, 0x25, 0x51,
-];
-
-const P384_ORDER: [u8; 48] = [
-    0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF,
-    0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xC7, 0x63, 0x4D, 0x81, 0xF4, 0x37, 0x2D, 0xDF,
-    0x58, 0x1A, 0x0D, 0xB2, 0x48, 0xB0, 0xA7, 0x7A, 0xEC, 0xEC, 0x19, 0x6A, 0xCC, 0xC5, 0x29, 0x73,
-];
-
-const P521_ORDER: [u8; 66] = [
-    0x01, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF,
-    0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF,
-    0xFF, 0xFA, 0x51, 0x86, 0x87, 0x83, 0xBF, 0x2F, 0x96, 0x6B, 0x7F, 0xCC, 0x01, 0x48, 0xF7, 0x09,
-    0xA5, 0xD0, 0x3B, 0xB5, 0xC9, 0xB8, 0x89, 0x9C, 0x47, 0xAE, 0xBB, 0x6F, 0xB7, 0x1E, 0x91, 0x38,
-    0x64, 0x09,
-];
-
-/// An imported scalar checked for one NIST curve: the zeroized canonical
-/// big-endian secret, `None` when the bytes are not a valid `1..=n-1`
-/// field element for the curve.
-fn imported_secret<C>(scalar: &[u8]) -> Option<Zeroizing<Vec<u8>>>
-where
-    C: PrimeCurve,
-{
-    // The caller checked the scalar is exactly the curve's field size.
-    let bytes = FieldBytes::<C>::try_from(scalar).ok()?;
-    let key = elliptic_curve::SecretKey::<C>::from_bytes(&bytes).ok()?;
-    Some(Zeroizing::new(key.to_bytes().to_vec()))
-}
-
-/// An imported RSA key validated against its modulus size and rebuilt as
-/// the card's PKCS#1 storage form. The on-wire set is the reference
-/// applet's CRT member set — `01 p`, `02 q`, `03 dP`, `04 dQ`, `05 n`:
-/// every component present, `p`/`q` exactly half the modulus size, `n`
-/// the full size, `dP`/`dQ` non-zero and at most half the size,
-/// `p`/`q`/`n` odd and greater than 1, `p != q` and `p * q == n` (checked
-/// numerically with `BigUint`). Stricter than the reference applet, which
-/// does none of this — a broken CRT set would otherwise be stored and fail
-/// on first use. The exponent is assumed to be the PIV standard 65537
-/// (see `RSA_EXPONENT`).
-///
-/// The wire carries the CRT halves but the card stores the full key, so
-/// the private exponent is rebuilt from the primes instead:
-/// `RsaPrivateKey::from_p_q` derives `d = e^{-1} mod lcm(p-1, q-1)`
-/// (NIST SP 800-56B 6.2.1) and the modulus `n = p * q` itself, validates
-/// the full key (`d * e ≡ 1` modulo both prime orders) and precomputes the
-/// CRT exponents `to_pkcs1_der` needs. The on-wire `dP`/`dQ` are then only
-/// checked for consistency with the derived `d` (`d ≡ dP (mod p-1)`,
-/// `d ≡ dQ (mod q-1)`) — a mismatched set is refused, never stored.
-fn imported_rsa_secret(
-    p: &[u8],
-    q: &[u8],
-    dp: &[u8],
-    dq: &[u8],
-    n: &[u8],
-    modulus_len: usize,
-) -> Option<Vec<u8>> {
-    let half = modulus_len / 2;
-    if p.len() != half
-        || q.len() != half
-        || n.len() != modulus_len
-        || dp.is_empty()
-        || dq.is_empty()
-        || dp.len() > half
-        || dq.len() > half
-    {
-        return None;
-    }
-    let (p, q) = (
-        BoxedUint::from_be_slice_vartime(p),
-        BoxedUint::from_be_slice_vartime(q),
-    );
-
-    let mut key =
-        rsa::PrivateKey::from_p_q(p, q, BoxedUint::from_be_slice_vartime(&RSA_EXPONENT)).ok()?;
-
-    if key.n().clone().get() != BoxedUint::from_be_slice_vartime(n) {
-        return None;
-    }
-
-    key.precompute().ok()?;
-    if key.dp()? != &BoxedUint::from_be_slice_vartime(dp) {
-        return None;
-    }
-    if key.dq()? != &BoxedUint::from_be_slice_vartime(dq) {
-        return None;
-    }
-
-    Some(key.to_pkcs1_der().ok()?.as_bytes().to_vec())
-}
+use crate::slot::{KeyMaterial, SlotKey};
 
 impl PivApplet {
     /// GENERATE ASYMMETRIC KEY PAIR (`0x47`): the host's `generate_key`
@@ -235,69 +129,21 @@ impl PivApplet {
             }
             _ => return iso7816::Status::IncorrectDataParameter.into(),
         };
-        let rsa = matches!(
-            alg,
-            KeyAlg::Rsa1024 | KeyAlg::Rsa2048 | KeyAlg::Rsa3072 | KeyAlg::Rsa4096
-        );
-        let Ok(import) = parse_import(command.data(), rsa) else {
+        let Ok(import) = parse_import(alg, command.data()) else {
             return iso7816::Status::IncorrectDataParameter.into();
         };
 
-        let secret = match alg {
-            KeyAlg::EccP256 | KeyAlg::EccP384 | KeyAlg::EccP521 => {
-                // The scalar must be the big-endian encoding of a value in
-                // 1..=n-1 for the requested curve: the curve's field
-                // length, non-zero, below the group order. The range check
-                // precedes `from_bytes` — it would reduce `n` and above
-                // modulo `n` instead of refusing them.
-                let scalar = import
-                    .scalar
-                    .as_ref()
-                    .expect("the EC branch requires the scalar member");
-                let order: &[u8] = match alg {
-                    KeyAlg::EccP256 => &P256_ORDER,
-                    KeyAlg::EccP384 => &P384_ORDER,
-                    KeyAlg::EccP521 => &P521_ORDER,
-                    _ => unreachable!("alg is one of the NIST curves"),
-                };
-                if scalar.len() != order.len()
-                    || scalar.iter().all(|byte| *byte == 0)
-                    || scalar.as_slice() >= order
-                {
-                    return iso7816::Status::IncorrectDataParameter.into();
-                }
-                let secret = match alg {
-                    KeyAlg::EccP256 => imported_secret::<p256::NistP256>(scalar),
-                    KeyAlg::EccP384 => imported_secret::<p384::NistP384>(scalar),
-                    KeyAlg::EccP521 => imported_secret::<p521::NistP521>(scalar),
-                    _ => unreachable!("alg is one of the NIST curves"),
-                };
-                match secret {
-                    Some(secret) => secret,
-                    None => return iso7816::Status::IncorrectDataParameter.into(),
-                }
-            }
-            KeyAlg::Rsa1024 | KeyAlg::Rsa2048 | KeyAlg::Rsa3072 | KeyAlg::Rsa4096 => {
-                // The CRT component set: every member present, sizes
-                // right, p * q == n.
-                let (Some(p), Some(q), Some(dp), Some(dq), Some(n)) =
-                    (&import.p, &import.q, &import.dp, &import.dq, &import.n)
-                else {
-                    return iso7816::Status::IncorrectDataParameter.into();
-                };
-                let modulus_len = rsa_modulus_len(alg).expect("alg is an RSA key size");
-                match imported_rsa_secret(p, q, dp, dq, n, modulus_len) {
-                    Some(secret) => Zeroizing::new(secret),
-                    None => return iso7816::Status::IncorrectDataParameter.into(),
-                }
-            }
-            _ => unreachable!("alg is a NIST curve or an RSA key size"),
+        let Ok(slot_key) = SlotKey::try_from((import.key_alg, import.key_material)) else {
+            return iso7816::Status::IncorrectDataParameter.into();
         };
-        let key = match SlotKey::import(alg, &secret) {
-            Ok(key) => key,
-            Err(status) => return status.into(),
-        };
-        self.commit_slot_key(index, key, true, import.pin_policy, import.touch_policy);
+
+        self.commit_slot_key(
+            index,
+            slot_key,
+            true,
+            import.pin_policy,
+            import.touch_policy,
+        );
         iso7816::Status::Success.into()
     }
 
@@ -385,13 +231,20 @@ fn parse_control(
     Ok((alg.ok_or(())?, pin_policy, touch_policy))
 }
 
+struct ImportKey {
+    key_alg: KeyAlg,
+    key_material: KeyMaterial,
+    pin_policy: Option<Defaultable<PinPolicy>>,
+    touch_policy: Option<Defaultable<TouchPolicy>>,
+}
+
 /// The body of an IMPORT ASYMMETRIC KEY command: either the EC branch —
 /// a required `06 <len> <scalar>` member — or the RSA branch — the five CRT
 /// components `01 P`, `02 Q`, `03 dP`, `04 dQ`, `05 n` — plus optional
 /// `AA` / `AB` policy members, in any order, each at most once. Which
 /// branch applies is decided by the algorithm in P1; a member of the other
 /// branch refuses the command.
-fn parse_import(body: &[u8], rsa: bool) -> Result<ImportKey, ()> {
+fn parse_import(key_alg: KeyAlg, body: &[u8]) -> Result<ImportKey, ()> {
     let mut scalar = None;
     let mut p = None;
     let mut q = None;
@@ -414,44 +267,34 @@ fn parse_import(body: &[u8], rsa: bool) -> Result<ImportKey, ()> {
         }
         Ok(())
     })?;
-    if rsa {
+    let key_material = if matches!(
+        key_alg,
+        KeyAlg::Rsa1024 | KeyAlg::Rsa2048 | KeyAlg::Rsa3072 | KeyAlg::Rsa4096
+    ) {
         // The EC scalar must not sneak in alongside the CRT set.
         if scalar.is_some() {
             return Err(());
         }
-        if !(p.is_some() && q.is_some() && dp.is_some() && dq.is_some() && n.is_some()) {
-            return Err(());
+        match (p, q, dp, dq, n) {
+            (Some(p), Some(q), Some(dp), Some(dq), Some(n)) => KeyMaterial::Rsa { p, q, dp, dq, n },
+            _ => return Err(()),
         }
     } else {
         // The RSA components must not sneak in alongside the scalar.
         if p.is_some() || q.is_some() || dp.is_some() || dq.is_some() || n.is_some() {
             return Err(());
         }
-        if scalar.is_none() {
+        let Some(scalar) = scalar else {
             return Err(());
-        }
-    }
+        };
+        KeyMaterial::Scalar(scalar)
+    };
     Ok(ImportKey {
-        scalar,
-        p,
-        q,
-        dp,
-        dq,
-        n,
+        key_alg,
+        key_material,
         pin_policy,
         touch_policy,
     })
-}
-
-struct ImportKey {
-    scalar: Option<Vec<u8>>,
-    p: Option<Vec<u8>>,
-    q: Option<Vec<u8>>,
-    dp: Option<Vec<u8>>,
-    dq: Option<Vec<u8>>,
-    n: Option<Vec<u8>>,
-    pin_policy: Option<Defaultable<PinPolicy>>,
-    touch_policy: Option<Defaultable<TouchPolicy>>,
 }
 
 /// Walk the ordered TLV members of `rest` from the front, calling `f` for
@@ -547,9 +390,12 @@ impl PivApplet {
 #[allow(clippy::cast_possible_truncation)]
 #[allow(clippy::items_after_statements)]
 mod tests {
+    use std::ops::Add;
+
     use super::*;
     use crate::general_auth::tests::mgmt_handshake;
     use crate::yubico::YubicoInstruction;
+    use elliptic_curve::Curve;
     use elliptic_curve::sec1::ToSec1Point;
     use keyroost_piv::{
         CertInfo, PublicKey, Slot, encode_certificate, generate_key, get_data, parse_public_key,
@@ -557,6 +403,7 @@ mod tests {
     };
     use p256::ecdsa::signature::hazmat::{PrehashSigner, PrehashVerifier};
     use p256::ecdsa::{SigningKey, VerifyingKey};
+    use rsa::BoxedUint;
     use rsa::pkcs1::DecodeRsaPrivateKey;
     use rsa::traits::{PrivateKeyParts, PublicKeyParts};
 
@@ -919,12 +766,15 @@ mod tests {
     #[test]
     fn import_rejects_out_of_range_scalars() {
         let mut app = unlocked();
-        let zero = [0u8; 32];
-        let order = P256_ORDER;
-        let mut above = P256_ORDER;
-        above[31] += 1;
+        let zero = p256::U256::ZERO;
+        let order = p256::NistP256::ORDER.get();
+        let above = order.add(p256::U256::ONE);
         for scalar in [zero, order, above] {
-            let r = app.process(&import_apdu(0x11, 0x9A, &ec_body(&scalar, None, None)));
+            let r = app.process(&import_apdu(
+                0x11,
+                0x9A,
+                &ec_body(&scalar.to_be_bytes(), None, None),
+            ));
             assert_eq!(
                 r.status(),
                 iso7816::Status::IncorrectDataParameter,
@@ -1580,9 +1430,9 @@ mod tests {
                 iso7816::Status::IncorrectDataParameter
             );
             let order = match alg {
-                keyroost_piv::KeyAlg::EccP256 => P256_ORDER.to_vec(),
-                keyroost_piv::KeyAlg::EccP384 => P384_ORDER.to_vec(),
-                keyroost_piv::KeyAlg::EccP521 => P521_ORDER.to_vec(),
+                keyroost_piv::KeyAlg::EccP256 => p256::NistP256::ORDER.to_be_bytes().to_vec(),
+                keyroost_piv::KeyAlg::EccP384 => p384::NistP384::ORDER.to_be_bytes().to_vec(),
+                keyroost_piv::KeyAlg::EccP521 => p521::NistP521::ORDER.to_be_bytes().to_vec(),
                 _ => unreachable!("a NIST curve"),
             };
             assert_eq!(
