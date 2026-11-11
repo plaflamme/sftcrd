@@ -14,12 +14,6 @@ pub(crate) const GA_TAG_EXP: u8 = 0x85;
 /// 64-byte scratch buffer caps the template it will accept at all.
 pub(crate) const GA_MAX_CHALLENGE: usize = 64;
 
-/// The 9B management key a factory-fresh applet answers to: 3DES with the
-/// Yubico default key (three `01 02 03 04 05 06 07 08` halves).
-pub(crate) const DEFAULT_MGMT_KEY: [u8; 24] = [
-    1, 2, 3, 4, 5, 6, 7, 8, 1, 2, 3, 4, 5, 6, 7, 8, 1, 2, 3, 4, 5, 6, 7, 8,
-];
-
 /// The default serial a factory-fresh applet presents: a placeholder until
 /// the virtual card has a real source of serial identity.
 pub const DEFAULT_SERIAL: u32 = 0x0102_0304;

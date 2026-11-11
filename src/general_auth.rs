@@ -515,7 +515,7 @@ fn read_tlv_length(buf: &[u8]) -> Result<(usize, usize), u16> {
 #[allow(clippy::items_after_statements)]
 pub(crate) mod tests {
     use super::*;
-    use crate::constants::{DEFAULT_MGMT_KEY, DEFAULT_PUK_TRIES};
+    use crate::constants::DEFAULT_PUK_TRIES;
     use aes::cipher::{BlockCipherDecrypt, KeyInit};
     use elliptic_curve::Generate;
     use elliptic_curve::sec1::ToSec1Point;
@@ -577,7 +577,10 @@ pub(crate) mod tests {
 
     /// Decrypt an 8-byte block with the stored 3DES management key.
     fn des_decrypt(data: &[u8]) -> [u8; 8] {
-        let c = des::TdesEde3::new_from_slice(&DEFAULT_MGMT_KEY).unwrap();
+        let c = des::TdesEde3::new_from_slice(&[
+            1, 2, 3, 4, 5, 6, 7, 8, 1, 2, 3, 4, 5, 6, 7, 8, 1, 2, 3, 4, 5, 6, 7, 8,
+        ])
+        .unwrap();
         let mut block = cipher::Array::try_from(data).expect("can clone slice");
         c.decrypt_block(&mut block);
         block.into()

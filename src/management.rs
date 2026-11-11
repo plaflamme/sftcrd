@@ -3,14 +3,19 @@
 //! 9B management key and the PIN/PUK retry counters.
 
 use crate::constants::{
-    DEFAULT_MGMT_KEY, DEFAULT_PIN_TRIES, DEFAULT_PIN_VALUE, DEFAULT_PUK_TRIES, DEFAULT_PUK_VALUE,
+    DEFAULT_PIN_TRIES, DEFAULT_PIN_VALUE, DEFAULT_PUK_TRIES, DEFAULT_PUK_VALUE,
 };
 use crate::piv::MgmtAlg;
 use crate::{Pin, PivApplet, Response};
 use aes::cipher::{BlockCipherDecrypt, BlockCipherEncrypt, KeyInit};
-use zeroize::{Zeroize, Zeroizing};
 
 const KEY_REF_MANAGEMENT: u8 = 0x9B;
+
+/// The 9B management key a factory-fresh applet answers to: 3DES with the
+/// Yubico default key (three `01 02 03 04 05 06 07 08` halves).
+const DEFAULT_MGMT_KEY: des::cipher::Key<des::TdesEde3> = des::cipher::array::Array([
+    1, 2, 3, 4, 5, 6, 7, 8, 1, 2, 3, 4, 5, 6, 7, 8, 1, 2, 3, 4, 5, 6, 7, 8,
+]);
 
 /// The 9B GA challenge state — the card's challenge transient and unlock
 /// flag as one machine. Only the first `block_size` bytes of a `Challenged`
@@ -33,6 +38,13 @@ pub(crate) enum GaError {
     WrongValue,
 }
 
+enum MgmtKey {
+    TripleDes(des::TdesEde3),
+    Aes128(aes::Aes128),
+    Aes192(aes::Aes192),
+    Aes256(aes::Aes256),
+}
+
 /// The 9B management key and its session state: the stored cipher algorithm
 /// and key material, and the slot's GA challenge state.
 ///
@@ -40,32 +52,32 @@ pub(crate) enum GaError {
 /// encryption, and `check` takes the decrypted witness and returns the
 /// host challenge's encryption. Callers never see the raw challenge and
 /// never call the ciphers.
-pub(crate) struct MgmtKey {
+pub(crate) struct MgmtKeySlot {
     /// The stored cipher algorithm.
-    alg: MgmtAlg,
-    /// The stored key material, zero-padded into the fixed 32-byte array.
-    key: Zeroizing<[u8; 32]>,
+    key: MgmtKey,
     /// The slot's GA challenge state — the card's challenge transient and
     /// unlock flag as one machine.
     state: GaState,
 }
 
-impl Default for MgmtKey {
+impl Default for MgmtKeySlot {
     fn default() -> Self {
-        let mut key = [0u8; 32];
-        key[..DEFAULT_MGMT_KEY.len()].copy_from_slice(&DEFAULT_MGMT_KEY);
         Self {
-            alg: MgmtAlg::TripleDes,
-            key: Zeroizing::new(key),
+            key: MgmtKey::TripleDes(des::TdesEde3::new(&DEFAULT_MGMT_KEY)),
             state: GaState::Locked,
         }
     }
 }
 
-impl MgmtKey {
+impl MgmtKeySlot {
     /// The stored cipher algorithm.
     pub(crate) fn alg(&self) -> MgmtAlg {
-        self.alg
+        match &self.key {
+            MgmtKey::TripleDes(_) => MgmtAlg::TripleDes,
+            MgmtKey::Aes128(_) => MgmtAlg::Aes128,
+            MgmtKey::Aes192(_) => MgmtAlg::Aes192,
+            MgmtKey::Aes256(_) => MgmtAlg::Aes256,
+        }
     }
 
     /// Whether the slot is unlocked (management-authenticated in this
@@ -78,11 +90,16 @@ impl MgmtKey {
     /// zero-padded into the 32-byte array; the old material is zeroed
     /// before the copy. The pending challenge and the unlocked status are
     /// untouched.
-    pub(crate) fn set_key(&mut self, alg: MgmtAlg, key: &[u8]) {
+    fn set_key(&mut self, alg: MgmtAlg, key: &[u8]) -> Result<(), cipher::InvalidLength> {
         let len = alg.key_len();
-        self.alg = alg;
-        self.key.zeroize();
-        self.key[..len].copy_from_slice(key);
+        let key = &key[..len];
+        self.key = match alg {
+            MgmtAlg::TripleDes => MgmtKey::TripleDes(des::TdesEde3::new_from_slice(key)?),
+            MgmtAlg::Aes128 => MgmtKey::Aes128(aes::Aes128::new_from_slice(key)?),
+            MgmtAlg::Aes192 => MgmtKey::Aes192(aes::Aes192::new_from_slice(key)?),
+            MgmtAlg::Aes256 => MgmtKey::Aes256(aes::Aes256::new_from_slice(key)?),
+        };
+        Ok(())
     }
 
     /// Issue a fresh challenge: 16 random bytes (the card's
@@ -95,7 +112,7 @@ impl MgmtKey {
         let mut buf = [0u8; 16];
         rand::fill(&mut buf);
         self.state = GaState::Challenged(buf);
-        self.encrypt(&buf[..self.alg.block_size()])
+        self.encrypt(&buf[..self.alg().block_size()])
     }
 
     /// Verify a witness — the card's challenge in the clear, which the
@@ -117,7 +134,7 @@ impl MgmtKey {
         let GaState::Challenged(cc) = self.state else {
             return Err(GaError::NoPendingChallenge);
         };
-        let bs = self.alg.block_size();
+        let bs = self.alg().block_size();
         if witness != &cc[..bs] {
             self.state = GaState::Locked;
             return Err(GaError::WrongValue);
@@ -131,24 +148,11 @@ impl MgmtKey {
     /// zero-initialized transient IV, which is byte-identical to ECB for
     /// the block-by-block use GA makes of it.
     fn encrypt(&self, data: &[u8]) -> Vec<u8> {
-        let key = &self.key[..self.alg.key_len()];
-        match self.alg {
-            MgmtAlg::TripleDes => {
-                let c = des::TdesEde3::new_from_slice(key).expect("24-byte key");
-                Self::run_blocks(&c, data, 8, false)
-            }
-            MgmtAlg::Aes128 => {
-                let c = aes::Aes128::new_from_slice(key).expect("16-byte key");
-                Self::run_blocks(&c, data, 16, false)
-            }
-            MgmtAlg::Aes192 => {
-                let c = aes::Aes192::new_from_slice(key).expect("24-byte key");
-                Self::run_blocks(&c, data, 16, false)
-            }
-            MgmtAlg::Aes256 => {
-                let c = aes::Aes256::new_from_slice(key).expect("32-byte key");
-                Self::run_blocks(&c, data, 16, false)
-            }
+        match &self.key {
+            MgmtKey::TripleDes(c) => Self::run_blocks(&c, data, 8, false),
+            MgmtKey::Aes128(c) => Self::run_blocks(&c, data, 16, false),
+            MgmtKey::Aes192(c) => Self::run_blocks(&c, data, 16, false),
+            MgmtKey::Aes256(c) => Self::run_blocks(&c, data, 16, false),
         }
     }
 
@@ -211,8 +215,10 @@ impl PivApplet {
             _ => return iso7816::Status::IncorrectDataParameter.into(),
         };
         let key = &body[3..3 + key_len];
-        self.mgmt.set_key(alg, key);
-        iso7816::Status::Success.into()
+        match self.mgmt.set_key(alg, key) {
+            Ok(()) => iso7816::Status::Success.into(),
+            Err(_) => iso7816::Status::IncorrectDataParameter.into(),
+        }
     }
 
     /// SET PIN RETRIES (0xFA, Yubico extension): set the PIN and PUK retry
@@ -242,16 +248,6 @@ impl PivApplet {
 
     /// RESET (0xFB, Yubico extension): factory-reset the applet; allowed
     /// only when PIN and PUK are both blocked.
-    ///
-    /// Mirrors the card's `processReset`: on success the PIN and PUK return
-    /// to the factory defaults (values and full retry counters, nothing
-    /// verified), the 9B management key returns to 3DES with the Yubico
-    /// default key, and `9000` is answered. The 9B slot's unlocked status
-    /// is kept (the reference does not touch `F_UNLOCKED`), the serial is
-    /// kept (the reference regenerates the GUID/card ID, which this applet
-    /// does not model), and the pending GA challenge is left alone.
-    /// `6986` until both counters are blocked; `6400` on a non-standard
-    /// CLA.
     pub(crate) fn process_reset(&mut self, _command: &crate::apdu::CommandView<'_>) -> Response {
         if self.pin.tries() != 0 || self.puk.tries() != 0 {
             // Yubico's documented answer for this precondition is 6985
@@ -259,7 +255,7 @@ impl PivApplet {
             // 6982/6983/6985 as "block the PIN and PUK first".
             return iso7816::Status::ConditionsOfUseNotSatisfied.into();
         }
-        self.mgmt.set_key(MgmtAlg::TripleDes, &DEFAULT_MGMT_KEY);
+        self.mgmt = MgmtKeySlot::default();
         self.pin = Pin::factory(DEFAULT_PIN_VALUE, DEFAULT_PIN_TRIES);
         self.puk = Pin::factory(DEFAULT_PUK_VALUE, DEFAULT_PUK_TRIES);
         iso7816::Status::Success.into()

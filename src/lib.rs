@@ -68,7 +68,7 @@ use constants::{
 };
 use data::PivData;
 use iso7816::{Instruction, response::Status};
-use management::MgmtKey;
+use management::MgmtKeySlot;
 use pin::Pin;
 
 use crate::{slot::Slots, yubico::YubicoInstruction};
@@ -99,7 +99,7 @@ pub struct PivApplet {
     /// algorithm and key material (factory: 3DES with the Yubico default
     /// key), the pending GA witness/challenge, and the slot's unlocked
     /// status.
-    pub(crate) mgmt: MgmtKey,
+    pub(crate) mgmt: MgmtKeySlot,
     /// The 24 key slots in table order: `9A`, `9C`, `9D`, `9E`, then
     /// retired `1..=20` (key refs `82`..=`95`). `9B` (management) and `F9`
     /// (attestation) are not slots.
@@ -185,7 +185,7 @@ impl PivApplet {
             serial,
             pin: Pin::factory(DEFAULT_PIN_VALUE, DEFAULT_PIN_TRIES),
             puk: Pin::factory(DEFAULT_PUK_VALUE, DEFAULT_PUK_TRIES),
-            mgmt: MgmtKey::default(),
+            mgmt: MgmtKeySlot::default(),
             slots: Slots::default(),
             data: PivData::default(),
             attestation: Attestation::generate().expect("can generate an attestation key"),
