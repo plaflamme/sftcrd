@@ -2,10 +2,8 @@
 //!
 //! This binary is the `vpicc` (virtual ICC) side of the `VSmartCard`
 //! architecture: it listens on a TCP port; the `vpcd` PC/SC reader driver
-//! (shipped by `pkgs.vsmartcard-vpcd`, registered with `pcscd` by the
-//! `services.vsmartcard-vpcd` NixOS module, and pointed at this host with
-//! that module's `hostname` option) connects to it, and it answers as a
-//! card for every PC/SC client that reaches the reader.
+//! should be configured to connect to the listening socket exposed by this
+//! server.
 //!
 //! # Wire protocol
 //!
@@ -19,11 +17,6 @@
 //!   present.
 //! * Every other message is a command APDU. The answer is the response
 //!   APDU: the response data, followed by the two-byte status word.
-//!
-//! The card is the applet instance created on power on / reset. While the
-//! applet is wiring only, unimplemented APDUs are answered with a
-//! not-supported status word instead of panicking.
-
 use std::io::{self, Read, Write};
 use std::net::{TcpListener, TcpStream};
 use std::process::ExitCode;
@@ -34,8 +27,7 @@ use tracing_subscriber::EnvFilter;
 
 use sftcrd::PivApplet;
 
-/// The ATR of a `YubiKey` 4, so card drivers that match on the ATR (`OpenSC`'s
-/// PIV support, `GnuPG`) bind to the virtual card.
+/// The ATR of a `YubiKey` 5.7
 const DEFAULT_ATR: &str = "3BFD1300008131FE158073C021C057597562694B657940";
 
 // VSmartCard control commands (driver → card, one-byte payload).
@@ -46,9 +38,9 @@ const CTRL_GET_ATR: u8 = 0x04;
 
 #[derive(Parser, Debug, Clone)]
 #[command(
-    name = "piv-vsmartcard",
+    name = "sftcrd",
     version,
-    about = "Present the keyroost PIV applet as a PC/SC card via VSmartCard"
+    about = "Present the a PIV applet as a PC/SC card via VSmartCard"
 )]
 struct Args {
     /// Host to bind the listener on.
@@ -73,7 +65,7 @@ fn main() -> ExitCode {
         )
         .init();
 
-    let atr = match hex_decode(&args.atr) {
+    let atr = match hex::decode(&args.atr) {
         Ok(atr) => atr,
         Err(e) => {
             tracing::error!("invalid --atr: {e}");
@@ -82,8 +74,7 @@ fn main() -> ExitCode {
     };
 
     // We are the vpicc listener: vpcd is configured in connect mode and
-    // dials us. The port is ours, so bind once — a failure here is a real
-    // error rather than something to retry.
+    // dials us.
     let listener = match TcpListener::bind((args.host.as_str(), args.port)) {
         Ok(l) => l,
         Err(e) => {
@@ -91,6 +82,7 @@ fn main() -> ExitCode {
             return ExitCode::FAILURE;
         }
     };
+
     info!(host = %args.host, port = args.port, "listening for vpcd");
 
     loop {
@@ -133,12 +125,13 @@ fn serve_connection(mut stream: TcpStream, atr: &[u8]) -> io::Result<()> {
             match msg[0] {
                 CTRL_POWER_OFF => {
                     power_on = false;
-                    trace!("power off");
+                    tracing::debug!("power off");
                 }
-                CTRL_POWER_ON | CTRL_RESET => {
+                CTRL_POWER_ON => {
                     power_on = true;
-                    trace!("power on");
+                    tracing::debug!("power on");
                 }
+                CTRL_RESET => tracing::debug!("reset"),
                 CTRL_GET_ATR => write_msg(&mut stream, atr)?,
                 other => warn!("unknown control command 0x{other:02x}"),
             }
@@ -155,11 +148,16 @@ fn serve_connection(mut stream: TcpStream, atr: &[u8]) -> io::Result<()> {
                 continue;
             };
 
+            trace!(apdu = hex::encode_upper(&data), "APDU command");
+
             // NOTE: presumably, reading and writing should run in their own thread.
-            let Ok(()) = contact_requester.request(data) else {
-                warn!("failed to send request");
-                continue;
-            };
+            match contact_requester.request(data) {
+                Ok(()) => (),
+                Err(e) => {
+                    warn!("failed to send request: {e:?}");
+                    continue;
+                }
+            }
 
             let response = match dispatch.poll(&mut [&mut applet]) {
                 Some(iso7816::Interface::Contact) => contact_requester.take_response(),
@@ -168,7 +166,7 @@ fn serve_connection(mut stream: TcpStream, atr: &[u8]) -> io::Result<()> {
             };
 
             if let Some(response) = response {
-                trace!(apdu = hex(&msg), sw = hex(&response), "command APDU");
+                trace!(sw = hex::encode_upper(&response), "APDU response");
                 write_msg(&mut stream, &response)?;
             }
         } else {
@@ -198,28 +196,4 @@ fn write_msg(w: &mut impl Write, payload: &[u8]) -> io::Result<()> {
     w.write_all(&len.to_be_bytes())?;
     w.write_all(payload)?;
     w.flush()
-}
-
-/// Decode an even-length hex string.
-fn hex_decode(s: &str) -> Result<Vec<u8>, String> {
-    let bytes = s.as_bytes();
-    if !bytes.len().is_multiple_of(2) {
-        return Err(format!("hex string has odd length ({})", bytes.len()));
-    }
-    let mut out = Vec::with_capacity(bytes.len() / 2);
-    for i in (0..bytes.len()).step_by(2) {
-        let pair = &s[i..i + 2];
-        out.push(u8::from_str_radix(pair, 16).map_err(|_| format!("invalid hex pair {pair:?}"))?);
-    }
-    Ok(out)
-}
-
-/// Encode bytes as lowercase hex, for tracing.
-fn hex(bytes: &[u8]) -> String {
-    use std::fmt::Write as _;
-    let mut s = String::with_capacity(bytes.len() * 2);
-    for b in bytes {
-        let _ = write!(s, "{b:02x}");
-    }
-    s
 }

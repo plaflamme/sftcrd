@@ -59,6 +59,7 @@ mod management;
 mod pin;
 mod piv;
 mod slot;
+mod trace;
 mod yubico;
 
 use attest::Attestation;
@@ -72,6 +73,7 @@ use pin::Pin;
 
 use crate::{slot::Slots, yubico::YubicoInstruction};
 pub(crate) use apdu::Response;
+pub(crate) use trace::Trace;
 
 /// A PIV applet instance: the card side of NIST SP 800-73-4.
 ///
@@ -127,16 +129,21 @@ impl apdu_app::App for PivApplet {
     fn select(
         &mut self,
         _interface: iso7816::Interface,
-        _apdu: apdu_app::CommandView<'_>,
+        apdu: apdu_app::CommandView<'_>,
         _reply: &mut apdu_app::VecView<u8>,
     ) -> apdu_app::Result {
+        tracing::debug!(class = %Trace::Byte(apdu.class().into_inner()), ins = %Trace::Ins(apdu.instruction()), p1 = %Trace::Byte(apdu.p1), p2 = %Trace::Byte(apdu.p2), "select");
+
         // Selecting the applet clears in-memory state
         self.pin.session_end();
         self.puk.session_end();
+
         Ok(())
     }
 
-    fn deselect(&mut self) {}
+    fn deselect(&mut self) {
+        tracing::debug!("deselect");
+    }
 
     fn call(
         &mut self,
@@ -144,10 +151,19 @@ impl apdu_app::App for PivApplet {
         apdu: apdu_app::CommandView<'_>,
         reply: &mut apdu_app::VecView<u8>,
     ) -> apdu_app::Result {
+        tracing::debug!(class = %Trace::Byte(apdu.class().into_inner()), ins = %Trace::Ins(apdu.instruction()), p1 = %Trace::Byte(apdu.p1), p2 = %Trace::Byte(apdu.p2), le = apdu.expected(), data = %Trace::Slice(apdu.data()), "call");
+
         match self.process_command(&apdu).into_inner() {
-            apdu_dispatch::Response::Data(d) => reply.extend(d),
-            apdu_dispatch::Response::Status(s) => return Err(s),
+            apdu_dispatch::Response::Data(d) => {
+                tracing::debug!(data = %Trace::Slice(d.as_slice()), "reply");
+                reply.extend(d);
+            }
+            apdu_dispatch::Response::Status(s) => {
+                tracing::debug!(status = ?s, "reply");
+                return Err(s);
+            }
         }
+
         Ok(())
     }
 }
