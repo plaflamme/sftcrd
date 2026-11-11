@@ -58,15 +58,13 @@ impl PivApplet {
                 iso7816::Status::RemainingRetries(pin.tries()).into()
             };
         }
-        if lc != 8 {
+        let Some((pin_value, _)) = body.split_first_chunk::<8>() else {
             return iso7816::Status::IncorrectDataParameter.into();
-        }
-        if pin.check(body) {
-            iso7816::Status::Success.into()
-        } else {
-            // The card would also wipe the key slots here if this try
-            // blocked both PIN and PUK; the applet has no key slots yet.
-            iso7816::Status::RemainingRetries(pin.tries()).into()
+        };
+
+        match pin.check(*pin_value) {
+            Ok(()) => iso7816::Status::Success.into(),
+            Err(tries) => iso7816::Status::RemainingRetries(tries).into(),
         }
     }
 
@@ -151,10 +149,10 @@ impl PivApplet {
         let Some((new_value, _)) = body.split_first_chunk::<8>() else {
             return Err(iso7816::Status::IncorrectDataParameter);
         };
-        if !target.check(pin) {
+        if let Err(tries) = target.check(*pin) {
             // The card would also wipe the key slots here if this try
             // blocked both PIN and PUK; this applet has no key slots yet.
-            return Err(iso7816::Status::RemainingRetries(target.tries()));
+            return Err(iso7816::Status::RemainingRetries(tries));
         }
         if !is_valid_pin(*new_value) {
             return Err(iso7816::Status::IncorrectDataParameter);
@@ -176,7 +174,9 @@ pub(crate) mod tests {
     use iso7816::Status;
 
     use super::*;
-    use crate::constants::{DEFAULT_PIN_TRIES, DEFAULT_PUK_TRIES};
+
+    const DEFAULT_PIN_TRIES: u8 = 5;
+    const DEFAULT_PUK_TRIES: u8 = 3;
 
     // The PIN/PUK tests build APDUs straight, the host byte layer's
     // builders are the host side of the same wire format.

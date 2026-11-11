@@ -32,12 +32,3 @@ pub const AID_FULL: [u8; 11] = [
 /// The 5-byte RID/PIX prefix of [`AID_FULL`] — the shortest SELECT AID this
 /// applet accepts, and the whole of `keyroost-piv`'s `AID`.
 pub const AID_RID: [u8; 5] = [0xA0, 0x00, 0x00, 0x03, 0x08];
-
-/// The factory application PIN: "123456" 0xFF-padded to 8 bytes.
-pub(crate) const DEFAULT_PIN_VALUE: [u8; 8] = [0x31, 0x32, 0x33, 0x34, 0x35, 0x36, 0xFF, 0xFF];
-/// The factory PUK: "12345678".
-pub(crate) const DEFAULT_PUK_VALUE: [u8; 8] = [0x31, 0x32, 0x33, 0x34, 0x35, 0x36, 0x37, 0x38];
-/// The factory PIN retry limit (`PivApplet`'s `pinRetries`).
-pub(crate) const DEFAULT_PIN_TRIES: u8 = 5;
-/// The factory PUK retry limit (`PivApplet`'s `pukRetries`).
-pub(crate) const DEFAULT_PUK_TRIES: u8 = 3;

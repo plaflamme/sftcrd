@@ -515,7 +515,6 @@ fn read_tlv_length(buf: &[u8]) -> Result<(usize, usize), u16> {
 #[allow(clippy::items_after_statements)]
 pub(crate) mod tests {
     use super::*;
-    use crate::constants::DEFAULT_PUK_TRIES;
     use aes::cipher::{BlockCipherDecrypt, KeyInit};
     use elliptic_curve::Generate;
     use elliptic_curve::sec1::ToSec1Point;
@@ -589,7 +588,7 @@ pub(crate) mod tests {
     /// Burn every PUK retry with wrong PUKs, asserting each `63Cx` along
     /// the way; afterwards the PUK is blocked.
     pub(crate) fn block_puk(applet: &mut PivApplet) {
-        for tries in (1..=DEFAULT_PUK_TRIES).rev() {
+        for tries in (1..=3).rev() {
             let resp = applet.process(&keyroost_piv::unblock_pin(b"00000000", b"123456").unwrap());
             assert_eq!(resp.status(), iso7816::Status::RemainingRetries(tries - 1));
         }

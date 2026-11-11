@@ -2,18 +2,15 @@
 //! SET PIN RETRIES (0xFA), and RESET (0xFB) — the commands that mutate the
 //! 9B management key and the PIN/PUK retry counters.
 
-use crate::constants::{
-    DEFAULT_PIN_TRIES, DEFAULT_PIN_VALUE, DEFAULT_PUK_TRIES, DEFAULT_PUK_VALUE,
-};
 use crate::piv::MgmtAlg;
 use crate::{Pin, PivApplet, Response};
-use aes::cipher::{BlockCipherDecrypt, BlockCipherEncrypt, KeyInit};
+use cipher::{BlockCipherDecrypt, BlockCipherEncrypt, KeyInit};
 
 const KEY_REF_MANAGEMENT: u8 = 0x9B;
 
 /// The 9B management key a factory-fresh applet answers to: 3DES with the
 /// Yubico default key (three `01 02 03 04 05 06 07 08` halves).
-const DEFAULT_MGMT_KEY: des::cipher::Key<des::TdesEde3> = des::cipher::array::Array([
+const DEFAULT_MGMT_KEY: cipher::Key<des::TdesEde3> = cipher::array::Array([
     1, 2, 3, 4, 5, 6, 7, 8, 1, 2, 3, 4, 5, 6, 7, 8, 1, 2, 3, 4, 5, 6, 7, 8,
 ]);
 
@@ -148,11 +145,12 @@ impl MgmtKeySlot {
     /// zero-initialized transient IV, which is byte-identical to ECB for
     /// the block-by-block use GA makes of it.
     fn encrypt(&self, data: &[u8]) -> Vec<u8> {
+        let block_size = self.alg().block_size();
         match &self.key {
-            MgmtKey::TripleDes(c) => Self::run_blocks(&c, data, 8, false),
-            MgmtKey::Aes128(c) => Self::run_blocks(&c, data, 16, false),
-            MgmtKey::Aes192(c) => Self::run_blocks(&c, data, 16, false),
-            MgmtKey::Aes256(c) => Self::run_blocks(&c, data, 16, false),
+            MgmtKey::TripleDes(c) => Self::run_blocks(&c, data, block_size, false),
+            MgmtKey::Aes128(c) => Self::run_blocks(&c, data, block_size, false),
+            MgmtKey::Aes192(c) => Self::run_blocks(&c, data, block_size, false),
+            MgmtKey::Aes256(c) => Self::run_blocks(&c, data, block_size, false),
         }
     }
 
@@ -241,8 +239,8 @@ impl PivApplet {
         if !self.pin.verified() {
             return iso7816::Status::SecurityStatusNotSatisfied.into();
         }
-        self.pin = Pin::factory(DEFAULT_PIN_VALUE, command.p1);
-        self.puk = Pin::factory(DEFAULT_PUK_VALUE, command.p2);
+        self.pin = Pin::default_pin(Some(command.p1));
+        self.puk = Pin::default_puk(Some(command.p2));
         iso7816::Status::Success.into()
     }
 
@@ -256,8 +254,8 @@ impl PivApplet {
             return iso7816::Status::ConditionsOfUseNotSatisfied.into();
         }
         self.mgmt = MgmtKeySlot::default();
-        self.pin = Pin::factory(DEFAULT_PIN_VALUE, DEFAULT_PIN_TRIES);
-        self.puk = Pin::factory(DEFAULT_PUK_VALUE, DEFAULT_PUK_TRIES);
+        self.pin = Pin::default_pin(None);
+        self.puk = Pin::default_puk(None);
         iso7816::Status::Success.into()
     }
 }

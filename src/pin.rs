@@ -1,6 +1,16 @@
 //! The applet's reference-data secrets: the application PIN and the PUK.
 
+use elliptic_curve::bigint::CtEq;
 use zeroize::Zeroizing;
+
+/// The factory application PIN: "123456" 0xFF-padded to 8 bytes.
+const DEFAULT_PIN_VALUE: [u8; 8] = [0x31, 0x32, 0x33, 0x34, 0x35, 0x36, 0xFF, 0xFF];
+/// The factory PUK: "12345678".
+const DEFAULT_PUK_VALUE: [u8; 8] = [0x31, 0x32, 0x33, 0x34, 0x35, 0x36, 0x37, 0x38];
+/// The factory PIN retry limit
+const DEFAULT_PIN_TRIES: u8 = 5;
+/// The factory PUK retry limit
+const DEFAULT_PUK_TRIES: u8 = 3;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
 enum VerifiedState {
@@ -34,6 +44,9 @@ impl VerifiedState {
 /// card's reset points (an unverify, an unblock, a fresh instance) — and is
 /// what the card's security-status sync consults when the key slots land.
 pub(crate) struct Pin {
+    /// The default value of this pin, used to check if the current value still
+    /// holds the default value.
+    default_value: Zeroizing<[u8; 8]>,
     /// The stored value: six ASCII digits plus two 0xFF padding bytes (the
     /// eight-character PUK has no padding).
     value: Zeroizing<[u8; 8]>,
@@ -45,6 +58,24 @@ pub(crate) struct Pin {
 }
 
 impl Pin {
+    fn new(value: [u8; 8], max_tries: u8) -> Self {
+        Self {
+            default_value: Zeroizing::new(value),
+            value: Zeroizing::new(value),
+            max_tries,
+            tries: max_tries,
+            verified_state: VerifiedState::default(),
+        }
+    }
+
+    pub(crate) fn default_pin(max_tries: Option<u8>) -> Self {
+        Self::new(DEFAULT_PIN_VALUE, max_tries.unwrap_or(DEFAULT_PIN_TRIES))
+    }
+
+    pub(crate) fn default_puk(max_tries: Option<u8>) -> Self {
+        Self::new(DEFAULT_PUK_VALUE, max_tries.unwrap_or(DEFAULT_PUK_TRIES))
+    }
+
     pub(crate) fn tries(&self) -> u8 {
         self.tries
     }
@@ -53,42 +84,40 @@ impl Pin {
         self.max_tries
     }
 
-    pub(crate) fn is_default(&self, default_value: &[u8]) -> bool {
-        *self.value == default_value
+    pub(crate) fn is_default(&self) -> bool {
+        self.value == self.default_value
     }
 
+    /// Returns true when this pin was successfully verified at least once in the current session
     pub(crate) fn verified(&self) -> bool {
         self.verified_state.is_verified()
     }
 
+    /// Returns true when this pin was successfully verified by the previous command
     pub(crate) fn verified_previous(&self) -> bool {
         self.verified_state.is_verified_previous()
-    }
-
-    /// Factory-fresh state: the stored value, the counter at its limit, not
-    /// verified.
-    pub(crate) fn factory(value: [u8; 8], max_tries: u8) -> Self {
-        Self {
-            value: Zeroizing::new(value),
-            max_tries,
-            tries: max_tries,
-            verified_state: VerifiedState::default(),
-        }
     }
 
     /// Compare `presented` to the stored value in
     /// constant time. A correct value sets `verified` and restores the
     /// counter to its limit; a wrong one burns a try and leaves `verified`
     /// untouched. Callers must not call this while blocked.
-    pub(crate) fn check(&mut self, presented: &[u8]) -> bool {
-        let ok = ct_eq(presented, &self.value[..]);
+    ///
+    /// Returns `Err(remaining tries)` when the presented pin is invalid or when there are no tries left.
+    pub(crate) fn check(&mut self, presented: [u8; 8]) -> Result<(), u8> {
+        if self.tries == 0 {
+            return Err(0);
+        }
+
+        let ok = presented.ct_eq(&self.value).to_bool();
         if ok {
             self.verified_state = VerifiedState::Now;
             self.tries = self.max_tries;
+            Ok(())
         } else {
-            self.tries -= 1;
+            self.tries = self.tries.saturating_sub(1);
+            Err(self.tries)
         }
-        ok
     }
 
     pub(crate) fn session_end(&mut self) {
@@ -119,11 +148,4 @@ impl Pin {
     pub(crate) fn set_value(&mut self, value: [u8; 8]) {
         *self.value = value;
     }
-}
-
-/// Byte-wise equality, constant time over the input — the same fold the
-/// transport layer uses, so a wrong reference leaks neither which byte
-/// differs nor how far the match ran.
-fn ct_eq(a: &[u8], b: &[u8]) -> bool {
-    a.len() == b.len() && a.iter().zip(b).fold(0u8, |acc, (x, y)| acc | (x ^ y)) == 0
 }

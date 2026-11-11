@@ -63,9 +63,7 @@ mod trace;
 mod yubico;
 
 use attest::Attestation;
-use constants::{
-    DEFAULT_PIN_TRIES, DEFAULT_PIN_VALUE, DEFAULT_PUK_TRIES, DEFAULT_PUK_VALUE, DEFAULT_SERIAL,
-};
+use constants::DEFAULT_SERIAL;
 use data::PivData;
 use iso7816::{Instruction, response::Status};
 use management::MgmtKeySlot;
@@ -183,8 +181,8 @@ impl PivApplet {
     pub fn with_serial(serial: u32) -> Self {
         Self {
             serial,
-            pin: Pin::factory(DEFAULT_PIN_VALUE, DEFAULT_PIN_TRIES),
-            puk: Pin::factory(DEFAULT_PUK_VALUE, DEFAULT_PUK_TRIES),
+            pin: Pin::default_pin(None),
+            puk: Pin::default_puk(None),
             mgmt: MgmtKeySlot::default(),
             slots: Slots::default(),
             data: PivData::default(),

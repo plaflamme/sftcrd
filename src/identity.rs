@@ -1,7 +1,7 @@
 //! GET VERSION (0xFD), GET SERIAL (0xF8) and GET METADATA (0xF7): the
 //! read-only Yubico extension commands.
 
-use crate::constants::{DEFAULT_PIN_VALUE, DEFAULT_PUK_VALUE, VERSION};
+use crate::constants::VERSION;
 use crate::pin::Pin;
 use crate::piv::TouchPolicy;
 use crate::slot::factory_pin_policy;
@@ -70,8 +70,8 @@ impl PivApplet {
             return iso7816::Status::IncorrectP1OrP2Parameter.into();
         }
         let body = match command.p2 {
-            0x80 => PivApplet::pin_reference_metadata(&self.pin, DEFAULT_PIN_VALUE),
-            0x81 => PivApplet::pin_reference_metadata(&self.puk, DEFAULT_PUK_VALUE),
+            0x80 => PivApplet::pin_reference_metadata(&self.pin),
+            0x81 => PivApplet::pin_reference_metadata(&self.puk),
             reference => match crate::piv::Slot::from_u8(reference) {
                 Some(slot) => match self.key_reference_metadata(slot) {
                     Some(body) => body,
@@ -113,12 +113,11 @@ impl PivApplet {
 
     /// The flat metadata TLVs of a PIN/PUK reference: `05 <is default>` and
     /// `06 <remaining><total>`.
-    fn pin_reference_metadata(reference: &Pin, factory: [u8; 8]) -> Vec<u8> {
-        let is_default = reference.is_default(&factory);
+    fn pin_reference_metadata(reference: &Pin) -> Vec<u8> {
         vec![
             0x05,
             0x01,
-            u8::from(is_default),
+            u8::from(reference.is_default()),
             0x06,
             0x02,
             reference.tries(),
@@ -150,13 +149,16 @@ fn push_ber_len(out: &mut Vec<u8>, len: usize) {
 #[allow(clippy::cast_possible_truncation)]
 mod tests {
     use super::*;
-    use crate::constants::{DEFAULT_PIN_TRIES, DEFAULT_PUK_TRIES, DEFAULT_SERIAL};
+    use crate::constants::DEFAULT_SERIAL;
     use crate::general_auth::tests::mgmt_handshake;
     use iso7816::Status;
     use keyroost_piv::{
         KeyAlg, PIN_REF_APPLICATION, PinPolicy, Slot, TouchPolicy, change_reference, generate_key,
         get_metadata, parse_metadata, parse_public_key, verify_pin,
     };
+
+    const DEFAULT_PIN_TRIES: u8 = 5;
+    const DEFAULT_PUK_TRIES: u8 = 3;
 
     /// A management-unlocked applet: the factory 3DES handshake ran, the
     /// 9B session is unlocked.
