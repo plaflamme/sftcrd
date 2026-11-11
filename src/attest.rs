@@ -121,24 +121,26 @@ impl PivApplet {
 /// key algorithm and the `PublicKey` variant — the EC curve's uncompressed
 /// point, or the RSA modulus and public exponent.
 fn target_public_key(key: &SlotKey) -> Option<x509_cert::SubjectPublicKeyInfo> {
-    match key.alg {
+    match key.alg() {
         KeyAlg::EccP256 => {
             let secret_key =
-                elliptic_curve::SecretKey::<p256::NistP256>::from_slice(&key.secret[..32]).ok()?;
+                elliptic_curve::SecretKey::<p256::NistP256>::from_slice(&key.secret()[..32])
+                    .ok()?;
             x509_cert::SubjectPublicKeyInfo::from_key(&secret_key.public_key()).ok()
         }
         KeyAlg::EccP384 => {
             let secret_key =
-                elliptic_curve::SecretKey::<p384::NistP384>::from_slice(&key.secret[..48]).ok()?;
+                elliptic_curve::SecretKey::<p384::NistP384>::from_slice(&key.secret()[..48])
+                    .ok()?;
             x509_cert::SubjectPublicKeyInfo::from_key(&secret_key.public_key()).ok()
         }
         KeyAlg::EccP521 => {
             let secret_key =
-                elliptic_curve::SecretKey::<p521::NistP521>::from_slice(&key.secret[..]).ok()?;
+                elliptic_curve::SecretKey::<p521::NistP521>::from_slice(&key.secret()[..]).ok()?;
             x509_cert::SubjectPublicKeyInfo::from_key(&secret_key.public_key()).ok()
         }
         KeyAlg::Rsa1024 | KeyAlg::Rsa2048 | KeyAlg::Rsa3072 | KeyAlg::Rsa4096 => {
-            let rsa_key = PrivateKey::from_pkcs1_der(key.secret.as_slice()).ok()?;
+            let rsa_key = PrivateKey::from_pkcs1_der(key.secret().as_slice()).ok()?;
             let der = rsa_key.to_public_key().to_public_key_der().ok()?;
             x509_cert::SubjectPublicKeyInfo::from_der(&der.to_vec()).ok()
         }
@@ -302,7 +304,6 @@ mod tests {
     use sha2::Digest;
     use x509_cert::builder::Builder;
     use x509_cert::der::Encode;
-    use zeroize::Zeroizing;
 
     /// The point the GENERATE reply announced (the `86` member of the
     /// `7F49` template) from the reply's data field.
@@ -319,10 +320,8 @@ mod tests {
         let slot = &mut applet.slots[crate::piv::Slot::Authentication];
         let key = elliptic_curve::SecretKey::<p256::NistP256>::generate_from_rng(&mut rand::rng());
         let signing_key = ecdsa::SigningKey::<p256::NistP256>::from(&key);
-        slot.key = Some(SlotKey {
-            alg: KeyAlg::EccP256,
-            secret: Zeroizing::new(key.to_bytes().to_vec()),
-        });
+        slot.key =
+            Some(SlotKey::import(KeyAlg::EccP256, &key.to_bytes()).expect("can import P256"));
         let cert = x509_cert::builder::CertificateBuilder::new(
             x509_cert::builder::profile::cabf::Root::new(
                 false,

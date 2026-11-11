@@ -198,55 +198,15 @@ impl PivApplet {
         let Some(slot) = Slot::from_u8(command.p2) else {
             return iso7816::Status::IncorrectP1OrP2Parameter.into();
         };
-        let secret = match alg {
-            KeyAlg::EccP256 => {
-                let key = elliptic_curve::SecretKey::<p256::NistP256>::generate_from_rng(
-                    &mut rand::rng(),
-                );
-                Zeroizing::new(key.to_bytes().to_vec())
-            }
-            KeyAlg::EccP384 => {
-                let key = elliptic_curve::SecretKey::<p384::NistP384>::generate_from_rng(
-                    &mut rand::rng(),
-                );
-                Zeroizing::new(key.to_bytes().to_vec())
-            }
-            KeyAlg::EccP521 => {
-                let key = elliptic_curve::SecretKey::<p521::NistP521>::generate_from_rng(
-                    &mut rand::rng(),
-                );
-                Zeroizing::new(key.to_bytes().to_vec())
-            }
-            KeyAlg::Rsa1024 | KeyAlg::Rsa2048 | KeyAlg::Rsa3072 | KeyAlg::Rsa4096 => {
-                let bits = match alg {
-                    KeyAlg::Rsa1024 => 1024,
-                    KeyAlg::Rsa2048 => 2048,
-                    KeyAlg::Rsa3072 => 3072,
-                    KeyAlg::Rsa4096 => 4096,
-                    _ => unreachable!("alg is an RSA key size"),
-                };
-                let Ok(key) = rsa::PrivateKey::new(&mut rand::rngs::SysRng, bits) else {
-                    return iso7816::Status::IncorrectDataParameter.into();
-                };
-                // The card's storage form: the key's PKCS#1 encoding,
-                // zeroized on drop. `new` always precomputes the CRT
-                // exponents, which `to_pkcs1_der` needs for its
-                // `crtCoefficient` field.
-                match key.to_pkcs1_der() {
-                    Ok(doc) => Zeroizing::new(doc.as_bytes().to_vec()),
-                    Err(_) => return iso7816::Status::IncorrectDataParameter.into(),
-                }
-            }
-            _ => return iso7816::Status::IncorrectDataParameter.into(),
+        let slot_key = match SlotKey::generate(alg) {
+            Ok(slot_key) => slot_key,
+            Err(status) => return status.into(),
         };
-        let key = SlotKey { alg, secret };
-        let Some(inner) = key.public_inner() else {
-            return iso7816::Status::IncorrectDataParameter.into();
-        };
-        self.commit_slot_key(slot, key, false, pin_policy, touch_policy);
+        let public_key = slot_key.public_inner();
+        self.commit_slot_key(slot, slot_key, false, pin_policy, touch_policy);
 
-        let mut data = Vec::with_capacity(3 + inner.len());
-        push_tlv(&mut data, &[0x7F, 0x49], &inner);
+        let mut data = Vec::with_capacity(3 + public_key.len());
+        push_tlv(&mut data, &[0x7F, 0x49], &public_key);
         data.into()
     }
 
@@ -333,7 +293,10 @@ impl PivApplet {
             }
             _ => unreachable!("alg is a NIST curve or an RSA key size"),
         };
-        let key = SlotKey { alg, secret };
+        let key = match SlotKey::import(alg, &secret) {
+            Ok(key) => key,
+            Err(status) => return status.into(),
+        };
         self.commit_slot_key(index, key, true, import.pin_policy, import.touch_policy);
         iso7816::Status::Success.into()
     }
@@ -870,8 +833,8 @@ mod tests {
 
         let slot = &app.slots[crate::piv::Slot::Authentication];
         let key = slot.key.as_ref().expect("the imported key");
-        assert_eq!(key.alg, KeyAlg::EccP256);
-        assert_eq!(&key.secret[..], &scalar[..]);
+        assert_eq!(key.alg(), KeyAlg::EccP256);
+        assert_eq!(&key.secret()[..], &scalar[..]);
         assert!(slot.imported);
         assert_eq!(slot.pin_policy, PinPolicy::Once);
         assert_eq!(slot.touch_policy, TouchPolicy::Always);
@@ -987,7 +950,7 @@ mod tests {
             .as_ref()
             .expect("the imported key");
         let mut bytes = [0u8; 32];
-        bytes.copy_from_slice(&key.secret[..]);
+        bytes.copy_from_slice(&key.secret()[..]);
         let sk = SigningKey::from_bytes(&bytes.into()).expect("a valid scalar");
         let vk = VerifyingKey::from(&sk);
         let digest = [0x37; 32];
@@ -1113,8 +1076,8 @@ mod tests {
             .key
             .as_ref()
             .expect("the generated key");
-        let stored =
-            rsa::PrivateKey::from_pkcs1_der(key.secret.as_slice()).expect("a PKCS#1 RSAPrivateKey");
+        let stored = rsa::PrivateKey::from_pkcs1_der(key.secret().as_slice())
+            .expect("a PKCS#1 RSAPrivateKey");
         assert_eq!(stored.n().to_be_bytes().to_vec(), n);
         assert_eq!(stored.e(), &rsa::BoxedUint::from_be_slice_vartime(&e));
         rsa_sign_check(&mut app, alg, 0x9E, &n, &e, 0x2B);
@@ -1153,7 +1116,7 @@ mod tests {
                 .key
                 .as_ref()
                 .expect("the imported key");
-            let stored = rsa::PrivateKey::from_pkcs1_der(key.secret.as_slice())
+            let stored = rsa::PrivateKey::from_pkcs1_der(key.secret().as_slice())
                 .expect("a PKCS#1 RSAPrivateKey");
             assert_eq!(stored.n().to_be_bytes().to_vec(), host.n);
             rsa_sign_check(
@@ -1288,7 +1251,11 @@ mod tests {
         let dest = &app.slots[crate::piv::Slot::retired(1).expect("retired slot 1")];
         assert!(source.key.is_none(), "the source keeps no key");
         assert_eq!(
-            dest.key.as_ref().expect("the key moved").secret.as_slice(),
+            dest.key
+                .as_ref()
+                .expect("the key moved")
+                .secret()
+                .as_slice(),
             &scalar
         );
         assert_eq!(dest.pin_policy, PinPolicy::Once);
@@ -1419,11 +1386,16 @@ mod tests {
         let source = &app.slots[crate::piv::Slot::Signature];
         let dest = &app.slots[crate::piv::Slot::KeyManagement];
         assert_eq!(
-            source.key.as_ref().expect("still there").secret.as_slice(),
+            source
+                .key
+                .as_ref()
+                .expect("still there")
+                .secret()
+                .as_slice(),
             &scalar
         );
         assert_eq!(
-            dest.key.as_ref().expect("still there").secret.as_slice(),
+            dest.key.as_ref().expect("still there").secret().as_slice(),
             &other
         );
     }
@@ -1456,7 +1428,7 @@ mod tests {
                 .key
                 .as_ref()
                 .expect("a key")
-                .alg,
+                .alg(),
             KeyAlg::EccP384
         );
 
@@ -1474,7 +1446,7 @@ mod tests {
                 .key
                 .as_ref()
                 .expect("a key")
-                .alg,
+                .alg(),
             KeyAlg::EccP521
         );
     }
@@ -1504,7 +1476,7 @@ mod tests {
                 .key
                 .as_ref()
                 .expect("a key")
-                .alg,
+                .alg(),
             KeyAlg::EccP384
         );
         assert!(app.slots[crate::piv::Slot::Authentication].imported);
@@ -1553,7 +1525,7 @@ mod tests {
                 .key
                 .as_ref()
                 .expect("a key")
-                .alg,
+                .alg(),
             KeyAlg::EccP521
         );
         assert!(app.slots[crate::piv::Slot::retired(1).expect("retired slot 1")].imported);

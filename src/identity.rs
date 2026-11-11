@@ -94,9 +94,9 @@ impl PivApplet {
         // The `7F49` inner TLVs, unwrapped from their template exactly as
         // the GENERATE response carries it: the `86` point for EC keys,
         // the `81` modulus and `82` exponent for RSA keys.
-        let inner = key.public_inner()?;
+        let inner = key.public_inner();
         let mut body = Vec::new();
-        body.extend_from_slice(&[0x01, 0x01, key.alg as u8]);
+        body.extend_from_slice(&[0x01, 0x01, key.alg() as u8]);
         body.extend_from_slice(&[
             0x02,
             0x02,

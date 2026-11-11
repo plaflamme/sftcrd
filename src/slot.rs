@@ -23,10 +23,14 @@
 use std::ops::{Index, IndexMut};
 
 use crate::piv::{KeyAlg, PinPolicy, TouchPolicy};
-use elliptic_curve::sec1::ToSec1Point;
+use ecdsa::SignatureEncoding;
+use elliptic_curve::Generate;
 use iso7816::Status;
-use rsa::{pkcs1::DecodeRsaPrivateKey, traits::PublicKeyParts};
-use zeroize::Zeroizing;
+use rsa::{
+    pkcs1::{DecodeRsaPrivateKey, EncodeRsaPrivateKey},
+    signature::hazmat::PrehashSigner,
+    traits::PublicKeyParts,
+};
 
 use crate::PivApplet;
 
@@ -39,7 +43,7 @@ use crate::PivApplet;
 /// and MOVE KEY.
 pub(crate) struct Slot {
     /// The slot's key, or `None` for an empty slot.
-    #[allow(dead_code)] // read by slot GA (T3) and GET METADATA (T5).
+    // read by slot GA (T3) and GET METADATA (T5).
     pub(crate) key: Option<SlotKey>,
     /// The PIN policy GENERATE KEY (re)sets for this slot; the factory
     /// value per slot.
@@ -67,79 +71,179 @@ pub(crate) struct Slot {
 /// modulus, private exponent and the prime factors — and the card keeps
 /// only that byte string, deserializing it for each use (the raw GA sign
 /// and `public_inner` both read it).
-#[allow(dead_code)] // read by slot GA (T3) and GET METADATA (T5).
-pub(crate) struct SlotKey {
-    /// The key's algorithm — the slot's key-algorithm id on the wire.
-    pub(crate) alg: KeyAlg,
-    /// The key's secret material, zeroized on drop: the EC private
-    /// scalar, or — for RSA slots — the key's PKCS#1 DER encoding.
-    pub(crate) secret: Zeroizing<Vec<u8>>,
+// read by slot GA (T3) and GET METADATA (T5).
+pub(crate) enum SlotKey {
+    EccP256(elliptic_curve::SecretKey<p256::NistP256>),
+    EccP384(elliptic_curve::SecretKey<p384::NistP384>),
+    EccP521(elliptic_curve::SecretKey<p521::NistP521>),
+    Rsa(usize, rsa::PrivateKey),
+}
+
+fn encode_public_point(point: &[u8]) -> Vec<u8> {
+    let mut inner = Vec::with_capacity(2 + point.len());
+    crate::data::push_tlv(&mut inner, &[0x86], point);
+    inner
 }
 
 impl SlotKey {
+    pub(crate) fn generate(alg: KeyAlg) -> Result<Self, iso7816::Status> {
+        match alg {
+            KeyAlg::EccP256 => Ok(SlotKey::EccP256(
+                elliptic_curve::SecretKey::<p256::NistP256>::generate_from_rng(&mut rand::rng()),
+            )),
+            KeyAlg::EccP384 => Ok(SlotKey::EccP384(
+                elliptic_curve::SecretKey::<p384::NistP384>::generate_from_rng(&mut rand::rng()),
+            )),
+            KeyAlg::EccP521 => Ok(SlotKey::EccP521(
+                elliptic_curve::SecretKey::<p521::NistP521>::generate_from_rng(&mut rand::rng()),
+            )),
+            KeyAlg::Rsa1024 | KeyAlg::Rsa2048 | KeyAlg::Rsa3072 | KeyAlg::Rsa4096 => {
+                let bits = match alg {
+                    KeyAlg::Rsa1024 => 1024,
+                    KeyAlg::Rsa2048 => 2048,
+                    KeyAlg::Rsa3072 => 3072,
+                    KeyAlg::Rsa4096 => 4096,
+                    _ => unreachable!("alg is an RSA key size"),
+                };
+                let Ok(key) = rsa::PrivateKey::new(&mut rand::rng(), bits) else {
+                    return Err(iso7816::Status::IncorrectDataParameter);
+                };
+                Ok(Self::Rsa(bits, key))
+            }
+            _ => Err(iso7816::Status::IncorrectDataParameter),
+        }
+    }
+
+    pub(crate) fn import(alg: KeyAlg, secret: &[u8]) -> Result<Self, iso7816::Status> {
+        match alg {
+            KeyAlg::EccP256 => Ok(Self::EccP256(
+                elliptic_curve::SecretKey::<p256::NistP256>::from_slice(secret)
+                    .expect("todo remove expect"),
+            )),
+            KeyAlg::EccP384 => Ok(Self::EccP384(
+                elliptic_curve::SecretKey::<p384::NistP384>::from_slice(secret)
+                    .expect("todo remove expect"),
+            )),
+            KeyAlg::EccP521 => Ok(Self::EccP521(
+                elliptic_curve::SecretKey::<p521::NistP521>::from_slice(secret)
+                    .expect("todo remove expect"),
+            )),
+            KeyAlg::Rsa1024 => Ok(Self::Rsa(
+                1024,
+                rsa::PrivateKey::from_pkcs1_der(secret).expect("todo remove expect"),
+            )),
+            KeyAlg::Rsa2048 => Ok(Self::Rsa(
+                2048,
+                rsa::PrivateKey::from_pkcs1_der(secret).expect("todo remove expect"),
+            )),
+            KeyAlg::Rsa3072 => Ok(Self::Rsa(
+                3072,
+                rsa::PrivateKey::from_pkcs1_der(secret).expect("todo remove expect"),
+            )),
+            KeyAlg::Rsa4096 => Ok(Self::Rsa(
+                4096,
+                rsa::PrivateKey::from_pkcs1_der(secret).expect("todo remove expect"),
+            )),
+            _ => Err(iso7816::Status::IncorrectP1OrP2Parameter),
+        }
+    }
+
+    pub(crate) fn secret(&self) -> Vec<u8> {
+        match self {
+            SlotKey::EccP256(secret_key) => secret_key.to_bytes().to_vec(),
+            SlotKey::EccP384(secret_key) => secret_key.to_bytes().to_vec(),
+            SlotKey::EccP521(secret_key) => secret_key.to_bytes().to_vec(),
+            SlotKey::Rsa(_, private_key) => private_key
+                .to_pkcs1_der()
+                .expect("can serialize to pkcs1")
+                .as_bytes()
+                .to_vec(),
+        }
+    }
+
+    pub(crate) fn alg(&self) -> KeyAlg {
+        match self {
+            SlotKey::EccP256(_) => KeyAlg::EccP256,
+            SlotKey::EccP384(_) => KeyAlg::EccP384,
+            SlotKey::EccP521(_) => KeyAlg::EccP521,
+            SlotKey::Rsa(1024, _) => KeyAlg::Rsa1024,
+            SlotKey::Rsa(2048, _) => KeyAlg::Rsa2048,
+            SlotKey::Rsa(3072, _) => KeyAlg::Rsa3072,
+            SlotKey::Rsa(4096, _) => KeyAlg::Rsa4096,
+            SlotKey::Rsa(bits, _) => unreachable!("invalid RSA bits {bits}"),
+        }
+    }
     /// The `7F49`-inner public-key TLVs this key reports — the same shape
     /// GENERATE's answer, the GET METADATA `04` member and the host's
     /// `parse_public_key`/`parse_metadata` all carry: the uncompressed
     /// point under `86` for EC keys, the modulus under `81` and the
     /// exponent under `82` for RSA keys. `None` for an algorithm this
     /// applet does not store.
-    pub(crate) fn public_inner(&self) -> Option<Vec<u8>> {
-        match self.alg {
-            KeyAlg::EccP256 | KeyAlg::EccP384 | KeyAlg::EccP521 => {
-                let point = match self.alg {
-                    KeyAlg::EccP256 => {
-                        let signing =
-                            ecdsa::SigningKey::<p256::NistP256>::from_slice(&self.secret[..32])
-                                .ok()?;
-                        signing
-                            .verifying_key()
-                            .to_sec1_point(false)
-                            .as_bytes()
-                            .to_vec()
-                    }
-                    KeyAlg::EccP384 => {
-                        let signing =
-                            ecdsa::SigningKey::<p384::NistP384>::from_slice(&self.secret[..48])
-                                .ok()?;
-                        signing
-                            .verifying_key()
-                            .to_sec1_point(false)
-                            .as_bytes()
-                            .to_vec()
-                    }
-                    KeyAlg::EccP521 => {
-                        // The generic `SecretKey` derivation — the ECDH path's
-                        // own route — since `NistP521` does not satisfy the
-                        // `ecdsa` crate's signing bounds.
-                        let secret = elliptic_curve::SecretKey::<p521::NistP521>::from_slice(
-                            &self.secret[..],
-                        )
-                        .ok()?;
-                        secret.public_key().to_sec1_point(false).as_bytes().to_vec()
-                    }
-                    _ => unreachable!("the outer match arm holds only the EC curves"),
-                };
-                let mut inner = Vec::with_capacity(2 + point.len());
-                crate::data::push_tlv(&mut inner, &[0x86], &point);
-                Some(inner)
-            }
-            KeyAlg::Rsa1024 | KeyAlg::Rsa2048 | KeyAlg::Rsa3072 | KeyAlg::Rsa4096 => {
-                // The slot key's PKCS#1 encoding: serve the modulus under
-                // `81` and the public exponent under `82`, as the
-                // reference applet's `getKeyDetails` does.
-                let Ok(key) = rsa::PrivateKey::from_pkcs1_der(self.secret.as_slice()) else {
-                    return None;
-                };
+    pub(crate) fn public_inner(&self) -> Vec<u8> {
+        match self {
+            SlotKey::EccP256(secret) => encode_public_point(&secret.public_key().to_sec1_bytes()),
+            SlotKey::EccP384(secret) => encode_public_point(&secret.public_key().to_sec1_bytes()),
+            SlotKey::EccP521(secret) => encode_public_point(&secret.public_key().to_sec1_bytes()),
+            SlotKey::Rsa(_, secret) => {
                 let (n, e) = (
-                    key.n().to_be_bytes(),
-                    key.e().to_be_bytes_trimmed_vartime(), // NOTE: keyroost is sensitive to leading zeroes.
+                    secret.n().to_be_bytes(),
+                    secret.e().to_be_bytes_trimmed_vartime(), // NOTE: keyroost is sensitive to leading zeroes.
                 );
                 let mut inner = Vec::with_capacity(2 + n.len() + 5);
                 crate::data::push_tlv(&mut inner, &[0x81], &n);
                 crate::data::push_tlv(&mut inner, &[0x82], &e);
-                Some(inner)
+                inner
             }
-            _ => None,
+        }
+    }
+
+    #[allow(unused)]
+    pub(crate) fn sign(&self, digest: &[u8]) -> Result<Vec<u8>, iso7816::Status> {
+        match self {
+            SlotKey::EccP256(secret_key) => {
+                let sig: ecdsa::Signature<p256::NistP256> = ecdsa::SigningKey::from(secret_key)
+                    .sign_prehash(digest)
+                    .map_err(|_| iso7816::Status::IncorrectDataParameter)?;
+                Ok(sig.to_der().to_vec())
+            }
+            SlotKey::EccP384(secret_key) => {
+                let sig: ecdsa::Signature<p384::NistP384> = ecdsa::SigningKey::from(secret_key)
+                    .sign_prehash(digest)
+                    .map_err(|_| iso7816::Status::IncorrectDataParameter)?;
+                Ok(sig.to_der().to_vec())
+            }
+            SlotKey::EccP521(secret_key) => {
+                let sig: ecdsa::Signature<p521::NistP521> = ecdsa::SigningKey::from(secret_key)
+                    .sign_prehash(digest)
+                    .map_err(|_| iso7816::Status::IncorrectDataParameter)?;
+                Ok(sig.to_der().to_vec())
+            }
+            SlotKey::Rsa(_, key) => {
+                use rsa::BoxedUint;
+                use rsa::hazmat::rsa_decrypt;
+                use rsa::traits::PublicKeyParts;
+
+                let n = key.n().to_be_bytes();
+                if digest.len() != n.len() {
+                    return Err(iso7816::Status::IncorrectDataParameter);
+                }
+
+                let c = BoxedUint::from_be_slice_vartime(digest);
+                if c >= key.n().clone().get() {
+                    return Err(iso7816::Status::IncorrectDataParameter);
+                }
+
+                let Ok(m) = rsa_decrypt::<rand::rngs::SysRng>(None, key, &c) else {
+                    return Err(iso7816::Status::IncorrectDataParameter);
+                };
+
+                // Zero-extend the residue to the full modulus size.
+                let m_be = m.to_be_bytes();
+                let mut out = vec![0u8; n.len()];
+                let offset = n.len() - m_be.len();
+                out[offset..].copy_from_slice(&m_be);
+                Ok(out)
+            }
         }
     }
 }
