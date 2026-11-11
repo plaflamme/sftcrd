@@ -8,8 +8,7 @@ use crate::constants::{
     GA_MAX_CHALLENGE, GA_TAG_CHALLENGE, GA_TAG_DYN_AUTH, GA_TAG_EXP, GA_TAG_RESPONSE,
     GA_TAG_WITNESS,
 };
-use crate::piv::{KeyAlg, MgmtAlg};
-use crate::slot::SlotKey;
+use crate::piv::MgmtAlg;
 use crate::{PivApplet, Response};
 
 impl PivApplet {
@@ -92,32 +91,14 @@ impl PivApplet {
             return iso7816::Status::IncorrectP1OrP2Parameter.into();
         }
         match (t.challenge, t.exponent) {
-            (Some(digest), None) => {
-                // The member must be the slot's sign input: the curve's
-                // field size for EC (the host hashes with the curve's
-                // hash), the modulus size for RSA (the host's pre-encoded
-                // DigestInfo block).
-                let Some(size) = ga_sign_block_bytes(key.alg()) else {
-                    return iso7816::Status::IncorrectDataParameter.into();
-                };
-                if digest.len() != size {
-                    return iso7816::Status::IncorrectDataParameter.into();
-                }
-                match key.sign_prehash(digest) {
-                    Ok(out) => ga_response(GA_TAG_RESPONSE, &out),
-                    Err(status) => status.into(),
-                }
-            }
-            (None, Some(peer)) => {
-                // The peer must be an uncompressed point of the slot curve.
-                let Some(size) = ec_point_bytes(key.alg()) else {
-                    return iso7816::Status::IncorrectDataParameter.into();
-                };
-                if peer.len() != size {
-                    return iso7816::Status::IncorrectDataParameter.into();
-                }
-                slot_ecdh(key, peer)
-            }
+            (Some(digest), None) => match key.sign_prehash(digest) {
+                Ok(out) => ga_response(GA_TAG_RESPONSE, &out),
+                Err(status) => status.into(),
+            },
+            (None, Some(peer)) => match key.ecdh(peer) {
+                Ok(shared) => ga_response(GA_TAG_RESPONSE, &shared),
+                Err(status) => status.into(),
+            },
             _ => iso7816::Status::IncorrectP1OrP2Parameter.into(),
         }
     }
@@ -180,93 +161,6 @@ impl PivApplet {
             _ => iso7816::Status::IncorrectP1OrP2Parameter.into(),
         }
     }
-}
-
-/// The size of the `81` member a GA signature on `alg` expects: the ECDSA
-/// hash output size for EC (the host sends the raw digest, hashed with the
-/// curve's SP 800-78 hash) and the modulus size for RSA (the host sends the
-/// pre-encoded PKCS#1 v1.5 `DigestInfo` block — the card applies no padding).
-///
-/// For P-256/P-384 the hash output happens to equal the curve's field size
-/// (SHA-256 → 32, SHA-384 → 48), but P-521 pairs with SHA-512, whose 64-byte
-/// output is two bytes short of the 66-byte field: the host sends those 64
-/// bytes, so that is what the slot path accepts (`sign_prehash` reduces the
-/// digest modulo `n` regardless of its length).
-fn ga_sign_block_bytes(alg: KeyAlg) -> Option<usize> {
-    match alg {
-        KeyAlg::EccP256 => Some(32),
-        KeyAlg::EccP384 => Some(48),
-        KeyAlg::EccP521 => Some(64),
-        KeyAlg::Rsa1024 => Some(128),
-        KeyAlg::Rsa2048 => Some(256),
-        KeyAlg::Rsa3072 => Some(384),
-        KeyAlg::Rsa4096 => Some(512),
-        _ => None,
-    }
-}
-
-/// The uncompressed-point size a GA key agreement on `alg` expects:
-/// `04 || X || Y`, so `1 + 2 * field_size` -- 65 for P-256 (32-byte field),
-/// 97 for P-384 (48), 133 for P-521 (66-byte field; its coordinates are the
-/// full field width, not the 64-byte SHA-512 size).
-fn ec_point_bytes(alg: KeyAlg) -> Option<usize> {
-    match alg {
-        KeyAlg::EccP256 => Some(65),
-        KeyAlg::EccP384 => Some(97),
-        KeyAlg::EccP521 => Some(133),
-        _ => None,
-    }
-}
-
-/// The ECDH half of the slot GA: the peer's uncompressed point is checked
-/// on the slot's curve and the applet answers the shared secret — the
-/// x-coordinate of the product, `32`/`48`/`66` bytes for
-/// P-256/384/521 — as the raw value under `82`.
-fn slot_ecdh(key: &SlotKey, peer: &[u8]) -> Response {
-    match key.alg() {
-        KeyAlg::EccP256 => ecdh_p256(key, peer),
-        KeyAlg::EccP384 => ecdh_p384(key, peer),
-        KeyAlg::EccP521 => ecdh_p521(key, peer),
-        _ => iso7816::Status::IncorrectDataParameter.into(),
-    }
-}
-
-/// The ECDH half for one curve: the host sends the peer's uncompressed
-/// point under `85` and the card answers the shared secret's x-coordinate
-/// under `82`.
-fn ecdh_p256(key: &SlotKey, peer: &[u8]) -> Response {
-    let SlotKey::EccP256(secret) = key else {
-        return iso7816::Status::IncorrectDataParameter.into();
-    };
-    let Ok(peer) = elliptic_curve::PublicKey::<p256::NistP256>::from_sec1_bytes(peer) else {
-        return iso7816::Status::IncorrectDataParameter.into();
-    };
-    let shared = elliptic_curve::ecdh::diffie_hellman(secret.to_nonzero_scalar(), peer.as_affine());
-    ga_response(GA_TAG_RESPONSE, shared.raw_secret_bytes())
-}
-
-/// The ECDH half for P-384: the shared secret is the 48-byte x-coordinate.
-fn ecdh_p384(key: &SlotKey, peer: &[u8]) -> Response {
-    let SlotKey::EccP384(secret) = key else {
-        return iso7816::Status::IncorrectDataParameter.into();
-    };
-    let Ok(peer) = elliptic_curve::PublicKey::<p384::NistP384>::from_sec1_bytes(peer) else {
-        return iso7816::Status::IncorrectDataParameter.into();
-    };
-    let shared = elliptic_curve::ecdh::diffie_hellman(secret.to_nonzero_scalar(), peer.as_affine());
-    ga_response(GA_TAG_RESPONSE, shared.raw_secret_bytes())
-}
-
-/// The ECDH half for P-521: the shared secret is the 66-byte x-coordinate.
-fn ecdh_p521(key: &SlotKey, peer: &[u8]) -> Response {
-    let SlotKey::EccP521(secret) = key else {
-        return iso7816::Status::IncorrectDataParameter.into();
-    };
-    let Ok(peer) = elliptic_curve::PublicKey::<p521::NistP521>::from_sec1_bytes(peer) else {
-        return iso7816::Status::IncorrectDataParameter.into();
-    };
-    let shared = elliptic_curve::ecdh::diffie_hellman(secret.to_nonzero_scalar(), peer.as_affine());
-    ga_response(GA_TAG_RESPONSE, shared.raw_secret_bytes())
 }
 
 /// One parsed SP 800-73-4 dynamic-auth template: the empty member the host
@@ -892,40 +786,6 @@ pub(crate) mod tests {
         assert_eq!(z, expected.raw_secret_bytes().as_slice());
     }
 
-    // #[test]
-    // fn ga_slot_always_policy_tracks_the_verify() {
-    //     let mut applet = PivApplet::new();
-    //     let point = slot_with_p256(&mut applet, keyroost_piv::Slot::Signature); // 9C: ALWAYS
-    //     let digest = [0x5A; 32];
-    //     // No VERIFY: gated.
-    //     let r = applet.process(&keyroost_piv::general_auth_sign(
-    //         keyroost_piv::KeyAlg::EccP256.id(),
-    //         0x9C,
-    //         &digest,
-    //     ));
-    //     assert_eq!(r.status(), iso7816::Status::SecurityStatusNotSatisfied);
-    //     // A VERIFY followed by another APDU consumes the latch: gated again.
-    //     assert_eq!(
-    //         applet
-    //             .process(&keyroost_piv::verify_pin(b"123456").unwrap())
-    //             .status(), iso7816::Status::Success
-    //     );
-    //     assert_eq!(applet.process(&keyroost_piv::select_full()).status(), iso7816::Status::Success);
-    //     let r = applet.process(&keyroost_piv::general_auth_sign(
-    //         keyroost_piv::KeyAlg::EccP256.id(),
-    //         0x9C,
-    //         &digest,
-    //     ));
-    //     assert_eq!(r.status(), iso7816::Status::SecurityStatusNotSatisfied);
-    //     // A VERIFY immediately followed by the GA: the signature verifies
-    //     // under the announced point.
-    //     assert_eq!(
-    //         applet
-    //             .process(&keyroost_piv::verify_pin(b"123456").unwrap())
-    //             .status(), iso7816::Status::Success
-    //     );
-    //     card_signature(&mut applet, 0x9C, &point, &digest);
-    // }
     #[test]
     fn ga_slot_refuses_a_p1_that_is_not_the_slots_algorithm() {
         let mut applet = PivApplet::new();

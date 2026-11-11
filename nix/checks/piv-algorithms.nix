@@ -30,6 +30,7 @@ import ./make-piv-check.nix
           force_flag = " --force" if force else ""
           keyroostctl(f"piv key generate --slot {slot} --algorithm {alg} --mgmt-key env:MGMT{force_flag} --yes")
           keyroostctl(f"piv cert generate --slot {slot} --subject 'CN=Test-{alg}-{slot}' --mgmt-key env:MGMT --pin env:PIN --yes")
+          keyroostctl(f"piv test --slot {slot} --pin env:PIN")
           keyroostctl(f"piv cert export --slot {slot} --out /tmp/cert_{alg}_{slot}.pem --overwrite")
           keyroostctl(f"piv cert import --slot {slot} --in /tmp/cert_{alg}_{slot}.pem --mgmt-key env:MGMT --yes")
           keyroostctl(f"piv cert export --slot {slot} --out /tmp/cert_{alg}_{slot}_2.pem --overwrite")

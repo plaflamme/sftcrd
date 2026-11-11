@@ -171,20 +171,36 @@ impl SlotKey {
     pub(crate) fn sign_prehash(&self, digest: &[u8]) -> Result<Vec<u8>, iso7816::Status> {
         match self {
             SlotKey::EccP256(secret_key) => {
+                let Ok(bytes) = p256::FieldBytes::try_from(digest) else {
+                    return Err(iso7816::Status::IncorrectDataParameter);
+                };
                 let sig: ecdsa::Signature<p256::NistP256> = ecdsa::SigningKey::from(secret_key)
-                    .sign_prehash(digest)
+                    .sign_prehash(&bytes)
                     .map_err(|_| iso7816::Status::IncorrectDataParameter)?;
                 Ok(sig.to_der().to_vec())
             }
             SlotKey::EccP384(secret_key) => {
+                let Ok(bytes) = p384::FieldBytes::try_from(digest) else {
+                    return Err(iso7816::Status::IncorrectDataParameter);
+                };
                 let sig: ecdsa::Signature<p384::NistP384> = ecdsa::SigningKey::from(secret_key)
-                    .sign_prehash(digest)
+                    .sign_prehash(&bytes)
                     .map_err(|_| iso7816::Status::IncorrectDataParameter)?;
                 Ok(sig.to_der().to_vec())
             }
             SlotKey::EccP521(secret_key) => {
+                // NOTE: P521 is not part of the PIV standard, so some implementations may require 66 bytes (521 bit) while others accept 64.
+                // Let's accept both, and left-pad 64 bytes to 66.
+                let digest = if digest.len() == 64 {
+                    [&[0x00, 0x00], digest].concat()
+                } else {
+                    digest.to_vec()
+                };
+                let Ok(bytes) = p521::FieldBytes::try_from(digest) else {
+                    return Err(iso7816::Status::IncorrectDataParameter);
+                };
                 let sig: ecdsa::Signature<p521::NistP521> = ecdsa::SigningKey::from(secret_key)
-                    .sign_prehash(digest)
+                    .sign_prehash(&bytes)
                     .map_err(|_| iso7816::Status::IncorrectDataParameter)?;
                 Ok(sig.to_der().to_vec())
             }
@@ -214,6 +230,47 @@ impl SlotKey {
                 out[offset..].copy_from_slice(&m_be);
                 Ok(out)
             }
+        }
+    }
+
+    /// Runs Elliptic-Curve Diffie-Hellman (ECDH) key agreement.
+    /// Returns the raw shared secret bytes.
+    pub(crate) fn ecdh(&self, peer: &[u8]) -> Result<Vec<u8>, iso7816::Status> {
+        match self {
+            SlotKey::EccP256(secret_key) => {
+                let Ok(peer) = elliptic_curve::PublicKey::<p256::NistP256>::from_sec1_bytes(peer)
+                else {
+                    return Err(iso7816::Status::IncorrectDataParameter);
+                };
+                let shared = elliptic_curve::ecdh::diffie_hellman(
+                    secret_key.to_nonzero_scalar(),
+                    peer.as_affine(),
+                );
+                Ok(shared.raw_secret_bytes().to_vec())
+            }
+            SlotKey::EccP384(secret_key) => {
+                let Ok(peer) = elliptic_curve::PublicKey::<p384::NistP384>::from_sec1_bytes(peer)
+                else {
+                    return Err(iso7816::Status::IncorrectDataParameter);
+                };
+                let shared = elliptic_curve::ecdh::diffie_hellman(
+                    secret_key.to_nonzero_scalar(),
+                    peer.as_affine(),
+                );
+                Ok(shared.raw_secret_bytes().to_vec())
+            }
+            SlotKey::EccP521(secret_key) => {
+                let Ok(peer) = elliptic_curve::PublicKey::<p521::NistP521>::from_sec1_bytes(peer)
+                else {
+                    return Err(iso7816::Status::IncorrectDataParameter);
+                };
+                let shared = elliptic_curve::ecdh::diffie_hellman(
+                    secret_key.to_nonzero_scalar(),
+                    peer.as_affine(),
+                );
+                Ok(shared.raw_secret_bytes().to_vec())
+            }
+            SlotKey::Rsa(_, _) => Err(iso7816::Status::IncorrectDataParameter),
         }
     }
 }
