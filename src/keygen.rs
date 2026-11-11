@@ -401,10 +401,8 @@ mod tests {
         CertInfo, PublicKey, Slot, encode_certificate, generate_key, get_data, parse_public_key,
         put_data,
     };
-    use p256::ecdsa::signature::hazmat::{PrehashSigner, PrehashVerifier};
-    use p256::ecdsa::{SigningKey, VerifyingKey};
+    use p256::ecdsa::SigningKey;
     use rsa::BoxedUint;
-    use rsa::pkcs1::DecodeRsaPrivateKey;
     use rsa::traits::{PrivateKeyParts, PublicKeyParts};
 
     /// A management-unlocked applet: the factory 3DES handshake ran, the
@@ -681,7 +679,10 @@ mod tests {
         let slot = &app.slots[crate::piv::Slot::Authentication];
         let key = slot.key.as_ref().expect("the imported key");
         assert_eq!(key.alg(), KeyAlg::EccP256);
-        assert_eq!(&key.secret()[..], &scalar[..]);
+        let SlotKey::EccP256(secret) = key else {
+            panic!("invalid slot key")
+        };
+        assert_eq!(secret.to_bytes().to_vec(), &scalar[..]);
         assert!(slot.imported);
         assert_eq!(slot.pin_policy, PinPolicy::Once);
         assert_eq!(slot.touch_policy, TouchPolicy::Always);
@@ -782,30 +783,6 @@ mod tests {
             );
         }
         assert!(app.slots[crate::piv::Slot::Authentication].key.is_none());
-    }
-
-    #[test]
-    fn imported_key_signs_ecdsa_prehash() {
-        let mut app = unlocked();
-        let scalar = fixed_scalar();
-        assert_eq!(
-            app.process(&import_apdu(0x11, 0x9A, &ec_body(&scalar, None, None)))
-                .status(),
-            iso7816::Status::Success
-        );
-        // The stored scalar is the ECDSA secret for the point the slot
-        // reports: a host-side prehash sign/verify round trip closes it.
-        let key = app.slots[crate::piv::Slot::Authentication]
-            .key
-            .as_ref()
-            .expect("the imported key");
-        let mut bytes = [0u8; 32];
-        bytes.copy_from_slice(&key.secret()[..]);
-        let sk = SigningKey::from_bytes(&bytes.into()).expect("a valid scalar");
-        let vk = VerifyingKey::from(&sk);
-        let digest = [0x37; 32];
-        let sig: p256::ecdsa::Signature = sk.sign_prehash(&digest).expect("an ECDSA signature");
-        vk.verify_prehash(&digest, &sig).expect("a valid signature");
     }
 
     #[test]
@@ -926,8 +903,9 @@ mod tests {
             .key
             .as_ref()
             .expect("the generated key");
-        let stored = rsa::PrivateKey::from_pkcs1_der(key.secret().as_slice())
-            .expect("a PKCS#1 RSAPrivateKey");
+        let SlotKey::Rsa(_, stored) = key else {
+            panic!("invalid slot key")
+        };
         assert_eq!(stored.n().to_be_bytes().to_vec(), n);
         assert_eq!(stored.e(), &rsa::BoxedUint::from_be_slice_vartime(&e));
         rsa_sign_check(&mut app, alg, 0x9E, &n, &e, 0x2B);
@@ -966,8 +944,9 @@ mod tests {
                 .key
                 .as_ref()
                 .expect("the imported key");
-            let stored = rsa::PrivateKey::from_pkcs1_der(key.secret().as_slice())
-                .expect("a PKCS#1 RSAPrivateKey");
+            let SlotKey::Rsa(_, stored) = key else {
+                panic!("invalid slot key")
+            };
             assert_eq!(stored.n().to_be_bytes().to_vec(), host.n);
             rsa_sign_check(
                 &mut app,
@@ -1100,14 +1079,10 @@ mod tests {
         let source = &app.slots[crate::piv::Slot::Signature];
         let dest = &app.slots[crate::piv::Slot::retired(1).expect("retired slot 1")];
         assert!(source.key.is_none(), "the source keeps no key");
-        assert_eq!(
-            dest.key
-                .as_ref()
-                .expect("the key moved")
-                .secret()
-                .as_slice(),
-            &scalar
-        );
+        let Some(SlotKey::EccP256(secret)) = &dest.key else {
+            panic!("invalid slot key")
+        };
+        assert_eq!(secret.to_bytes().as_slice(), &scalar);
         assert_eq!(dest.pin_policy, PinPolicy::Once);
         assert_eq!(dest.touch_policy, TouchPolicy::Always);
         assert!(dest.imported);
@@ -1235,19 +1210,14 @@ mod tests {
         );
         let source = &app.slots[crate::piv::Slot::Signature];
         let dest = &app.slots[crate::piv::Slot::KeyManagement];
-        assert_eq!(
-            source
-                .key
-                .as_ref()
-                .expect("still there")
-                .secret()
-                .as_slice(),
-            &scalar
-        );
-        assert_eq!(
-            dest.key.as_ref().expect("still there").secret().as_slice(),
-            &other
-        );
+        let Some(SlotKey::EccP256(source_secret)) = &source.key else {
+            panic!("invalid slot key")
+        };
+        assert_eq!(source_secret.to_bytes().as_slice(), &scalar);
+        let Some(SlotKey::EccP256(dest_secret)) = &dest.key else {
+            panic!("invalid slot key")
+        };
+        assert_eq!(dest_secret.to_bytes().as_slice(), &other);
     }
 
     /// A GENERATE APDU for a specific algorithm and slot: the host's own

@@ -18,7 +18,6 @@ use std::str::FromStr;
 
 use elliptic_curve::Generate;
 use p256::ecdsa::SigningKey;
-use rsa::pkcs1::DecodeRsaPrivateKey;
 use rsa::pkcs8::EncodePublicKey;
 use x509_cert::builder::{Builder, Profile};
 use x509_cert::der::asn1::OctetString;
@@ -29,10 +28,9 @@ use x509_cert::spki::ObjectIdentifier;
 use x509_cert::time::Validity;
 
 use crate::constants::VERSION;
-use crate::piv::{KeyAlg, PinPolicy, TouchPolicy};
+use crate::piv::{PinPolicy, TouchPolicy};
 use crate::slot::SlotKey;
 use crate::{PivApplet, Response};
-use rsa::PrivateKey;
 
 const OID_YUBICO_FIRMWARE: ObjectIdentifier = ObjectIdentifier::new_unwrap("1.3.6.1.4.1.41482.3.3");
 const OID_YUBICO_SERIAL: ObjectIdentifier = ObjectIdentifier::new_unwrap("1.3.6.1.4.1.41482.3.7");
@@ -121,30 +119,20 @@ impl PivApplet {
 /// key algorithm and the `PublicKey` variant — the EC curve's uncompressed
 /// point, or the RSA modulus and public exponent.
 fn target_public_key(key: &SlotKey) -> Option<x509_cert::SubjectPublicKeyInfo> {
-    match key.alg() {
-        KeyAlg::EccP256 => {
-            let secret_key =
-                elliptic_curve::SecretKey::<p256::NistP256>::from_slice(&key.secret()[..32])
-                    .ok()?;
+    match key {
+        SlotKey::EccP256(secret_key) => {
             x509_cert::SubjectPublicKeyInfo::from_key(&secret_key.public_key()).ok()
         }
-        KeyAlg::EccP384 => {
-            let secret_key =
-                elliptic_curve::SecretKey::<p384::NistP384>::from_slice(&key.secret()[..48])
-                    .ok()?;
+        SlotKey::EccP384(secret_key) => {
             x509_cert::SubjectPublicKeyInfo::from_key(&secret_key.public_key()).ok()
         }
-        KeyAlg::EccP521 => {
-            let secret_key =
-                elliptic_curve::SecretKey::<p521::NistP521>::from_slice(&key.secret()[..]).ok()?;
+        SlotKey::EccP521(secret_key) => {
             x509_cert::SubjectPublicKeyInfo::from_key(&secret_key.public_key()).ok()
         }
-        KeyAlg::Rsa1024 | KeyAlg::Rsa2048 | KeyAlg::Rsa3072 | KeyAlg::Rsa4096 => {
-            let rsa_key = PrivateKey::from_pkcs1_der(key.secret().as_slice()).ok()?;
-            let der = rsa_key.to_public_key().to_public_key_der().ok()?;
+        SlotKey::Rsa(_, private_key) => {
+            let der = private_key.to_public_key().to_public_key_der().ok()?;
             x509_cert::SubjectPublicKeyInfo::from_der(&der.to_vec()).ok()
         }
-        _ => None,
     }
 }
 
@@ -298,6 +286,7 @@ mod tests {
 
     use super::*;
     use crate::general_auth::tests::mgmt_handshake;
+    use crate::piv::KeyAlg;
     use ecdsa::signature::hazmat::PrehashVerifier;
     use elliptic_curve::sec1::ToSec1Point;
     use iso7816::Status;

@@ -28,7 +28,6 @@ use elliptic_curve::Generate;
 use iso7816::Status;
 use rsa::{
     BoxedUint,
-    pkcs1::EncodeRsaPrivateKey,
     signature::hazmat::PrehashSigner,
     traits::{PrivateKeyParts, PublicKeyParts},
 };
@@ -129,19 +128,6 @@ impl SlotKey {
         }
     }
 
-    pub(crate) fn secret(&self) -> Vec<u8> {
-        match self {
-            SlotKey::EccP256(secret_key) => secret_key.to_bytes().to_vec(),
-            SlotKey::EccP384(secret_key) => secret_key.to_bytes().to_vec(),
-            SlotKey::EccP521(secret_key) => secret_key.to_bytes().to_vec(),
-            SlotKey::Rsa(_, private_key) => private_key
-                .to_pkcs1_der()
-                .expect("can serialize to pkcs1")
-                .as_bytes()
-                .to_vec(),
-        }
-    }
-
     pub(crate) fn alg(&self) -> KeyAlg {
         match self {
             SlotKey::EccP256(_) => KeyAlg::EccP256,
@@ -154,6 +140,7 @@ impl SlotKey {
             SlotKey::Rsa(bits, _) => unreachable!("invalid RSA bits {bits}"),
         }
     }
+
     /// The `7F49`-inner public-key TLVs this key reports — the same shape
     /// GENERATE's answer, the GET METADATA `04` member and the host's
     /// `parse_public_key`/`parse_metadata` all carry: the uncompressed

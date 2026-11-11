@@ -3,7 +3,6 @@
 //! ECDSA signing and ECDH key agreement of the NIST-curve slots.
 
 use iso7816::Status;
-use rsa::pkcs1::DecodeRsaPrivateKey;
 
 use crate::constants::{
     GA_MAX_CHALLENGE, GA_TAG_CHALLENGE, GA_TAG_DYN_AUTH, GA_TAG_EXP, GA_TAG_RESPONSE,
@@ -244,11 +243,10 @@ fn slot_sign(key: &SlotKey, digest: &[u8]) -> Response {
 /// they are present and falls back to `c^d mod n` otherwise.
 fn slot_rsa_raw(key: &SlotKey, block: &[u8]) -> Response {
     use rsa::BoxedUint;
-    use rsa::PrivateKey;
     use rsa::hazmat::rsa_decrypt;
     use rsa::traits::PublicKeyParts;
 
-    let Ok(key) = PrivateKey::from_pkcs1_der(key.secret().as_slice()) else {
+    let SlotKey::Rsa(_, key) = key else {
         return iso7816::Status::IncorrectDataParameter.into();
     };
 
@@ -262,7 +260,7 @@ fn slot_rsa_raw(key: &SlotKey, block: &[u8]) -> Response {
         return iso7816::Status::IncorrectDataParameter.into();
     }
 
-    let Ok(m) = rsa_decrypt::<rand::rngs::SysRng>(None, &key, &c) else {
+    let Ok(m) = rsa_decrypt::<rand::rngs::SysRng>(None, key, &c) else {
         return iso7816::Status::IncorrectDataParameter.into();
     };
 
@@ -278,9 +276,10 @@ fn slot_rsa_raw(key: &SlotKey, block: &[u8]) -> Response {
 /// head of the slot's uniform `66`-byte buffer.
 fn sign_p256(key: &SlotKey, digest: &[u8]) -> Response {
     use ecdsa::signature::hazmat::PrehashSigner;
-    let Ok(signing) = ecdsa::SigningKey::<p256::NistP256>::from_slice(&key.secret()[..32]) else {
+    let SlotKey::EccP256(secret) = key else {
         return iso7816::Status::IncorrectDataParameter.into();
     };
+    let signing = ecdsa::SigningKey::<p256::NistP256>::from(secret);
     // The annotation pins the `Signature<C>` impl: with the `der` feature
     // the `PrehashSigner` impl for `der::Signature<C>` is also in scope.
     let sig: ecdsa::Signature<p256::NistP256> = match signing.sign_prehash(digest) {
@@ -293,9 +292,10 @@ fn sign_p256(key: &SlotKey, digest: &[u8]) -> Response {
 /// The ECDSA half for P-384 (the host hashes with SHA-384).
 fn sign_p384(key: &SlotKey, digest: &[u8]) -> Response {
     use ecdsa::signature::hazmat::PrehashSigner;
-    let Ok(signing) = ecdsa::SigningKey::<p384::NistP384>::from_slice(&key.secret()[..48]) else {
+    let SlotKey::EccP384(secret) = key else {
         return iso7816::Status::IncorrectDataParameter.into();
     };
+    let signing = ecdsa::SigningKey::<p384::NistP384>::from(secret);
     let sig: ecdsa::Signature<p384::NistP384> = match signing.sign_prehash(digest) {
         Ok(sig) => sig,
         Err(_) => return iso7816::Status::IncorrectDataParameter.into(),
@@ -306,12 +306,10 @@ fn sign_p384(key: &SlotKey, digest: &[u8]) -> Response {
 /// The ECDSA half for P-521 (the host hashes with SHA-512).
 fn sign_p521(key: &SlotKey, digest: &[u8]) -> Response {
     use ecdsa::signature::hazmat::PrehashSigner;
-    // `NistP521` does not implement the `ecdsa` crate's generic signing
-    // bounds (no `DigestPrimitive` impl), so the curve's own key type
-    // signs instead — the same `PrehashSigner` trait.
-    let Ok(signing) = p521::ecdsa::SigningKey::from_slice(&key.secret()[..]) else {
+    let SlotKey::EccP521(secret) = key else {
         return iso7816::Status::IncorrectDataParameter.into();
     };
+    let signing = ecdsa::SigningKey::<p521::NistP521>::from(secret);
     let sig: ecdsa::Signature<p521::NistP521> = match signing.sign_prehash(digest) {
         Ok(sig) => sig,
         Err(_) => return iso7816::Status::IncorrectDataParameter.into(),
@@ -336,8 +334,7 @@ fn slot_ecdh(key: &SlotKey, peer: &[u8]) -> Response {
 /// point under `85` and the card answers the shared secret's x-coordinate
 /// under `82`.
 fn ecdh_p256(key: &SlotKey, peer: &[u8]) -> Response {
-    let Ok(secret) = elliptic_curve::SecretKey::<p256::NistP256>::from_slice(&key.secret()[..32])
-    else {
+    let SlotKey::EccP256(secret) = key else {
         return iso7816::Status::IncorrectDataParameter.into();
     };
     let Ok(peer) = elliptic_curve::PublicKey::<p256::NistP256>::from_sec1_bytes(peer) else {
@@ -349,8 +346,7 @@ fn ecdh_p256(key: &SlotKey, peer: &[u8]) -> Response {
 
 /// The ECDH half for P-384: the shared secret is the 48-byte x-coordinate.
 fn ecdh_p384(key: &SlotKey, peer: &[u8]) -> Response {
-    let Ok(secret) = elliptic_curve::SecretKey::<p384::NistP384>::from_slice(&key.secret()[..48])
-    else {
+    let SlotKey::EccP384(secret) = key else {
         return iso7816::Status::IncorrectDataParameter.into();
     };
     let Ok(peer) = elliptic_curve::PublicKey::<p384::NistP384>::from_sec1_bytes(peer) else {
@@ -362,8 +358,7 @@ fn ecdh_p384(key: &SlotKey, peer: &[u8]) -> Response {
 
 /// The ECDH half for P-521: the shared secret is the 66-byte x-coordinate.
 fn ecdh_p521(key: &SlotKey, peer: &[u8]) -> Response {
-    let Ok(secret) = elliptic_curve::SecretKey::<p521::NistP521>::from_slice(&key.secret()[..])
-    else {
+    let SlotKey::EccP521(secret) = key else {
         return iso7816::Status::IncorrectDataParameter.into();
     };
     let Ok(peer) = elliptic_curve::PublicKey::<p521::NistP521>::from_sec1_bytes(peer) else {
