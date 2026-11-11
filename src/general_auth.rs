@@ -103,7 +103,10 @@ impl PivApplet {
                 if digest.len() != size {
                     return iso7816::Status::IncorrectDataParameter.into();
                 }
-                slot_sign(key, digest)
+                match key.sign_prehash(digest) {
+                    Ok(out) => ga_response(GA_TAG_RESPONSE, &out),
+                    Err(status) => status.into(),
+                }
             }
             (None, Some(peer)) => {
                 // The peer must be an uncompressed point of the slot curve.
@@ -213,108 +216,6 @@ fn ec_point_bytes(alg: KeyAlg) -> Option<usize> {
         KeyAlg::EccP521 => Some(133),
         _ => None,
     }
-}
-
-/// The signature half of the slot GA: ECDSA for the EC slots (the host
-/// sends the pre-hashed digest — hashed with the slot curve's hash, SHA-
-/// 256/384/512 for P-256/384/521 — and the applet answers the DER-encoded
-/// signature under `82`), the raw CRT operation for the RSA slots (the
-/// host's pre-encoded `DigestInfo` block comes back raw under `82`).
-fn slot_sign(key: &SlotKey, digest: &[u8]) -> Response {
-    match key.alg() {
-        KeyAlg::EccP256 => sign_p256(key, digest),
-        KeyAlg::EccP384 => sign_p384(key, digest),
-        KeyAlg::EccP521 => sign_p521(key, digest),
-        KeyAlg::Rsa1024 | KeyAlg::Rsa2048 | KeyAlg::Rsa3072 | KeyAlg::Rsa4096 => {
-            slot_rsa_raw(key, digest)
-        }
-        _ => iso7816::Status::IncorrectDataParameter.into(),
-    }
-}
-
-/// The RSA half of the slot GA: the raw `m^d mod n` operation. The host
-/// sends the pre-encoded PKCS#1 v1.5 `DigestInfo` block — exactly the
-/// modulus size, numerically below `n` — and the applet answers the
-/// zero-extended raw signature block under `82`; the card applies no
-/// padding, so a block that is not below `n` is refused rather than
-/// mangled. The slot's PKCS#1 key is deserialized and the raw operation
-/// runs through the `rsa` crate's hazmat `rsa_decrypt` — no blinding
-/// (`rng = None`), no check — which works the key's CRT exponents when
-/// they are present and falls back to `c^d mod n` otherwise.
-fn slot_rsa_raw(key: &SlotKey, block: &[u8]) -> Response {
-    use rsa::BoxedUint;
-    use rsa::hazmat::rsa_decrypt;
-    use rsa::traits::PublicKeyParts;
-
-    let SlotKey::Rsa(_, key) = key else {
-        return iso7816::Status::IncorrectDataParameter.into();
-    };
-
-    let n = key.n().to_be_bytes();
-    if block.len() != n.len() {
-        return iso7816::Status::IncorrectDataParameter.into();
-    }
-
-    let c = BoxedUint::from_be_slice_vartime(block);
-    if c >= key.n().clone().get() {
-        return iso7816::Status::IncorrectDataParameter.into();
-    }
-
-    let Ok(m) = rsa_decrypt::<rand::rngs::SysRng>(None, key, &c) else {
-        return iso7816::Status::IncorrectDataParameter.into();
-    };
-
-    // Zero-extend the residue to the full modulus size.
-    let m_be = m.to_be_bytes();
-    let mut out = vec![0u8; n.len()];
-    let offset = n.len() - m_be.len();
-    out[offset..].copy_from_slice(&m_be);
-    ga_response(GA_TAG_RESPONSE, &out)
-}
-
-/// The ECDSA half for one curve: the `32`/`48`/`66`-byte scalar is the
-/// head of the slot's uniform `66`-byte buffer.
-fn sign_p256(key: &SlotKey, digest: &[u8]) -> Response {
-    use ecdsa::signature::hazmat::PrehashSigner;
-    let SlotKey::EccP256(secret) = key else {
-        return iso7816::Status::IncorrectDataParameter.into();
-    };
-    let signing = ecdsa::SigningKey::<p256::NistP256>::from(secret);
-    // The annotation pins the `Signature<C>` impl: with the `der` feature
-    // the `PrehashSigner` impl for `der::Signature<C>` is also in scope.
-    let sig: ecdsa::Signature<p256::NistP256> = match signing.sign_prehash(digest) {
-        Ok(sig) => sig,
-        Err(_) => return iso7816::Status::IncorrectDataParameter.into(),
-    };
-    ga_response(GA_TAG_RESPONSE, sig.to_der().as_bytes())
-}
-
-/// The ECDSA half for P-384 (the host hashes with SHA-384).
-fn sign_p384(key: &SlotKey, digest: &[u8]) -> Response {
-    use ecdsa::signature::hazmat::PrehashSigner;
-    let SlotKey::EccP384(secret) = key else {
-        return iso7816::Status::IncorrectDataParameter.into();
-    };
-    let signing = ecdsa::SigningKey::<p384::NistP384>::from(secret);
-    let sig: ecdsa::Signature<p384::NistP384> = match signing.sign_prehash(digest) {
-        Ok(sig) => sig,
-        Err(_) => return iso7816::Status::IncorrectDataParameter.into(),
-    };
-    ga_response(GA_TAG_RESPONSE, sig.to_der().as_bytes())
-}
-
-/// The ECDSA half for P-521 (the host hashes with SHA-512).
-fn sign_p521(key: &SlotKey, digest: &[u8]) -> Response {
-    use ecdsa::signature::hazmat::PrehashSigner;
-    let SlotKey::EccP521(secret) = key else {
-        return iso7816::Status::IncorrectDataParameter.into();
-    };
-    let signing = ecdsa::SigningKey::<p521::NistP521>::from(secret);
-    let sig: ecdsa::Signature<p521::NistP521> = match signing.sign_prehash(digest) {
-        Ok(sig) => sig,
-        Err(_) => return iso7816::Status::IncorrectDataParameter.into(),
-    };
-    ga_response(GA_TAG_RESPONSE, sig.to_der().as_bytes())
 }
 
 /// The ECDH half of the slot GA: the peer's uncompressed point is checked

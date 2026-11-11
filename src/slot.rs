@@ -165,8 +165,10 @@ impl SlotKey {
         }
     }
 
-    #[allow(unused)]
-    pub(crate) fn sign(&self, digest: &[u8]) -> Result<Vec<u8>, iso7816::Status> {
+    /// Sign the specified digest with this key.
+    /// For ECDSA, the host sends the pre-hashed digest, this returns the DER-encoded signature.
+    /// For RSA, runs the raw CRT operation, this returns the pre-encoded `DigestInfo` block.
+    pub(crate) fn sign_prehash(&self, digest: &[u8]) -> Result<Vec<u8>, iso7816::Status> {
         match self {
             SlotKey::EccP256(secret_key) => {
                 let sig: ecdsa::Signature<p256::NistP256> = ecdsa::SigningKey::from(secret_key)
