@@ -1,21 +1,8 @@
 {
-  pkgs,
-  keyroostctl,
-  nixosModule,
-}:
-import ./make-piv-check.nix
-  {
-    inherit
-      pkgs
-      keyroostctl
-      nixosModule
-      ;
-  }
-  {
-    name = "piv-pin-change";
-    testScript = ''
-      # PIN change: CHANGE REFERENCE verifies the old PIN.
-      keyroostctl("piv pin change --pin env:OLD --new-pin env:NEW", OLD="123456", NEW="654321")
-      keyroostctl("piv pin change --pin env:OLD --new-pin env:NEW", OLD="654321", NEW="123456")
-    '';
-  }
+  imports = [ ./piv.nix ];
+  testScript = ''
+    # PIN change: CHANGE REFERENCE verifies the old PIN.
+    keyroostctl("piv pin change --pin env:OLD --new-pin env:NEW", OLD="123456", NEW="654321")
+    keyroostctl("piv pin change --pin env:OLD --new-pin env:NEW", OLD="654321", NEW="123456")
+  '';
+}

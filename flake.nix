@@ -84,32 +84,43 @@
 
             checks =
               { }
-              // pkgs.lib.optionalAttrs (system == "x86_64-linux") {
-                piv-info = pkgs.callPackage ./nix/checks/piv-info.nix {
-                  inherit keyroostctl nixosModule;
-                };
-                piv-pin-change = pkgs.callPackage ./nix/checks/piv-pin-change.nix {
-                  inherit keyroostctl nixosModule;
-                };
-                piv-puk-change = pkgs.callPackage ./nix/checks/piv-puk-change.nix {
-                  inherit keyroostctl nixosModule;
-                };
-                piv-pin-block = pkgs.callPackage ./nix/checks/piv-pin-block.nix {
-                  inherit keyroostctl nixosModule;
-                };
-                piv-reset = pkgs.callPackage ./nix/checks/piv-reset.nix {
-                  inherit keyroostctl nixosModule;
-                };
-                piv-algorithms = pkgs.callPackage ./nix/checks/piv-algorithms.nix {
-                  inherit keyroostctl nixosModule;
-                };
-                piv-multi-slot = pkgs.callPackage ./nix/checks/piv-multi-slot.nix {
-                  inherit keyroostctl nixosModule;
-                };
-                piv-attest = pkgs.callPackage ./nix/checks/piv-attest.nix {
-                  inherit keyroostctl nixosModule;
-                };
-              };
+              // pkgs.lib.optionalAttrs (system == "x86_64-linux") (
+                builtins.listToAttrs (
+                  map
+                    (test: {
+                      name = "${test}";
+                      value = pkgs.testers.runNixOSTest {
+                        name = "${test}";
+                        imports = [
+                          ./nix/checks/${test}.nix
+                        ];
+                        sshBackdoor.enable = true;
+                        node = {
+                          pkgsReadOnly = false;
+                        };
+                        defaults = {
+                          imports = [ nixosModule ];
+                          nixpkgs.overlays = [
+                            (final: prev: {
+                              inherit final;
+                              keyroostctl = keyroostctl;
+                            })
+                          ];
+                        };
+                      };
+                    })
+                    [
+                      "piv-algorithms"
+                      "piv-info"
+                      "piv-attest"
+                      "piv-multi-slot"
+                      "piv-pin-block"
+                      "piv-pin-change"
+                      "piv-puk-change"
+                      "piv-reset"
+                    ]
+                )
+              );
 
             devShells.default = config.devShells.rust;
           };
