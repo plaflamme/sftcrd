@@ -1,5 +1,4 @@
 {
-  imports = [ ./piv.nix ];
   testScript = ''
     # Block the PIN: five wrong old PINs, each burning one try.
     host.fail("BAD=000000 NEW=000000 keyroostctl piv pin change --pin env:BAD --new-pin env:NEW")

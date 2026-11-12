@@ -1,5 +1,4 @@
 {
-  imports = [ ./piv.nix ];
   testScript = ''
     # Change the pin
     keyroostctl("piv pin change --pin env:PIN --new-pin env:NEW", NEW="654321")

@@ -1,5 +1,4 @@
 {
-  imports = [ ./piv.nix ];
   testScript = ''
     # Test all supported key algorithms in slot 9A
     algorithms = [

@@ -1,5 +1,4 @@
 {
-  imports = [ ./piv.nix ];
   testScript = ''
     # Test P-256 in every possible slot
     slots = [

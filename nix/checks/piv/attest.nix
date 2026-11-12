@@ -1,5 +1,4 @@
 {
-  imports = [ ./piv.nix ];
   testScript = ''
     # Generate a key in slot 9A using keyroostctl
     keyroostctl("piv key generate --slot 9a --mgmt-key env:MGMT --yes")

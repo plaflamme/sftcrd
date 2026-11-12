@@ -50,7 +50,7 @@
             system,
             pkgs,
             ...
-          }:
+          }@inputs:
           let
             keyroostctl = keyroost.packages.${system}.keyroostctl;
             eval = pkgs.lib.evalModules {
@@ -83,44 +83,12 @@
               };
 
             checks =
-              { }
-              // pkgs.lib.optionalAttrs (system == "x86_64-linux") (
-                builtins.listToAttrs (
-                  map
-                    (test: {
-                      name = "${test}";
-                      value = pkgs.testers.runNixOSTest {
-                        name = "${test}";
-                        imports = [
-                          ./nix/checks/${test}.nix
-                        ];
-                        sshBackdoor.enable = true;
-                        node = {
-                          pkgsReadOnly = false;
-                        };
-                        defaults = {
-                          imports = [ nixosModule ];
-                          nixpkgs.overlays = [
-                            (final: prev: {
-                              inherit final;
-                              keyroostctl = keyroostctl;
-                            })
-                          ];
-                        };
-                      };
-                    })
-                    [
-                      "piv-algorithms"
-                      "piv-info"
-                      "piv-attest"
-                      "piv-multi-slot"
-                      "piv-pin-block"
-                      "piv-pin-change"
-                      "piv-puk-change"
-                      "piv-reset"
-                    ]
-                )
-              );
+              let
+                ctx = inputs // {
+                  inherit nixosModule keyroostctl;
+                };
+              in
+              { } // import ./nix/checks/piv.nix ctx;
 
             devShells.default = config.devShells.rust;
           };
