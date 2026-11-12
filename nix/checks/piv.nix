@@ -11,10 +11,13 @@ pkgs.lib.optionalAttrs (system == "x86_64-linux") (
       (test: {
         name = "piv-${test}";
         value = pkgs.testers.runNixOSTest {
+
           name = "piv-${test}";
+
           imports = [
             ./piv/${test}.nix
           ];
+
           sshBackdoor.enable = true;
 
           nodes = {

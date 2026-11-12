@@ -16,7 +16,7 @@ pub(crate) const GA_MAX_CHALLENGE: usize = 64;
 
 /// The default serial a factory-fresh applet presents: a placeholder until
 /// the virtual card has a real source of serial identity.
-pub const DEFAULT_SERIAL: u32 = 0x0102_0304;
+pub const DEFAULT_SERIAL: u32 = 87_654_321;
 
 /// The applet version GET VERSION presents: `major.minor.patch`, tracking
 /// the Yubico PIV firmware line the behaviour is being reimplemented from.
