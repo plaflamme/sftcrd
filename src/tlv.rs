@@ -1,8 +1,6 @@
 use std::marker::PhantomData;
 
 #[derive(Clone, Debug, PartialEq, Eq)]
-pub enum EncodeError {}
-#[derive(Clone, Debug, PartialEq, Eq)]
 pub enum DecodeError {
     BufferUnderrun,
     InvalidTag,
@@ -12,47 +10,37 @@ pub enum DecodeError {
     MissingRequiredField,
 }
 
-impl From<!> for DecodeError {
-    fn from(_value: !) -> Self {
-        unreachable!()
-    }
-}
-
-impl From<!> for EncodeError {
-    fn from(_value: !) -> Self {
-        unreachable!()
-    }
-}
-
 pub trait Tag {
-    #[allow(unused)]
-    fn encode(self, buf: &mut [u8]) -> Result<usize, EncodeError>;
     fn decode(buf: &[u8]) -> Result<(Self, usize), DecodeError>
     where
         Self: Sized;
 }
 
-impl<T> Tag for T
-where
-    T: TryFrom<u8> + TryInto<u8>,
-    <T as TryFrom<u8>>::Error: Into<DecodeError>,
-    EncodeError: From<<T as TryInto<u8>>::Error>,
-    DecodeError: From<<T as TryFrom<u8>>::Error>,
-{
-    fn encode(self, buf: &mut [u8]) -> Result<usize, EncodeError> {
-        buf[0] = self.try_into()?;
-        Ok(1)
-    }
-
+impl Tag for u8 {
     fn decode(buf: &[u8]) -> Result<(Self, usize), DecodeError>
     where
         Self: Sized,
     {
-        Ok((Self::try_from(buf[0])?, 1))
+        if buf.is_empty() {
+            return Err(DecodeError::BufferUnderrun);
+        }
+        Ok((buf[0], 1))
     }
 }
 
-trait Length {
+impl Tag for u16 {
+    fn decode(buf: &[u8]) -> Result<(Self, usize), DecodeError>
+    where
+        Self: Sized,
+    {
+        let Some(len) = buf.first_chunk() else {
+            return Err(DecodeError::BufferUnderrun);
+        };
+        Ok((u16::from_be_bytes(*len), 2))
+    }
+}
+
+pub trait Length {
     fn decode(buf: &[u8]) -> Result<(usize, usize), DecodeError>
     where
         Self: Sized;
@@ -200,7 +188,7 @@ impl<'buf> Decoder<'buf> {
         Ok((tag, value))
     }
 
-    pub fn into_iter_tags<T: Tag>(self) -> TlvIter<'buf, T> {
+    pub fn into_iter_tags<T: Tag, L: Length>(self) -> TlvIter<'buf, T, L> {
         TlvIter {
             decoder: self,
             _phantom: PhantomData,
@@ -208,40 +196,98 @@ impl<'buf> Decoder<'buf> {
     }
 }
 
-pub struct TlvIter<'buf, T: Tag> {
+pub struct TlvIter<'buf, T: Tag, L: Length> {
     decoder: Decoder<'buf>,
-    _phantom: PhantomData<T>,
+    _phantom: PhantomData<(T, L)>,
 }
 
-impl<'buf, T: Tag> Iterator for TlvIter<'buf, T> {
+impl<'buf, T: Tag, L: Length> Iterator for TlvIter<'buf, T, L> {
     type Item = Result<(T, &'buf [u8]), DecodeError>;
 
     fn next(&mut self) -> Option<Self::Item> {
         if self.decoder.is_empty() {
             None
         } else {
-            Some(self.decoder.read_tlv::<T, BerLength>())
+            Some(self.decoder.read_tlv::<T, L>())
         }
     }
 }
 
 /// Declarative macro to generate a struct and a corresponding [`ValueDecoder`] implementation to parse it out of TLV bytes.
 macro_rules! parse_struct {
-    (
-        $(#[$meta:meta])*
-        $vis:vis struct $name:ident {
-            $($fields:tt)*
-        }
+    // -------------------------------------------------------------------------
+    // 1) Attribute Munching
+    // -------------------------------------------------------------------------
+
+    // Match `#[length(SomeType)]` -> Overrides the length type
+    (@parse_attrs
+        tag_type: [ $($tag_ty:tt)* ],
+        length: [ $($len:tt)* ],
+        retained: [ $($retained:tt)* ],
+        input: [ #[length($len_ty:ty)] $($rest:tt)* ]
+    ) => {
+        parse_struct!(@parse_attrs
+            tag_type: [ $($tag_ty)* ],
+            length: [ $len_ty ],
+            retained: [ $($retained)* ],
+            input: [ $($rest)* ]
+        );
+    };
+
+    // Match `#[tag_type(SomeType)]` -> Overrides the tag type
+    (@parse_attrs
+        tag_type: [ $($tag_ty:tt)* ],
+        length: [ $($len:tt)* ],
+        retained: [ $($retained:tt)* ],
+        input: [ #[tag_type($new_tag_ty:ty)] $($rest:tt)* ]
+    ) => {
+        parse_struct!(@parse_attrs
+            tag_type: [ $new_tag_ty ],
+            length: [ $($len)* ],
+            retained: [ $($retained)* ],
+            input: [ $($rest)* ]
+        );
+    };
+
+    // Found any other attribute (e.g., #[derive(...)], /// docs): keep it in `retained`
+    (@parse_attrs
+        tag_type: [ $($tag_ty:tt)* ],
+        length: [ $($len:tt)* ],
+        retained: [ $($retained:tt)* ],
+        input: [ #[$($attr:tt)*] $($rest:tt)* ]
+    ) => {
+        parse_struct!(@parse_attrs
+            tag_type: [ $($tag_ty)* ],
+            length: [ $($len)* ],
+            retained: [ $($retained)* #[$($attr)*] ],
+            input: [ $($rest)* ]
+        );
+    };
+
+    // Base Case for attributes: no more attributes, proceed to fields
+    (@parse_attrs
+        tag_type: [ $tag_ty:ty ],
+        length: [ $len_ty:ty ],
+        retained: [ $($retained:tt)* ],
+        input: [ $vis:vis struct $name:ident { $($fields:tt)* } ]
     ) => {
         $crate::tlv::parse_struct!(@parse_fields
-            header: [ $(#[$meta])* $vis struct $name ],
+            tag_type: [ $tag_ty ],
+            length: [ $len_ty ],
+            header: [ $($retained)* $vis struct $name ],
             parsed: [],
             remaining: [ $($fields)* ]
         );
     };
 
+    // -------------------------------------------------------------------------
+    // 2) Field Munchers
+    // -------------------------------------------------------------------------
+
     // Muncher Arm 1: Optional field (`Option<T>`)
     (@parse_fields
+        tag_type: [ $tag_ty:ty ],
+        length: [ $len_ty:ty ],
         header: [ $($header:tt)* ],
         parsed: [ $($parsed:tt)* ],
         remaining: [
@@ -252,6 +298,8 @@ macro_rules! parse_struct {
         ]
     ) => {
         parse_struct!(@parse_fields
+            tag_type: [ $tag_ty ],
+            length: [ $len_ty ],
             header: [ $($header)* ],
             parsed: [
                 $($parsed)*
@@ -271,6 +319,8 @@ macro_rules! parse_struct {
 
     // Muncher Arm 2: Required field (`T`)
     (@parse_fields
+        tag_type: [ $tag_ty:ty ],
+        length: [ $len_ty:ty ],
         header: [ $($header:tt)* ],
         parsed: [ $($parsed:tt)* ],
         remaining: [
@@ -281,6 +331,8 @@ macro_rules! parse_struct {
         ]
     ) => {
         parse_struct!(@parse_fields
+            tag_type: [ $tag_ty ],
+            length: [ $len_ty ],
             header: [ $($header)* ],
             parsed: [
                 $($parsed)*
@@ -300,6 +352,8 @@ macro_rules! parse_struct {
 
     // Base Case: Generate struct and `from_bytes`
     (@parse_fields
+        tag_type: [ $tag_ty:ty ],
+        length: [ $len_ty:ty ],
         header: [ $(#[$meta:meta])* $vis:vis struct $name:ident ],
         parsed: [
             $(
@@ -330,7 +384,8 @@ macro_rules! parse_struct {
                     let mut $field_name: Option<$parse_ty> = None;
                 )*
 
-                for entry in crate::tlv::Decoder::new(input).into_iter_tags::<u8>() {
+                // Uses the parsed $tag_ty and $len_ty directly
+                for entry in crate::tlv::Decoder::new(input).into_iter_tags::<$tag_ty, $len_ty>() {
                     let (tag, value_bytes) = entry?;
                     match tag {
                         $(
@@ -360,6 +415,23 @@ macro_rules! parse_struct {
     };
     (@unwrap_field opt, $field_name:ident) => {
         $field_name
+    };
+
+    // -------------------------------------------------------------------------
+    // 3) Public Entry Point
+    // -------------------------------------------------------------------------
+    (
+        $(#[$($attr:tt)*])*
+        $vis:vis struct $name:ident {
+            $($fields:tt)*
+        }
+    ) => {
+        parse_struct!(@parse_attrs
+            tag_type: [ u8 ], // Default tag type
+            length: [ $crate::tlv::U8Length ], // Default length type
+            retained: [],
+            input: [ $(#[$($attr)*])* $vis struct $name { $($fields)* } ]
+        );
     };
 }
 pub(crate) use parse_struct;
@@ -411,7 +483,6 @@ mod test {
 
     #[test]
     fn test_parse_struct() {
-        // 3. Usage Example
         parse_struct! {
             #[derive(Debug, PartialEq)]
             pub struct Packet {
@@ -446,6 +517,58 @@ mod test {
         assert_eq!(
             Packet::decode(&[0x01, 0x01, 0xFF]),
             Err(DecodeError::MissingRequiredField)
+        );
+    }
+
+    #[test]
+    fn test_parse_struct_tag_type() {
+        parse_struct! {
+            #[derive(Debug, PartialEq)]
+            #[tag_type(u16)]
+            pub struct Packet {
+                #[tag = 0x0101]
+                pub version: u8,
+                #[tag = 0x0102]
+                pub payload_len: u8,
+            }
+        }
+        assert_eq!(
+            Packet::decode(&[0x01, 0x01, 0x01, 0xFF, 0x01, 0x02, 0x01, 0xFE]),
+            Ok(Packet {
+                version: 0xFF,
+                payload_len: 0xFE,
+            })
+        );
+    }
+    #[test]
+    fn test_parse_struct_length() {
+        parse_struct! {
+            #[derive(Debug, PartialEq)]
+            #[length(BerLength)]
+            pub struct Packet {
+                #[tag = 0x01]
+                pub version: u8,
+                #[tag = 0x02]
+                pub payload_len: Vec<u8>,
+            }
+        }
+        assert_eq!(
+            Packet::decode(&[0x01, 0x01, 0xFF, 0x02, 0x81, 0x01, 0xFE]),
+            Ok(Packet {
+                version: 0xFF,
+                payload_len: vec![0xFE],
+            })
+        );
+        assert_eq!(
+            Packet::decode(&[0x01, 0x01, 0xFF, 0x02, 0x82, 0x00, 0x01, 0xFE]),
+            Ok(Packet {
+                version: 0xFF,
+                payload_len: vec![0xFE],
+            })
+        );
+        assert_eq!(
+            Packet::decode(&[0x01, 0x01, 0xFF, 0x02, 0x80, 0xFE, 0x00, 0x00]),
+            Err(DecodeError::InvalidLength)
         );
     }
 }
