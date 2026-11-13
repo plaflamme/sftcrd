@@ -4,12 +4,19 @@
 
 use iso7816::Status;
 
-use crate::constants::{
-    GA_MAX_CHALLENGE, GA_TAG_CHALLENGE, GA_TAG_DYN_AUTH, GA_TAG_EXP, GA_TAG_RESPONSE,
-    GA_TAG_WITNESS,
-};
 use crate::piv::MgmtAlg;
+use crate::tlv::{BerLength, ValueDecoder, parse_struct};
 use crate::{PivApplet, Response};
+
+/// SP 800-73-4 §4.1.3 dynamic-authentication tags: the `7C` wrapper and its
+/// witness / challenge / response / exponent members.
+const GA_TAG_DYN_AUTH: u8 = 0x7C;
+const GA_TAG_WITNESS: u8 = 0x80;
+const GA_TAG_RESPONSE: u8 = 0x82;
+
+/// Largest GA challenge value this applet will encrypt — the reference's
+/// 64-byte scratch buffer caps the template it will accept at all.
+const GA_MAX_CHALLENGE: usize = 64;
 
 impl PivApplet {
     /// GENERAL AUTHENTICATE (0x87): the SP 800-73-4 dynamic-authentication
@@ -81,21 +88,22 @@ impl PivApplet {
         if p1 != key.alg() as u8 {
             return iso7816::Status::IncorrectP1OrP2Parameter.into();
         }
-        let t = match parse_ga_template(body) {
-            Ok(t) => t,
-            Err(sw) => return sw.into(),
+        let Ok(request) = GaRequest::decode(body) else {
+            return iso7816::Status::IncorrectDataParameter.into();
         };
+        let t = request.ga_template;
+
         // The one-shot slot shape: an empty `82` plus a single data
         // member. Anything else is a wrong member.
-        if t.wanted != Some(GA_TAG_RESPONSE) || t.response.is_some() || t.witness.is_some() {
+        let Some([]) = t.response else {
             return iso7816::Status::IncorrectP1OrP2Parameter.into();
-        }
-        match (t.challenge, t.exponent) {
-            (Some(digest), None) => match key.sign_prehash(digest) {
+        };
+        match (t.witness, t.challenge, t.exponent) {
+            (None, Some(digest), None) => match key.sign_prehash(digest) {
                 Ok(out) => ga_response(GA_TAG_RESPONSE, &out),
                 Err(status) => status.into(),
             },
-            (None, Some(peer)) => match key.ecdh(peer) {
+            (None, None, Some(peer)) => match key.ecdh(peer) {
                 Ok(shared) => ga_response(GA_TAG_RESPONSE, &shared),
                 Err(status) => status.into(),
             },
@@ -107,12 +115,14 @@ impl PivApplet {
     /// symmetric or an asymmetric algorithm, the body carries the
     /// dynamic-auth template.
     fn ga_management(&mut self, p1: u8, body: &[u8]) -> Response {
-        let tmpl = match parse_ga_template(body) {
+        #[allow(clippy::manual_let_else)]
+        let request = match GaRequest::decode(body) {
             Ok(t) => t,
-            Err(sw) => return sw.into(),
+            Err(_) => return iso7816::Status::IncorrectDataParameter.into(),
         };
+
         match MgmtAlg::from_u8(p1) {
-            Some(alg) => self.ga_sym(alg, &tmpl),
+            Some(alg) => self.ga_sym(alg, &request.ga_template),
             // Asymmetric (or unknown) algorithm: no key slot, so no
             // exchange — the reference fails on the missing key.
             None => iso7816::Status::IncorrectP1OrP2Parameter.into(),
@@ -125,23 +135,22 @@ impl PivApplet {
         if self.mgmt.alg() != alg {
             return iso7816::Status::IncorrectP1OrP2Parameter.into();
         }
+
         let bs = alg.block_size();
         // The witness flow is the only supported symmetric exchange: a
         // witness request (an empty `80`) or a witness value, optionally
-        // with the host's challenge under `81`. The reference's other
-        // shapes prove nothing — a `82` value is a replay of the card's
-        // own ciphertext, a clear `81` challenge would let any observer
-        // forge the witness, a wanted `81` hands the clear challenge to
-        // whoever holds it — so they are refused.
+        // with the host's challenge under `81`.
         if t.response.is_some() {
             return iso7816::Status::IncorrectP1OrP2Parameter.into();
         }
-        match (t.wanted, t.witness, t.challenge) {
-            (Some(GA_TAG_WITNESS), None, None) => {
+        match (t.witness, t.challenge) {
+            // Request witness
+            (Some([]), None) => {
                 let enc = self.mgmt.issue();
                 ga_response(GA_TAG_WITNESS, &enc)
             }
-            (None, Some(w), host_chal) => {
+            // Verify witness and optionally request challenge response
+            (Some(w), host_chal) => {
                 if w.len() != bs {
                     return iso7816::Status::IncorrectDataParameter.into();
                 }
@@ -163,21 +172,28 @@ impl PivApplet {
     }
 }
 
-/// One parsed SP 800-73-4 dynamic-auth template: the empty member the host
-/// wants (if any), and the values of the non-empty members — the first of
-/// each, as the card's rescan would find them.
-#[derive(Default)]
-struct GaTemplate<'a> {
-    /// The single empty tag (`80`/`81`/`82`), if the host named one.
-    wanted: Option<u8>,
-    /// The first non-empty witness (`80`), if any.
-    witness: Option<&'a [u8]>,
-    /// The first non-empty challenge (`81`), if any.
-    challenge: Option<&'a [u8]>,
-    /// The first non-empty response (`82`), if any.
-    response: Option<&'a [u8]>,
-    /// The first non-empty exponent (`85`), if any.
-    exponent: Option<&'a [u8]>,
+parse_struct! {
+    #[derive(Debug)]
+    #[length(BerLength)]
+    struct GaTemplate<'a> {
+        #[tag=0x80]
+        witness: Option<&'a [u8]>,
+        #[tag=0x81]
+        challenge: Option<&'a [u8]>,
+        #[tag=0x82]
+        response: Option<&'a [u8]>,
+        #[tag=0x85]
+        exponent: Option<&'a [u8]>,
+    }
+}
+
+parse_struct! {
+    #[derive(Debug)]
+    #[length(crate::tlv::BerLength)]
+    struct GaRequest<'a> {
+        #[tag=0x7C]
+        ga_template: GaTemplate<'a>
+    }
 }
 
 /// Build the card's GA answer: the `7C` wrapper around one tagged value.
@@ -202,102 +218,6 @@ fn ga_response(tag: u8, value: &[u8]) -> Response {
     length(&mut data, inner.len());
     data.extend_from_slice(&inner);
     data.into()
-}
-
-/// Parse the GA body as the card's dispatcher does: the `7C` wrapper (with
-/// its own 1-, 2- or 3-byte length) followed by a scan of the members — the
-/// scan runs to the end of the APDU body, not just the declared `7C`
-/// length. `6B00` on a structurally broken template (truncated lengths,
-/// underrun), `6A86` on a protocol violation (two empty tags, an unknown or
-/// non-80/81/82 empty tag).
-fn parse_ga_template(body: &[u8]) -> Result<GaTemplate<'_>, Status> {
-    let Some((&outer, rest)) = body.split_first() else {
-        return Err(iso7816::Status::IncorrectDataParameter);
-    };
-    if outer != GA_TAG_DYN_AUTH {
-        return Err(iso7816::Status::IncorrectDataParameter);
-    }
-    let (declared, after_header) = read_tlv_length(rest)?;
-    if rest.len() < after_header + declared {
-        return Err(iso7816::Status::IncorrectDataParameter);
-    }
-    let mut t = GaTemplate::default();
-    // The scan region: everything after the 7C header — the reference's
-    // stream ends at the APDU body's end, whatever the 7C length said.
-    let mut rest = &body[1 + after_header..];
-    while let Some((&tag, r1)) = rest.split_first() {
-        // `r1` is everything after the tag byte: the length header plus the
-        // value. The member consumes `thdr + tlen` of it.
-        let (tlen, thdr) = read_tlv_length(r1)?;
-        let value_end = thdr + tlen;
-        if r1.len() < value_end {
-            return Err(iso7816::Status::IncorrectP1OrP2Parameter);
-        }
-        let value = &r1[thdr..value_end];
-        if tlen == 0 {
-            if t.wanted.is_some() {
-                return Err(iso7816::Status::IncorrectDataParameter);
-            }
-            match tag {
-                GA_TAG_WITNESS | GA_TAG_CHALLENGE | GA_TAG_RESPONSE => {
-                    t.wanted = Some(tag);
-                }
-                _ => return Err(iso7816::Status::IncorrectDataParameter),
-            }
-        } else {
-            match tag {
-                GA_TAG_WITNESS => {
-                    if t.witness.is_none() {
-                        t.witness = Some(value);
-                    }
-                }
-                GA_TAG_RESPONSE => {
-                    if t.response.is_none() {
-                        t.response = Some(value);
-                    }
-                }
-                GA_TAG_CHALLENGE => {
-                    if t.challenge.is_none() {
-                        t.challenge = Some(value);
-                    }
-                }
-                GA_TAG_EXP => {
-                    if t.exponent.is_none() {
-                        t.exponent = Some(value);
-                    }
-                }
-                _ => return Err(iso7816::Status::IncorrectDataParameter),
-            }
-        }
-        rest = &r1[value_end..];
-    }
-    Ok(t)
-}
-
-/// Read a PIV TLV length (short form, or `81`/`82` long form) and return
-/// (value, header bytes consumed). `6B00` on truncation or an invalid
-/// length byte (`80`, `83`+).
-fn read_tlv_length(buf: &[u8]) -> Result<(usize, usize), u16> {
-    match buf.first().copied() {
-        Some(n) if n <= 0x7F => Ok((usize::from(n), 1)),
-        Some(0x81) => {
-            let b = *buf
-                .get(1)
-                .ok_or(iso7816::Status::IncorrectDataParameter.to_u16())?;
-            Ok((usize::from(b), 2))
-        }
-        Some(0x82) => {
-            // The two length bytes follow the `82` marker at indices 1 and
-            // 2 — the modulus-size RSA blocks are the only GA members long
-            // enough to reach this long form.
-            let b = buf
-                .get(1..3)
-                .ok_or(iso7816::Status::IncorrectDataParameter.to_u16())?;
-            let v = (usize::from(b[0])) << 8 | usize::from(b[1]);
-            Ok((v, 3))
-        }
-        _ => Err(iso7816::Status::IncorrectDataParameter.into()),
-    }
 }
 
 #[cfg(test)]
@@ -569,10 +489,10 @@ pub(crate) mod tests {
         assert_eq!(r.status(), iso7816::Status::IncorrectDataParameter);
         // An unknown empty tag.
         let r = applet.process(&ga_apdu(0x03, &ga_body(&[&[0x85, 0x00]])));
-        assert_eq!(r.status(), iso7816::Status::IncorrectDataParameter);
+        assert_eq!(r.status(), iso7816::Status::IncorrectP1OrP2Parameter);
         // A member that overruns the body.
         let r = applet.process(&ga_apdu(0x03, &ga_body(&[&[0x81, 0x08, 0, 1, 2]])));
-        assert_eq!(r.status(), iso7816::Status::IncorrectP1OrP2Parameter);
+        assert_eq!(r.status(), iso7816::Status::IncorrectDataParameter);
         // The 7C wrapper's length underdeclared: the scan still runs to the
         // end of the body — here to a second empty tag, a protocol error.
         let body = vec![0x7C, 0x02, 0x80, 0x00, 0x81, 0x00];
@@ -967,40 +887,5 @@ pub(crate) mod tests {
         // shape.
         let r = applet.process(&[0x00, 0x87, 0x11, 0x9A, 0x04, 0x7C, 0x02, 0x82, 0x00, 0x00]);
         assert_eq!(r.status(), iso7816::Status::IncorrectP1OrP2Parameter);
-    }
-
-    #[test]
-    fn read_tlv_length_decodes_each_ber_form() {
-        // Short form: the length is the byte itself.
-        assert_eq!(read_tlv_length(&[0x00]), Ok((0, 1)));
-        assert_eq!(read_tlv_length(&[0x7F, 0xAA]), Ok((0x7F, 1)));
-        // One-byte long form (`81`): the next byte is the length.
-        assert_eq!(read_tlv_length(&[0x81, 0x80]), Ok((0x80, 2)));
-        assert_eq!(read_tlv_length(&[0x81, 0xFF]), Ok((0xFF, 2)));
-        // Two-byte long form (`82`): the two bytes immediately after the
-        // marker are the big-endian length -- the form the RSA-2048+ GA
-        // template (256-byte blocks) relies on. A regression here reads one
-        // byte too far and decodes a garbage length.
-        assert_eq!(read_tlv_length(&[0x82, 0x01, 0x00, 0xDE]), Ok((0x0100, 3)));
-        assert_eq!(read_tlv_length(&[0x82, 0x01, 0x06]), Ok((0x0106, 3)));
-        assert_eq!(read_tlv_length(&[0x82, 0xFF, 0xFF]), Ok((0xFFFF, 3)));
-        // Truncated long forms are structurally invalid.
-        assert_eq!(
-            read_tlv_length(&[0x81]),
-            Err(iso7816::Status::IncorrectDataParameter.into())
-        );
-        assert_eq!(
-            read_tlv_length(&[0x82, 0x01]),
-            Err(iso7816::Status::IncorrectDataParameter.into())
-        );
-        // `80` and `83`+ are not valid PIV length bytes.
-        assert_eq!(
-            read_tlv_length(&[0x80]),
-            Err(iso7816::Status::IncorrectDataParameter.into())
-        );
-        assert_eq!(
-            read_tlv_length(&[0x83, 0x00, 0x00, 0x00]),
-            Err(iso7816::Status::IncorrectDataParameter.into())
-        );
     }
 }

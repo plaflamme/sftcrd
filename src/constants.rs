@@ -1,19 +1,7 @@
 //! Applet-wide constants: the ISO 7816-4 status words the handlers answer,
 //! the SP 800-73-4 dynamic-authentication tags, and the factory default
 //! values.
-
-/// SP 800-73-4 §4.1.3 dynamic-authentication tags: the `7C` wrapper and its
-/// witness / challenge / response / exponent members.
-pub(crate) const GA_TAG_DYN_AUTH: u8 = 0x7C;
-pub(crate) const GA_TAG_WITNESS: u8 = 0x80;
-pub(crate) const GA_TAG_CHALLENGE: u8 = 0x81;
-pub(crate) const GA_TAG_RESPONSE: u8 = 0x82;
-pub(crate) const GA_TAG_EXP: u8 = 0x85;
-
-/// Largest GA challenge value this applet will encrypt — the reference's
-/// 64-byte scratch buffer caps the template it will accept at all.
-pub(crate) const GA_MAX_CHALLENGE: usize = 64;
-
+//!
 /// The default serial a factory-fresh applet presents: a placeholder until
 /// the virtual card has a real source of serial identity.
 pub const DEFAULT_SERIAL: u32 = 87_654_321;
