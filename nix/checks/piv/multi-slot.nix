@@ -5,8 +5,8 @@
         "9a", "9c", "9d", "9e",
     ]
     # Add retired slots 82-95
-    for i in range(1, 21):
-        slots.append(format(0x81 + i, '02x'))
+    for i in range(20):
+        slots.append(format(0x82 + i, '02x'))
 
     for slot in slots:
         print(f"=== Testing P-256 on slot {slot} ===")
