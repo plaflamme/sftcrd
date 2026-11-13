@@ -6,9 +6,10 @@ pub enum EncodeError {}
 pub enum DecodeError {
     BufferUnderrun,
     InvalidTag,
+    InvalidLength,
+    InvalidValue,
     DuplicateTag,
     MissingRequiredField,
-    InvalidValue,
 }
 
 impl From<!> for DecodeError {
@@ -48,6 +49,73 @@ where
         Self: Sized,
     {
         Ok((Self::try_from(buf[0])?, 1))
+    }
+}
+
+trait Length {
+    fn decode(buf: &[u8]) -> Result<(usize, usize), DecodeError>
+    where
+        Self: Sized;
+}
+
+pub struct U8Length;
+impl Length for U8Length {
+    fn decode(buf: &[u8]) -> Result<(usize, usize), DecodeError>
+    where
+        Self: Sized,
+    {
+        if buf.is_empty() {
+            return Err(DecodeError::BufferUnderrun);
+        }
+        Ok((buf[0] as usize, 1))
+    }
+}
+
+/// ASN.1 Basic Encoding Rules (BER) length form.
+///
+/// The first byte indicates the form of the length field:
+/// * `first <= 0x7F` => short "definite lenth form", length one byte long and is the value of `first`
+/// * `first == 0x80` => "indefinite lenth form", read until End-of-Content (0x00, 0x00) occurs in the byte stream
+/// * `first > 0x80` => "variable "definite lenth form", bits 0x7f indicate the number of bytes the length is encoded on (big-endian)
+pub struct BerLength;
+impl Length for BerLength {
+    fn decode(buf: &[u8]) -> Result<(usize, usize), DecodeError>
+    where
+        Self: Sized,
+    {
+        if buf.is_empty() {
+            return Err(DecodeError::BufferUnderrun);
+        }
+
+        let first = buf[0];
+        // short form
+        if first & 0x80 == 0 {
+            return Ok((first as usize, 1));
+        }
+
+        if first == 0x80 {
+            // not implemented
+            return Err(DecodeError::InvalidLength);
+        }
+
+        let nbytes = (first & 0x7F) as usize;
+        if nbytes == 0 {
+            return Err(DecodeError::InvalidLength);
+        }
+
+        if nbytes > 8 {
+            // too large
+            return Err(DecodeError::InvalidLength);
+        }
+        if buf.len() < 1 + nbytes {
+            return Err(DecodeError::BufferUnderrun);
+        }
+
+        let mut len: usize = 0;
+        for i in 0..nbytes {
+            len = (len << 8) | (buf[1 + i] as usize);
+        }
+        Ok((len, 1 + nbytes))
     }
 }
 
@@ -93,26 +161,27 @@ impl<'buf> Decoder<'buf> {
     pub fn new(buf: &'buf [u8]) -> Self {
         Self { buf, pos: 0 }
     }
+
     fn is_empty(&self) -> bool {
         self.pos >= self.buf.len()
     }
+
     fn remaining(&self) -> usize {
         self.buf.len().saturating_sub(self.pos)
     }
 
-    fn read_tag<T: Tag>(&mut self) -> Result<(T, usize), DecodeError> {
-        let (tag, tag_len) = T::decode(&self.buf[self.pos..])?;
-        self.pos += tag_len;
+    fn read_tag_length<T: Tag, L: Length>(&mut self) -> Result<(T, usize), DecodeError> {
+        let (tag, tag_bytes) = T::decode(&self.buf[self.pos..])?;
+        self.pos += tag_bytes;
 
         if self.is_empty() {
             return Err(DecodeError::BufferUnderrun);
         }
 
-        // TODO: make a trait for different kinds of length encodings
-        let length = self.buf[self.pos];
-        self.pos += 1;
+        let (length, length_bytes) = L::decode(&self.buf[self.pos..])?;
+        self.pos += length_bytes;
 
-        Ok((tag, length as usize))
+        Ok((tag, length))
     }
 
     fn read_value(&mut self, length: usize) -> Result<&'buf [u8], DecodeError> {
@@ -123,6 +192,12 @@ impl<'buf> Decoder<'buf> {
         let value = &self.buf[self.pos..self.pos + length];
         self.pos += length;
         Ok(value)
+    }
+
+    fn read_tlv<T: Tag, L: Length>(&mut self) -> Result<(T, &'buf [u8]), DecodeError> {
+        let (tag, length) = self.read_tag_length::<T, L>()?;
+        let value = self.read_value(length)?;
+        Ok((tag, value))
     }
 
     pub fn into_iter_tags<T: Tag>(self) -> TlvIter<'buf, T> {
@@ -145,9 +220,7 @@ impl<'buf, T: Tag> Iterator for TlvIter<'buf, T> {
         if self.decoder.is_empty() {
             None
         } else {
-            Some(self.decoder.read_tag().and_then(|(tag, length)| {
-                self.decoder.read_value(length).map(|value| (tag, value))
-            }))
+            Some(self.decoder.read_tlv::<T, BerLength>())
         }
     }
 }
@@ -299,7 +372,41 @@ mod test {
     fn test_u8_is_tag() {
         let buf = [0x01, 0x00];
         let mut decoder = Decoder::new(&buf);
-        assert_eq!(decoder.read_tag::<u8>(), Ok((0x01, 0x00)));
+        assert_eq!(decoder.read_tag_length::<u8, U8Length>(), Ok((0x01, 0x00)));
+    }
+
+    #[test]
+    fn test_u8_length() {
+        let buf = [0x01, 0xFF];
+        let mut decoder = Decoder::new(&buf);
+        assert_eq!(decoder.read_tag_length::<u8, U8Length>(), Ok((0x01, 0xFF)));
+    }
+
+    #[test]
+    fn test_ber_length() {
+        // short form
+        assert_eq!(BerLength::decode(&[0x7F, 0x00]), Ok((0x7F, 1)));
+        // indefinite form (unsupported)
+        assert_eq!(
+            BerLength::decode(&[0x80, 0x00]),
+            Err(DecodeError::InvalidLength)
+        );
+        // variable form
+        assert_eq!(BerLength::decode(&[0x81, 0x00]), Ok((0, 2)));
+        assert_eq!(BerLength::decode(&[0x82, 0x01, 0x00]), Ok((0x0100, 3)));
+        assert_eq!(
+            BerLength::decode(&[0x88, 0x01, 0x02, 0x03, 0x04, 0x05, 0x06, 0x07, 0x08]),
+            Ok((0x0102_0304_0506_0708, 9))
+        );
+        assert_eq!(
+            BerLength::decode(&[0x89, 0x01, 0x02, 0x03, 0x04, 0x05, 0x06, 0x07, 0x08, 0x09]),
+            Err(DecodeError::InvalidLength)
+        );
+        assert_eq!(BerLength::decode(&[0x81]), Err(DecodeError::BufferUnderrun));
+        assert_eq!(
+            BerLength::decode(&[0x82, 0x01]),
+            Err(DecodeError::BufferUnderrun)
+        );
     }
 
     #[test]
