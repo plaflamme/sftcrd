@@ -30,6 +30,8 @@ use crate::PivApplet;
 use crate::Response;
 use crate::data::push_tlv;
 use crate::slot::{KeyMaterial, SlotKey};
+use crate::tlv::ValueDecoder;
+use crate::tlv::parse_struct;
 
 impl PivApplet {
     /// GENERATE ASYMMETRIC KEY PAIR (`0x47`): the host's `generate_key`
@@ -55,7 +57,7 @@ impl PivApplet {
             [0xAC, len, control @ ..] if usize::from(*len) == control.len() => control,
             _ => return iso7816::Status::IncorrectDataParameter.into(),
         };
-        let Ok((alg, pin_policy, touch_policy)) = parse_control(control) else {
+        let Ok(ctrl) = Control::decode(control) else {
             return iso7816::Status::IncorrectDataParameter.into();
         };
         // The `F9` attestation key: P-256 only, and a regeneration
@@ -64,7 +66,7 @@ impl PivApplet {
         // replacement, and a stale attestation CA would certify the wrong
         // key. The policy request is ignored: the self-signed certificate
         // keeps the reference applet's fixed policy bytes.
-        if command.p2 == 0xF9 && alg != KeyAlg::EccP256 {
+        if command.p2 == 0xF9 && ctrl.alg != KeyAlg::EccP256 {
             // The `F9` attestation key is P-256 only, not a slot of the
             // 24-slot table.
             return iso7816::Status::IncorrectDataParameter.into();
@@ -92,12 +94,12 @@ impl PivApplet {
         let Some(slot) = Slot::from_u8(command.p2) else {
             return iso7816::Status::IncorrectP1OrP2Parameter.into();
         };
-        let slot_key = match SlotKey::generate(alg) {
+        let slot_key = match SlotKey::generate(ctrl.alg) {
             Ok(slot_key) => slot_key,
             Err(status) => return status.into(),
         };
         let public_key = slot_key.public_inner();
-        self.commit_slot_key(slot, slot_key, false, pin_policy, touch_policy);
+        self.commit_slot_key(slot, slot_key, false, ctrl.pin_policy, ctrl.touch_policy);
 
         let mut data = Vec::with_capacity(3 + public_key.len());
         push_tlv(&mut data, &[0x7F, 0x49], &public_key);
@@ -201,34 +203,39 @@ impl PivApplet {
     }
 }
 
-/// The control-reference template of a GENERATE ASYMMETRIC KEY PAIR
-/// command: a required `80 01 <algorithm>` member and optional `AA 01
-/// <pin policy>` / `AB 01 <touch policy>` members, in any order, each at
-/// most once.
-#[allow(clippy::type_complexity)]
-fn parse_control(
-    control: &[u8],
-) -> Result<
-    (
-        KeyAlg,
-        Option<Defaultable<PinPolicy>>,
-        Option<Defaultable<TouchPolicy>>,
-    ),
-    (),
-> {
-    let mut alg = None;
-    let mut pin_policy = None;
-    let mut touch_policy = None;
-    walk_tlvs(control, |tag, value| {
-        match tag {
-            0x80 if alg.is_none() => alg = Some(parse_alg(value)?),
-            0xAA if pin_policy.is_none() => pin_policy = Some(parse_pin_policy(value)?),
-            0xAB if touch_policy.is_none() => touch_policy = Some(parse_touch_policy(value)?),
-            _ => return Err(()),
-        }
-        Ok(())
-    })?;
-    Ok((alg.ok_or(())?, pin_policy, touch_policy))
+parse_struct! {
+    #[derive(Debug, PartialEq)]
+    pub struct Control {
+        #[tag = 0x80]
+        alg: KeyAlg,
+        #[tag = 0xAA]
+        pin_policy: Option<Defaultable<PinPolicy>>,
+        #[tag = 0xAB]
+        touch_policy: Option<Defaultable<TouchPolicy>>,
+    }
+}
+
+impl ValueDecoder for KeyAlg {
+    fn decode(bytes: &[u8]) -> Result<Self, crate::tlv::DecodeError> {
+        u8::decode(bytes)
+            .and_then(|value| KeyAlg::from_u8(value).ok_or(crate::tlv::DecodeError::InvalidValue))
+    }
+}
+
+impl ValueDecoder for Defaultable<PinPolicy> {
+    fn decode(bytes: &[u8]) -> Result<Self, crate::tlv::DecodeError> {
+        u8::decode(bytes).and_then(|value| {
+            PinPolicy::from_u8(value).ok_or(crate::tlv::DecodeError::InvalidValue)
+        })
+    }
+}
+
+impl ValueDecoder for Defaultable<TouchPolicy> {
+    fn decode(bytes: &[u8]) -> Result<Self, crate::tlv::DecodeError> {
+        u8::decode(bytes).and_then(|value| {
+            TouchPolicy::from_u8(value).ok_or(crate::tlv::DecodeError::InvalidValue)
+        })
+    }
 }
 
 struct ImportKey {
@@ -253,7 +260,10 @@ fn parse_import(key_alg: KeyAlg, body: &[u8]) -> Result<ImportKey, ()> {
     let mut n = None;
     let mut pin_policy = None;
     let mut touch_policy = None;
-    walk_tlvs(body, |tag, value| {
+    for t in crate::tlv::Decoder::new(body).into_iter_tags::<u8>() {
+        let Ok((tag, value)) = t else {
+            return Err(());
+        };
         match tag {
             0x06 if scalar.is_none() => scalar = Some(parse_scalar(value)?),
             0x01 if p.is_none() => p = Some(value.to_vec()),
@@ -265,8 +275,8 @@ fn parse_import(key_alg: KeyAlg, body: &[u8]) -> Result<ImportKey, ()> {
             0xAB if touch_policy.is_none() => touch_policy = Some(parse_touch_policy(value)?),
             _ => return Err(()),
         }
-        Ok(())
-    })?;
+    }
+
     let key_material = if matches!(
         key_alg,
         KeyAlg::Rsa1024 | KeyAlg::Rsa2048 | KeyAlg::Rsa3072 | KeyAlg::Rsa4096
@@ -295,38 +305,6 @@ fn parse_import(key_alg: KeyAlg, body: &[u8]) -> Result<ImportKey, ()> {
         pin_policy,
         touch_policy,
     })
-}
-
-/// Walk the ordered TLV members of `rest` from the front, calling `f` for
-/// each: a broken member (no length, a value that overruns the input) or a
-/// member `f` rejects ends the walk with `Err(())`.
-fn walk_tlvs(rest: &[u8], mut f: impl FnMut(u8, &[u8]) -> Result<(), ()>) -> Result<(), ()> {
-    let mut rest = rest;
-    while !rest.is_empty() {
-        let Some((tag, value, next)) = next_tlv(rest) else {
-            return Err(());
-        };
-        f(tag, value)?;
-        rest = next;
-    }
-    Ok(())
-}
-
-/// The next TLV member at the front of `rest` — `(tag, value, remainder)`
-/// — or `None` when the structure is broken.
-fn next_tlv(rest: &[u8]) -> Option<(u8, &[u8], &[u8])> {
-    let (tag, rest) = rest.split_first()?;
-    let (length, rest) = rest.split_first()?;
-    let (value, next) = rest.split_at_checked(usize::from(*length))?;
-    Some((*tag, value, next))
-}
-
-/// A `80 01 <id>` algorithm member.
-fn parse_alg(value: &[u8]) -> Result<KeyAlg, ()> {
-    let [id] = value else {
-        return Err(());
-    };
-    KeyAlg::from_u8(*id).ok_or(())
 }
 
 /// An `AA 01 <id>` pin-policy member.

@@ -59,6 +59,8 @@ mod management;
 mod pin;
 mod piv;
 mod slot;
+#[macro_use]
+mod tlv;
 mod trace;
 mod yubico;
 
