@@ -10,7 +10,10 @@
 //! [`keyroost_piv::encode_certificate`] (DER or gzip, `CertInfo` `0x00`/`0x01`)
 //! reads back byte-identical.
 
-use crate::{PivApplet, Response};
+use crate::{
+    PivApplet, Response,
+    tlv::{ValueDecoder, parse_struct},
+};
 use x509_cert::der::{Decode, Encode};
 
 const OBJECT_CHUID: [u8; 3] = [0x5F, 0xC1, 0x02];
@@ -28,59 +31,11 @@ const ATTESTATION_OBJECT_TAG: [u8; 3] = [0x5F, 0xFF, 0x01];
 #[derive(Default)]
 pub(crate) struct PivData {
     /// The CHUID (card holder unique identifier), `None` at the factory.
-    pub(crate) chuid: Option<Vec<u8>>,
+    chuid: Option<Vec<u8>>,
     /// The PIN-protected data object, `None` at the factory.
-    pub(crate) pin_protected: Option<Vec<u8>>,
+    pin_protected: Option<Vec<u8>>,
     /// The Yubico admin object (`5F FF 00`), `None` at the factory.
-    pub(crate) admin_data: Option<Vec<u8>>,
-}
-
-impl PivData {
-    /// The object stored under `tag`, or `None` when no object exists under
-    /// it (or `tag` is not a non-slot object tag).
-    pub(crate) fn get(&self, tag: [u8; 3]) -> Option<&[u8]> {
-        match tag {
-            OBJECT_CHUID => self.chuid.as_deref(),
-            OBJECT_PIN_PROTECTED_DATA => self.pin_protected.as_deref(),
-            OBJECT_ADMIN_DATA => self.admin_data.as_deref(),
-            _ => None,
-        }
-    }
-
-    /// Store `value` under `tag`, returning whether the tag names a known
-    /// non-slot object.
-    pub(crate) fn put(&mut self, tag: [u8; 3], value: Vec<u8>) -> bool {
-        match tag {
-            OBJECT_CHUID => {
-                self.chuid = Some(value);
-                true
-            }
-            OBJECT_PIN_PROTECTED_DATA => {
-                self.pin_protected = Some(value);
-                true
-            }
-            OBJECT_ADMIN_DATA => {
-                self.admin_data = Some(value);
-                true
-            }
-            _ => false,
-        }
-    }
-}
-
-/// The slot index whose certificate lives under the given `5C`-selector
-/// tag — `5F C1 05` (`9A`), `5F C1 0A` (`9C`), `5F C1 0B` (`9D`),
-/// `5F C1 01` (`9E`) and `5F C1 0C+n` for retired slot `n` — or `None`
-/// for a non-slot object tag.
-pub(crate) fn cert_slot_index(tag: [u8; 3]) -> Option<crate::piv::Slot> {
-    match tag {
-        [0x5F, 0xC1, 0x05] => Some(crate::piv::Slot::Authentication),
-        [0x5F, 0xC1, 0x0A] => Some(crate::piv::Slot::Signature),
-        [0x5F, 0xC1, 0x0B] => Some(crate::piv::Slot::KeyManagement),
-        [0x5F, 0xC1, 0x01] => Some(crate::piv::Slot::CardAuthentication),
-        [0x5F, 0xC1, third @ 0x0D..=0x20] => crate::piv::Slot::retired(third - 0x0C),
-        _ => None,
-    }
+    admin_data: Option<Vec<u8>>,
 }
 
 impl PivApplet {
@@ -95,11 +50,10 @@ impl PivApplet {
         if command.p1 != 0x3F || command.p2 != 0xFF {
             return iso7816::Status::IncorrectP1OrP2Parameter.into();
         }
-        let body = command.data();
-        let Some(tag) = selector_tag(body) else {
+        let Ok(get_data) = GetDataRequest::decode(command.data()) else {
             return iso7816::Status::IncorrectDataParameter.into();
         };
-        match self.data_object_value(tag) {
+        match self.data_object_value(get_data.selector) {
             Some(value) => {
                 let mut full = Vec::with_capacity(2 + value.len());
                 push_tlv(&mut full, &[0x53], &value);
@@ -120,16 +74,18 @@ impl PivApplet {
         if command.p1 != 0x3F || command.p2 != 0xFF {
             return iso7816::Status::IncorrectP1OrP2Parameter.into();
         }
+
         if let Err(sw) = self.management_unlocked() {
             return sw.into();
         }
-        let Some((tag, value)) = parse_put_body(command.data()) else {
+
+        let Ok(put_data) = PutDataRequest::decode(command.data()) else {
             return iso7816::Status::IncorrectDataParameter.into();
         };
-        if self.store_data_object(tag, value) {
-            iso7816::Status::Success.into()
-        } else {
-            iso7816::Status::NotFound.into()
+
+        match self.store_data_object(put_data.selector, put_data.data) {
+            Ok(()) => iso7816::Status::Success.into(),
+            Err(sw) => sw.into(),
         }
     }
 
@@ -137,13 +93,13 @@ impl PivApplet {
     /// a slot tag, the `F9` attestation certificate for `5F FF 01`, the
     /// corresponding [`PivData`] object otherwise — or `None` when nothing
     /// has been stored under it.
-    pub(crate) fn data_object_value(&self, tag: [u8; 3]) -> Option<Vec<u8>> {
-        if tag == ATTESTATION_OBJECT_TAG {
-            return self.attestation.cert.to_der().ok();
-        }
-        match cert_slot_index(tag) {
-            Some(index) => self.slots[index].cert.clone(),
-            None => self.data.get(tag).map(Vec::from),
+    fn data_object_value(&self, selector: Selector) -> Option<Vec<u8>> {
+        match selector {
+            Selector::Chuid => self.data.chuid.clone(),
+            Selector::PinData => self.data.pin_protected.clone(),
+            Selector::AdminData => self.data.admin_data.clone(),
+            Selector::Slot(slot) => self.slots[slot].cert.clone(),
+            Selector::AttestationCert => self.attestation.cert.to_der().ok(),
         }
     }
 
@@ -151,67 +107,84 @@ impl PivApplet {
     /// slot tag, the `F9` attestation certificate for `5F FF 01`, the
     /// corresponding [`PivData`] object otherwise. Returns whether the tag
     /// names a known object.
-    pub(crate) fn store_data_object(&mut self, tag: [u8; 3], value: Vec<u8>) -> bool {
-        if tag == ATTESTATION_OBJECT_TAG {
-            self.attestation.cert = x509_cert::Certificate::from_der(&value).ok(); // TODO: validate
-            return true;
-        }
-        match cert_slot_index(tag) {
-            Some(index) => {
-                self.slots[index].cert = Some(value);
-                true
+    fn store_data_object(
+        &mut self,
+        selector: Selector,
+        value: &[u8],
+    ) -> Result<(), iso7816::Status> {
+        match selector {
+            Selector::Chuid => self.data.chuid = Some(Vec::from(value)),
+            Selector::PinData => self.data.pin_protected = Some(Vec::from(value)),
+            Selector::AdminData => self.data.admin_data = Some(Vec::from(value)),
+            Selector::Slot(slot) => self.slots[slot].cert = Some(Vec::from(value)),
+            Selector::AttestationCert => {
+                self.attestation.cert = Some(
+                    x509_cert::Certificate::from_der(value)
+                        .map_err(|_| iso7816::Status::IncorrectDataParameter)?,
+                );
             }
-            None => self.data.put(tag, value),
+        }
+        Ok(())
+    }
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum Selector {
+    Chuid,
+    PinData,
+    AdminData,
+    Slot(crate::piv::Slot),
+    AttestationCert,
+}
+
+impl ValueDecoder<'_> for Selector {
+    fn decode(bytes: &'_ [u8]) -> Result<Self, crate::tlv::DecodeError> {
+        fn cert_slot_index(tag: u8) -> Option<crate::piv::Slot> {
+            match tag {
+                0x05 => Some(crate::piv::Slot::Authentication),
+                0x0A => Some(crate::piv::Slot::Signature),
+                0x0B => Some(crate::piv::Slot::KeyManagement),
+                0x01 => Some(crate::piv::Slot::CardAuthentication),
+                v @ 0x0D..=0x20 => crate::piv::Slot::retired(v - 0x0C),
+                _ => None,
+            }
+        }
+
+        let Some(bytes) = bytes.first_chunk() else {
+            return Err(crate::tlv::DecodeError::InvalidValue);
+        };
+
+        match *bytes {
+            OBJECT_CHUID => Ok(Self::Chuid),
+            OBJECT_PIN_PROTECTED_DATA => Ok(Self::PinData),
+            OBJECT_ADMIN_DATA => Ok(Self::AdminData),
+            ATTESTATION_OBJECT_TAG => Ok(Selector::AttestationCert),
+            [0x5F, 0xC1, slot] if let Some(slot) = cert_slot_index(slot) => {
+                Ok(Selector::Slot(slot))
+            }
+            _ => Err(crate::tlv::DecodeError::InvalidValue),
         }
     }
 }
 
-/// The `5C` selector's 3-byte object tag from a GET/PUT DATA body: `None`
-/// when the body is not a well-formed `5C 03 <tag>` selector.
-fn selector_tag(body: &[u8]) -> Option<[u8; 3]> {
-    let [0x5C, 0x03, t0, t1, t2, ..] = body else {
-        return None;
-    };
-    Some([*t0, *t1, *t2])
+parse_struct! {
+    #[derive(Debug)]
+    #[length(crate::tlv::BerLength)]
+    struct GetDataRequest {
+        #[tag=0x5C]
+        selector: Selector,
+    }
 }
 
-/// A PUT DATA body's object tag and value: a `5C 03 <tag>` selector
-/// followed by a `53 <len> <value>` template whose value runs to the end of
-/// the body. `None` when any of it is broken.
-fn parse_put_body(body: &[u8]) -> Option<([u8; 3], Vec<u8>)> {
-    let tag = selector_tag(body)?;
-    let template = body.get(5..)?;
-    if *template.first()? != 0x53 {
-        return None;
+parse_struct! {
+    #[derive(Debug)]
+    #[length(crate::tlv::BerLength)]
+    struct PutDataRequest<'a> {
+        #[tag=0x5C]
+        selector: Selector,
+        #[tag=0x53]
+        data: &'a [u8],
     }
-    let (len, value) = ber_length(template.get(1..)?)?;
-    if value.len() != len {
-        return None;
-    }
-    Some((tag, value.to_vec()))
-}
-
-/// A BER length in its short or 1-2-byte long form, at the head of `rest`:
-/// the declared length and the following bytes. `None` when the form is
-/// broken or the declared length overruns what is present.
-fn ber_length(rest: &[u8]) -> Option<(usize, &[u8])> {
-    let first = *rest.first()?;
-    if first < 0x80 {
-        return Some((usize::from(first), rest.get(1..)?));
-    }
-    let count = usize::from(first & 0x7F);
-    let digits = rest.get(1..=count)?;
-    if count > 2 {
-        return None;
-    }
-    let len = digits
-        .iter()
-        .fold(0usize, |acc, b| (acc << 8) | usize::from(*b));
-    let value = rest.get(1 + count..)?;
-    if value.len() < len {
-        return None;
-    }
-    Some((len, value))
 }
 
 /// Append `tag` + BER length + `value` to `out` — short form up to `0x7F`,
@@ -257,6 +230,32 @@ mod tests {
         tags[25] = OBJECT_PIN_PROTECTED_DATA;
         tags[26] = OBJECT_ADMIN_DATA;
         tags
+    }
+
+    #[test]
+    fn test_decode_selector() {
+        assert_eq!(
+            Selector::decode(&[0x5F, 0xC1, 0x05]),
+            Ok(Selector::Slot(crate::piv::Slot::Authentication))
+        );
+        assert_eq!(
+            Selector::decode(&[0x5F, 0xC1, 0x0A]),
+            Ok(Selector::Slot(crate::piv::Slot::Signature))
+        );
+        assert_eq!(
+            Selector::decode(&[0x5F, 0xC1, 0x0B]),
+            Ok(Selector::Slot(crate::piv::Slot::KeyManagement))
+        );
+        assert_eq!(
+            Selector::decode(&[0x5F, 0xC1, 0x01]),
+            Ok(Selector::Slot(crate::piv::Slot::CardAuthentication))
+        );
+        assert_eq!(
+            Selector::decode(&[0x5F, 0xC1, 0x0D]),
+            Ok(Selector::Slot(
+                crate::piv::Slot::retired(1).expect("retired 1")
+            ))
+        );
     }
 
     /// PUT then GET every object class — all 24 slot certificates plus the
@@ -373,7 +372,7 @@ mod tests {
         let mut applet = PivApplet::new();
         let (_step2, _challenge) = mgmt_handshake(&mut applet);
         let resp = applet.process(&put_data(&[0x5F, 0xC1, 0x77], &[0x11]));
-        assert_eq!(resp.status(), Status::NotFound);
+        assert_eq!(resp.status(), Status::IncorrectDataParameter);
     }
 
     /// PUT DATA answers `9000` with no data, like the card.
