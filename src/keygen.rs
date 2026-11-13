@@ -207,14 +207,14 @@ impl PivApplet {
     }
 }
 
-impl ValueDecoder for KeyAlg {
+impl ValueDecoder<'_> for KeyAlg {
     fn decode(bytes: &[u8]) -> Result<Self, crate::tlv::DecodeError> {
         u8::decode(bytes)
             .and_then(|value| KeyAlg::from_u8(value).ok_or(crate::tlv::DecodeError::InvalidValue))
     }
 }
 
-impl ValueDecoder for Defaultable<PinPolicy> {
+impl ValueDecoder<'_> for Defaultable<PinPolicy> {
     fn decode(bytes: &[u8]) -> Result<Self, crate::tlv::DecodeError> {
         u8::decode(bytes).and_then(|value| {
             PinPolicy::from_u8(value).ok_or(crate::tlv::DecodeError::InvalidValue)
@@ -222,7 +222,7 @@ impl ValueDecoder for Defaultable<PinPolicy> {
     }
 }
 
-impl ValueDecoder for Defaultable<TouchPolicy> {
+impl ValueDecoder<'_> for Defaultable<TouchPolicy> {
     fn decode(bytes: &[u8]) -> Result<Self, crate::tlv::DecodeError> {
         u8::decode(bytes).and_then(|value| {
             TouchPolicy::from_u8(value).ok_or(crate::tlv::DecodeError::InvalidValue)
@@ -243,19 +243,19 @@ parse_struct! {
 }
 
 parse_struct! {
-    struct ImportTemplate {
+    struct ImportTemplate<'a> {
         #[tag = 0x01]
-        p: Option<Vec<u8>>,
+        p: Option<&'a [u8]>,
         #[tag = 0x02]
-        q: Option<Vec<u8>>,
+        q: Option<&'a [u8]>,
         #[tag = 0x03]
-        dp: Option<Vec<u8>>,
+        dp: Option<&'a [u8]>,
         #[tag = 0x04]
-        dq: Option<Vec<u8>>,
+        dq: Option<&'a [u8]>,
         #[tag = 0x05]
-        n: Option<Vec<u8>>,
+        n: Option<&'a [u8]>,
         #[tag = 0x06]
-        scalar: Option<Vec<u8>>,
+        scalar: Option<&'a [u8]>,
         #[tag = 0xAA]
         pin_policy: Option<Defaultable<PinPolicy>>,
         #[tag = 0xAB]
@@ -263,8 +263,8 @@ parse_struct! {
     }
 }
 
-impl ImportTemplate {
-    fn key_material(&self, key_alg: KeyAlg) -> Result<KeyMaterial, ()> {
+impl ImportTemplate<'_> {
+    fn key_material(&self, key_alg: KeyAlg) -> Result<KeyMaterial<'_>, ()> {
         let key_material = if matches!(
             key_alg,
             KeyAlg::Rsa1024 | KeyAlg::Rsa2048 | KeyAlg::Rsa3072 | KeyAlg::Rsa4096
@@ -273,13 +273,7 @@ impl ImportTemplate {
             if self.scalar.is_some() {
                 return Err(());
             }
-            match (
-                self.p.clone(),
-                self.q.clone(),
-                self.dp.clone(),
-                self.dq.clone(),
-                self.n.clone(),
-            ) {
+            match (self.p, self.q, self.dp, self.dq, self.n) {
                 (Some(p), Some(q), Some(dp), Some(dq), Some(n)) => {
                     KeyMaterial::Rsa { p, q, dp, dq, n }
                 }
@@ -295,7 +289,7 @@ impl ImportTemplate {
             {
                 return Err(());
             }
-            let Some(scalar) = self.scalar.clone() else {
+            let Some(scalar) = self.scalar else {
                 return Err(());
             };
             KeyMaterial::Scalar(scalar)

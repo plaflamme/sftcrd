@@ -65,14 +65,14 @@ pub(crate) struct Slot {
     pub(crate) cert: Option<Vec<u8>>,
 }
 
-pub(crate) enum KeyMaterial {
-    Scalar(Vec<u8>),
+pub(crate) enum KeyMaterial<'a> {
+    Scalar(&'a [u8]),
     Rsa {
-        p: Vec<u8>,
-        q: Vec<u8>,
-        dp: Vec<u8>,
-        dq: Vec<u8>,
-        n: Vec<u8>,
+        p: &'a [u8],
+        q: &'a [u8],
+        dp: &'a [u8],
+        dq: &'a [u8],
+        n: &'a [u8],
     },
 }
 
@@ -282,7 +282,7 @@ impl SlotKey {
     }
 }
 
-impl TryFrom<(KeyAlg, KeyMaterial)> for SlotKey {
+impl TryFrom<(KeyAlg, KeyMaterial<'_>)> for SlotKey {
     type Error = ();
 
     fn try_from((key_alg, key_material): (KeyAlg, KeyMaterial)) -> Result<Self, Self::Error> {
@@ -307,7 +307,7 @@ impl TryFrom<(KeyAlg, KeyMaterial)> for SlotKey {
             }
             KeyMaterial::Rsa { p, q, dp, dq, n } => match key_alg {
                 KeyAlg::Rsa1024 | KeyAlg::Rsa2048 | KeyAlg::Rsa3072 | KeyAlg::Rsa4096 => {
-                    let Some(slot_key) = import_rsa_secret(key_alg, &p, &q, &dp, &dq, &n) else {
+                    let Some(slot_key) = import_rsa_secret(key_alg, p, q, dp, dq, n) else {
                         return Err(());
                     };
                     Ok(slot_key)

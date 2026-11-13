@@ -107,14 +107,14 @@ impl Length for BerLength {
     }
 }
 
-pub trait ValueDecoder
+pub trait ValueDecoder<'a>
 where
     Self: Sized,
 {
-    fn decode(bytes: &[u8]) -> Result<Self, DecodeError>;
+    fn decode(bytes: &'a [u8]) -> Result<Self, DecodeError>;
 }
 
-impl ValueDecoder for u8 {
+impl ValueDecoder<'_> for u8 {
     fn decode(bytes: &[u8]) -> Result<Self, DecodeError> {
         if let [byte] = bytes {
             Ok(*byte)
@@ -124,7 +124,7 @@ impl ValueDecoder for u8 {
     }
 }
 
-impl ValueDecoder for u16 {
+impl ValueDecoder<'_> for u16 {
     fn decode(bytes: &[u8]) -> Result<Self, DecodeError> {
         if let [msb, lsb] = bytes {
             Ok(u16::from_be_bytes([*msb, *lsb]))
@@ -134,9 +134,15 @@ impl ValueDecoder for u16 {
     }
 }
 
-impl ValueDecoder for Vec<u8> {
+impl ValueDecoder<'_> for Vec<u8> {
     fn decode(bytes: &[u8]) -> Result<Self, DecodeError> {
         Ok(Vec::from(bytes))
+    }
+}
+
+impl<'a> ValueDecoder<'a> for &'a [u8] {
+    fn decode(bytes: &'a [u8]) -> Result<Self, DecodeError> {
+        Ok(bytes)
     }
 }
 
@@ -219,62 +225,79 @@ macro_rules! parse_struct {
     // 1) Attribute Munching
     // -------------------------------------------------------------------------
 
-    // Match `#[length(SomeType)]` -> Overrides the length type
+    // Match `#[length(SomeType)]`
     (@parse_attrs
         tag_type: [ $($tag_ty:tt)* ],
         length: [ $($len:tt)* ],
+        impl_lt: [ $impl_lt:lifetime ],
+        struct_lt: [ $($struct_lt:lifetime)? ],
         retained: [ $($retained:tt)* ],
         input: [ #[length($len_ty:ty)] $($rest:tt)* ]
     ) => {
         parse_struct!(@parse_attrs
             tag_type: [ $($tag_ty)* ],
             length: [ $len_ty ],
+            impl_lt: [ $impl_lt ],
+            struct_lt: [ $($struct_lt)? ],
             retained: [ $($retained)* ],
             input: [ $($rest)* ]
         );
     };
 
-    // Match `#[tag_type(SomeType)]` -> Overrides the tag type
+    // Match `#[tag_type(SomeType)]`
     (@parse_attrs
         tag_type: [ $($tag_ty:tt)* ],
         length: [ $($len:tt)* ],
+        impl_lt: [ $impl_lt:lifetime ],
+        struct_lt: [ $($struct_lt:lifetime)? ],
         retained: [ $($retained:tt)* ],
         input: [ #[tag_type($new_tag_ty:ty)] $($rest:tt)* ]
     ) => {
         parse_struct!(@parse_attrs
             tag_type: [ $new_tag_ty ],
             length: [ $($len)* ],
+            impl_lt: [ $impl_lt ],
+            struct_lt: [ $($struct_lt)? ],
             retained: [ $($retained)* ],
             input: [ $($rest)* ]
         );
     };
 
-    // Found any other attribute (e.g., #[derive(...)], /// docs): keep it in `retained`
+    // Found any other attribute (keep it in `retained`)
     (@parse_attrs
         tag_type: [ $($tag_ty:tt)* ],
         length: [ $($len:tt)* ],
+        impl_lt: [ $impl_lt:lifetime ],
+        struct_lt: [ $($struct_lt:lifetime)? ],
         retained: [ $($retained:tt)* ],
         input: [ #[$($attr:tt)*] $($rest:tt)* ]
     ) => {
         parse_struct!(@parse_attrs
             tag_type: [ $($tag_ty)* ],
             length: [ $($len)* ],
+            impl_lt: [ $impl_lt ],
+            struct_lt: [ $($struct_lt)? ],
             retained: [ $($retained)* #[$($attr)*] ],
             input: [ $($rest)* ]
         );
     };
 
-    // Base Case for attributes: no more attributes, proceed to fields
+    // Base Case for attributes: Transition to field parsing
     (@parse_attrs
         tag_type: [ $tag_ty:ty ],
         length: [ $len_ty:ty ],
+        impl_lt: [ $impl_lt:lifetime ],
+        struct_lt: [ $($struct_lt:lifetime)? ],
         retained: [ $($retained:tt)* ],
-        input: [ $vis:vis struct $name:ident { $($fields:tt)* } ]
+        // We drop whatever lifetime the input had here, relying instead on our tracked state
+        input: [ $vis:vis struct $name:ident $(<$ignore_lt:lifetime>)? { $($fields:tt)* } ]
     ) => {
         $crate::tlv::parse_struct!(@parse_fields
             tag_type: [ $tag_ty ],
             length: [ $len_ty ],
-            header: [ $($retained)* $vis struct $name ],
+            impl_lt: [ $impl_lt ],
+            struct_lt: [ $($struct_lt)? ],
+            header: [ $($retained)* $vis struct $name $(<$struct_lt>)? ],
             parsed: [],
             remaining: [ $($fields)* ]
         );
@@ -288,6 +311,8 @@ macro_rules! parse_struct {
     (@parse_fields
         tag_type: [ $tag_ty:ty ],
         length: [ $len_ty:ty ],
+        impl_lt: [ $impl_lt:lifetime ],
+        struct_lt: [ $($struct_lt:lifetime)? ],
         header: [ $($header:tt)* ],
         parsed: [ $($parsed:tt)* ],
         remaining: [
@@ -300,6 +325,8 @@ macro_rules! parse_struct {
         parse_struct!(@parse_fields
             tag_type: [ $tag_ty ],
             length: [ $len_ty ],
+            impl_lt: [ $impl_lt ],
+            struct_lt: [ $($struct_lt)? ],
             header: [ $($header)* ],
             parsed: [
                 $($parsed)*
@@ -321,6 +348,8 @@ macro_rules! parse_struct {
     (@parse_fields
         tag_type: [ $tag_ty:ty ],
         length: [ $len_ty:ty ],
+        impl_lt: [ $impl_lt:lifetime ],
+        struct_lt: [ $($struct_lt:lifetime)? ],
         header: [ $($header:tt)* ],
         parsed: [ $($parsed:tt)* ],
         remaining: [
@@ -333,6 +362,8 @@ macro_rules! parse_struct {
         parse_struct!(@parse_fields
             tag_type: [ $tag_ty ],
             length: [ $len_ty ],
+            impl_lt: [ $impl_lt ],
+            struct_lt: [ $($struct_lt)? ],
             header: [ $($header)* ],
             parsed: [
                 $($parsed)*
@@ -350,41 +381,32 @@ macro_rules! parse_struct {
         );
     };
 
-    // Base Case: Generate struct and `from_bytes`
+    // Base Case: Generate struct and `from_bytes` (Unified!)
     (@parse_fields
         tag_type: [ $tag_ty:ty ],
         length: [ $len_ty:ty ],
-        header: [ $(#[$meta:meta])* $vis:vis struct $name:ident ],
+        impl_lt: [ $impl_lt:lifetime ],
+        struct_lt: [ $($struct_lt:lifetime)? ],
+        // The header arrives perfectly formed from `@parse_attrs`
+        header: [ $(#[$meta:meta])* $vis:vis struct $name:ident $(<$lt_header:lifetime>)? ],
         parsed: [
-            $(
-                (
-                    $kind:ident,
-                    $tag:expr,
-                    [ $(#[$field_meta:meta])* ],
-                    $field_vis:vis,
-                    $field_name:ident,
-                    $full_ty:ty,
-                    $parse_ty:ty
-                )
-            )*
+            $( ( $kind:ident, $tag:expr, [ $(#[$field_meta:meta])* ], $field_vis:vis, $field_name:ident, $full_ty:ty, $parse_ty:ty ) )*
         ],
         remaining: []
     ) => {
         $(#[$meta])*
-        $vis struct $name {
+        $vis struct $name $(<$struct_lt>)? {
             $(
                 $(#[$field_meta])*
                 $field_vis $field_name : $full_ty,
             )*
         }
 
-        impl $crate::tlv::ValueDecoder for $name {
-            fn decode(input: &[u8]) -> Result<Self, crate::tlv::DecodeError> {
-                $(
-                    let mut $field_name: Option<$parse_ty> = None;
-                )*
+        // $impl_lt is ALWAYS present here, while $struct_lt is optional!
+        impl <$impl_lt> $crate::tlv::ValueDecoder<$impl_lt> for $name $(<$struct_lt>)? {
+            fn decode(input: &$impl_lt [u8]) -> Result<Self, crate::tlv::DecodeError> {
+                $( let mut $field_name: Option<$parse_ty> = None; )*
 
-                // Uses the parsed $tag_ty and $len_ty directly
                 for entry in crate::tlv::Decoder::new(input).into_iter_tags::<$tag_ty, $len_ty>() {
                     let (tag, value_bytes) = entry?;
                     match tag {
@@ -402,9 +424,7 @@ macro_rules! parse_struct {
                 }
 
                 Ok(Self {
-                    $(
-                        $field_name: parse_struct!(@unwrap_field $kind, $field_name),
-                    )*
+                    $( $field_name: parse_struct!(@unwrap_field $kind, $field_name), )*
                 })
             }
         }
@@ -418,8 +438,27 @@ macro_rules! parse_struct {
     };
 
     // -------------------------------------------------------------------------
-    // 3) Public Entry Point
+    // 3) Public Entry Points
     // -------------------------------------------------------------------------
+
+    // Path A: Struct has a lifetime parameter (e.g. struct Foo<'a>)
+    (
+        $(#[$($attr:tt)*])*
+        $vis:vis struct $name:ident <$lt:lifetime> {
+            $($fields:tt)*
+        }
+    ) => {
+        parse_struct!(@parse_attrs
+            tag_type: [ u8 ],
+            length: [ $crate::tlv::U8Length ],
+            impl_lt: [ $lt ],     // Trait uses the provided lifetime
+            struct_lt: [ $lt ],   // Struct uses the provided lifetime
+            retained: [],
+            input: [ $(#[$($attr)*])* $vis struct $name <$lt> { $($fields)* } ]
+        );
+    };
+
+    // Path B: Struct does NOT have a lifetime parameter
     (
         $(#[$($attr:tt)*])*
         $vis:vis struct $name:ident {
@@ -427,8 +466,10 @@ macro_rules! parse_struct {
         }
     ) => {
         parse_struct!(@parse_attrs
-            tag_type: [ u8 ], // Default tag type
-            length: [ $crate::tlv::U8Length ], // Default length type
+            tag_type: [ u8 ],
+            length: [ $crate::tlv::U8Length ],
+            impl_lt: [ 'a ], // Trait uses a synthetic generated lifetime
+            struct_lt: [],   // Struct has no lifetime
             retained: [],
             input: [ $(#[$($attr)*])* $vis struct $name { $($fields)* } ]
         );
@@ -540,6 +581,7 @@ mod test {
             })
         );
     }
+
     #[test]
     fn test_parse_struct_length() {
         parse_struct! {
@@ -564,6 +606,38 @@ mod test {
             Ok(Packet {
                 version: 0xFF,
                 payload_len: vec![0xFE],
+            })
+        );
+        assert_eq!(
+            Packet::decode(&[0x01, 0x01, 0xFF, 0x02, 0x80, 0xFE, 0x00, 0x00]),
+            Err(DecodeError::InvalidLength)
+        );
+    }
+
+    #[test]
+    fn test_parse_struct_lifetime() {
+        parse_struct! {
+            #[derive(Debug, PartialEq)]
+            #[length(BerLength)]
+            pub struct Packet<'a> {
+                #[tag = 0x01]
+                pub version: u8,
+                #[tag = 0x02]
+                pub payload_len: &'a [u8],
+            }
+        }
+        assert_eq!(
+            Packet::decode(&[0x01, 0x01, 0xFF, 0x02, 0x81, 0x01, 0xFE]),
+            Ok(Packet {
+                version: 0xFF,
+                payload_len: &[0xFE],
+            })
+        );
+        assert_eq!(
+            Packet::decode(&[0x01, 0x01, 0xFF, 0x02, 0x82, 0x00, 0x01, 0xFE]),
+            Ok(Packet {
+                version: 0xFF,
+                payload_len: &[0xFE],
             })
         );
         assert_eq!(
