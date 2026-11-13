@@ -131,11 +131,15 @@ impl PivApplet {
             }
             _ => return iso7816::Status::IncorrectDataParameter.into(),
         };
-        let Ok(import) = parse_import(alg, command.data()) else {
+        let Ok(import) = ImportTemplate::decode(command.data()) else {
             return iso7816::Status::IncorrectDataParameter.into();
         };
 
-        let Ok(slot_key) = SlotKey::try_from((import.key_alg, import.key_material)) else {
+        let Ok(key_material) = import.key_material(alg) else {
+            return iso7816::Status::IncorrectDataParameter.into();
+        };
+
+        let Ok(slot_key) = SlotKey::try_from((alg, key_material)) else {
             return iso7816::Status::IncorrectDataParameter.into();
         };
 
@@ -203,18 +207,6 @@ impl PivApplet {
     }
 }
 
-parse_struct! {
-    #[derive(Debug, PartialEq)]
-    pub struct Control {
-        #[tag = 0x80]
-        alg: KeyAlg,
-        #[tag = 0xAA]
-        pin_policy: Option<Defaultable<PinPolicy>>,
-        #[tag = 0xAB]
-        touch_policy: Option<Defaultable<TouchPolicy>>,
-    }
-}
-
 impl ValueDecoder for KeyAlg {
     fn decode(bytes: &[u8]) -> Result<Self, crate::tlv::DecodeError> {
         u8::decode(bytes)
@@ -238,97 +230,77 @@ impl ValueDecoder for Defaultable<TouchPolicy> {
     }
 }
 
-struct ImportKey {
-    key_alg: KeyAlg,
-    key_material: KeyMaterial,
-    pin_policy: Option<Defaultable<PinPolicy>>,
-    touch_policy: Option<Defaultable<TouchPolicy>>,
-}
-
-/// The body of an IMPORT ASYMMETRIC KEY command: either the EC branch —
-/// a required `06 <len> <scalar>` member — or the RSA branch — the five CRT
-/// components `01 P`, `02 Q`, `03 dP`, `04 dQ`, `05 n` — plus optional
-/// `AA` / `AB` policy members, in any order, each at most once. Which
-/// branch applies is decided by the algorithm in P1; a member of the other
-/// branch refuses the command.
-fn parse_import(key_alg: KeyAlg, body: &[u8]) -> Result<ImportKey, ()> {
-    let mut scalar = None;
-    let mut p = None;
-    let mut q = None;
-    let mut dp = None;
-    let mut dq = None;
-    let mut n = None;
-    let mut pin_policy = None;
-    let mut touch_policy = None;
-    for t in crate::tlv::Decoder::new(body).into_iter_tags::<u8>() {
-        let Ok((tag, value)) = t else {
-            return Err(());
-        };
-        match tag {
-            0x06 if scalar.is_none() => scalar = Some(parse_scalar(value)?),
-            0x01 if p.is_none() => p = Some(value.to_vec()),
-            0x02 if q.is_none() => q = Some(value.to_vec()),
-            0x03 if dp.is_none() => dp = Some(value.to_vec()),
-            0x04 if dq.is_none() => dq = Some(value.to_vec()),
-            0x05 if n.is_none() => n = Some(value.to_vec()),
-            0xAA if pin_policy.is_none() => pin_policy = Some(parse_pin_policy(value)?),
-            0xAB if touch_policy.is_none() => touch_policy = Some(parse_touch_policy(value)?),
-            _ => return Err(()),
-        }
+parse_struct! {
+    #[derive(Debug, PartialEq)]
+    pub struct Control {
+        #[tag = 0x80]
+        alg: KeyAlg,
+        #[tag = 0xAA]
+        pin_policy: Option<Defaultable<PinPolicy>>,
+        #[tag = 0xAB]
+        touch_policy: Option<Defaultable<TouchPolicy>>,
     }
+}
 
-    let key_material = if matches!(
-        key_alg,
-        KeyAlg::Rsa1024 | KeyAlg::Rsa2048 | KeyAlg::Rsa3072 | KeyAlg::Rsa4096
-    ) {
-        // The EC scalar must not sneak in alongside the CRT set.
-        if scalar.is_some() {
-            return Err(());
-        }
-        match (p, q, dp, dq, n) {
-            (Some(p), Some(q), Some(dp), Some(dq), Some(n)) => KeyMaterial::Rsa { p, q, dp, dq, n },
-            _ => return Err(()),
-        }
-    } else {
-        // The RSA components must not sneak in alongside the scalar.
-        if p.is_some() || q.is_some() || dp.is_some() || dq.is_some() || n.is_some() {
-            return Err(());
-        }
-        let Some(scalar) = scalar else {
-            return Err(());
+parse_struct! {
+    struct ImportTemplate {
+        #[tag = 0x01]
+        p: Option<Vec<u8>>,
+        #[tag = 0x02]
+        q: Option<Vec<u8>>,
+        #[tag = 0x03]
+        dp: Option<Vec<u8>>,
+        #[tag = 0x04]
+        dq: Option<Vec<u8>>,
+        #[tag = 0x05]
+        n: Option<Vec<u8>>,
+        #[tag = 0x06]
+        scalar: Option<Vec<u8>>,
+        #[tag = 0xAA]
+        pin_policy: Option<Defaultable<PinPolicy>>,
+        #[tag = 0xAB]
+        touch_policy: Option<Defaultable<TouchPolicy>>,
+    }
+}
+
+impl ImportTemplate {
+    fn key_material(&self, key_alg: KeyAlg) -> Result<KeyMaterial, ()> {
+        let key_material = if matches!(
+            key_alg,
+            KeyAlg::Rsa1024 | KeyAlg::Rsa2048 | KeyAlg::Rsa3072 | KeyAlg::Rsa4096
+        ) {
+            // The EC scalar must not sneak in alongside the CRT set.
+            if self.scalar.is_some() {
+                return Err(());
+            }
+            match (
+                self.p.clone(),
+                self.q.clone(),
+                self.dp.clone(),
+                self.dq.clone(),
+                self.n.clone(),
+            ) {
+                (Some(p), Some(q), Some(dp), Some(dq), Some(n)) => {
+                    KeyMaterial::Rsa { p, q, dp, dq, n }
+                }
+                _ => return Err(()),
+            }
+        } else {
+            // The RSA components must not sneak in alongside the scalar.
+            if self.p.is_some()
+                || self.q.is_some()
+                || self.dp.is_some()
+                || self.dq.is_some()
+                || self.n.is_some()
+            {
+                return Err(());
+            }
+            let Some(scalar) = self.scalar.clone() else {
+                return Err(());
+            };
+            KeyMaterial::Scalar(scalar)
         };
-        KeyMaterial::Scalar(scalar)
-    };
-    Ok(ImportKey {
-        key_alg,
-        key_material,
-        pin_policy,
-        touch_policy,
-    })
-}
-
-/// An `AA 01 <id>` pin-policy member.
-fn parse_pin_policy(value: &[u8]) -> Result<Defaultable<PinPolicy>, ()> {
-    let [id] = value else {
-        return Err(());
-    };
-    PinPolicy::from_u8(*id).ok_or(())
-}
-
-/// An `AB 01 <id>` touch-policy member.
-fn parse_touch_policy(value: &[u8]) -> Result<Defaultable<TouchPolicy>, ()> {
-    let [id] = value else {
-        return Err(());
-    };
-    TouchPolicy::from_u8(*id).ok_or(())
-}
-
-/// A `06 <len> <scalar>` member: exactly the 32/48/66-byte big-endian
-/// secret of one of the NIST curves.
-fn parse_scalar(value: &[u8]) -> Result<Vec<u8>, ()> {
-    match value.len() {
-        32 | 48 | 66 => Ok(value.to_vec()),
-        _ => Err(()),
+        Ok(key_material)
     }
 }
 

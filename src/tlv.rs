@@ -78,6 +78,12 @@ impl ValueDecoder for u16 {
     }
 }
 
+impl ValueDecoder for Vec<u8> {
+    fn decode(bytes: &[u8]) -> Result<Self, DecodeError> {
+        Ok(Vec::from(bytes))
+    }
+}
+
 pub struct Decoder<'buf> {
     buf: &'buf [u8],
     pos: usize,
