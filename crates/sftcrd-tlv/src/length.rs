@@ -40,21 +40,25 @@ impl Length for U8Length {
 /// * `first > 0x80` => "variable "definite lenth form", bits 0x7f indicate the number of bytes the length is encoded on (big-endian)
 pub struct BerLength;
 impl Length for BerLength {
-    fn length(length: usize) -> usize {
+    fn length(length: u64) -> u64 {
         match length {
             0..0x80 => 1,
             0x80..=0xFF => 2,
-            0x0100..=0xFFFF => 3,
-            _ => todo!(),
+            0x0000_0000_0000_0100..=0x0000_0000_0000_FFFF => 3,
+            0x0000_0000_0001_0000..=0x0000_0000_00FF_FFFF => 4,
+            0x0000_0000_0100_0000..=0x0000_0000_FFFF_FFFF => 5,
+            0x0000_0001_0000_0000..=0x0000_00FF_FFFF_FFFF => 6,
+            0x0000_0100_0000_0000..=0x0000_FFFF_FFFF_FFFF => 7,
+            0x0001_0000_0000_0000..=0x00FF_FFFF_FFFF_FFFF => 8,
+            0x0100_0000_0000_0000..=0xFFFF_FFFF_FFFF_FFFF => 9,
         }
     }
 
-    fn encode(length: usize, buf: &mut [u8]) {
+    fn encode(length: u64, buf: &mut [u8]) {
         match u8::try_from(length) {
             Ok(l @ 0..0x80) => buf[0] = l,
             Ok(l @ 0x80..=0xFF) => {
-                buf[0] = 0x81;
-                buf[1] = l;
+                todo!()
             }
             Err(_) => match u16::try_from(length) {
                 Ok(value) => {
