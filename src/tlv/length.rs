@@ -42,7 +42,7 @@ impl Length for BerLength {
         match length {
             0..0x80 => 1,
             0x80..=0xFF => 2,
-            0x0100..0xFFFF => 3,
+            0x0100..=0xFFFF => 3,
             _ => todo!(),
         }
     }
@@ -101,5 +101,25 @@ impl Length for BerLength {
             len = (len << 8) | (buf[1 + i] as usize);
         }
         Ok((len, 1 + nbytes))
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use crate::tlv::{BerLength, Length};
+
+    #[test]
+    fn test_ber_length() {
+        assert_eq!(BerLength::length(0), 1);
+        assert_eq!(BerLength::length(0xFF), 2);
+        assert_eq!(BerLength::length(0xFFFF), 3);
+
+        let mut buf = [0; 3];
+        BerLength::encode(0, &mut buf);
+        assert_eq!(buf, [0, 0, 0]);
+        BerLength::encode(0xFF, &mut buf);
+        assert_eq!(buf, [0x81, 0xFF, 0]);
+        BerLength::encode(0xFFFF, &mut buf);
+        assert_eq!(buf, [0x82, 0xFF, 0xFF]);
     }
 }

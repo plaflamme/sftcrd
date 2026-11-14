@@ -5,6 +5,7 @@ use crate::constants::VERSION;
 use crate::pin::Pin;
 use crate::piv::TouchPolicy;
 use crate::slot::factory_pin_policy;
+use crate::tlv::ValueEncoder;
 use crate::{PivApplet, Response};
 
 impl PivApplet {
@@ -94,7 +95,7 @@ impl PivApplet {
         // The `7F49` inner TLVs, unwrapped from their template exactly as
         // the GENERATE response carries it: the `86` point for EC keys,
         // the `81` modulus and `82` exponent for RSA keys.
-        let inner = key.public_inner();
+        let inner = key.public_key().encode_top_level();
         let mut body = Vec::new();
         body.extend_from_slice(&[0x01, 0x01, key.alg() as u8]);
         body.extend_from_slice(&[

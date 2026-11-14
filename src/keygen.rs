@@ -28,12 +28,58 @@ use crate::piv::{KeyAlg, PinPolicy, TouchPolicy};
 
 use crate::PivApplet;
 use crate::Response;
-use crate::data::push_tlv;
+use crate::slot::PublicKey;
 use crate::slot::{KeyMaterial, SlotKey};
+use crate::tlv::BerLength;
 use crate::tlv::DecodeError;
+use crate::tlv::Encoder;
+use crate::tlv::Length;
 use crate::tlv::ValueDecoder;
 use crate::tlv::ValueEncoder;
 use crate::tlv::tlv_struct;
+
+crate::tlv::tlv_struct! {
+    #[tag_type(u16)]
+    #[length(BerLength)]
+    struct GenerateResponse {
+        #[tag = 0x7F49]
+        public_key: PublicKey,
+    }
+}
+
+// TODO: support tlv_enum!{}
+impl ValueEncoder for PublicKey {
+    fn length(&self) -> usize {
+        match self {
+            PublicKey::Point(pt) => 1 + BerLength::length(pt.length()) + pt.length(),
+            PublicKey::Rsa { n, e } => {
+                1 + BerLength::length(n.length())
+                    + n.length()
+                    + 1
+                    + BerLength::length(e.length())
+                    + e.length()
+            }
+        }
+    }
+
+    fn encode(&self, buf: &mut [u8]) {
+        let mut encoder = Encoder::new(buf);
+
+        match self {
+            PublicKey::Point(pt) => encoder.write_tlv::<u8, BerLength, Vec<u8>>(0x86, pt),
+            PublicKey::Rsa { n, e } => {
+                encoder.write_tlv::<u8, BerLength, Vec<u8>>(0x81, n);
+                encoder.write_tlv::<u8, BerLength, Vec<u8>>(0x82, e);
+            }
+        }
+    }
+}
+
+impl ValueDecoder<'_> for PublicKey {
+    fn decode(_bytes: &'_ [u8]) -> Result<Self, DecodeError> {
+        unreachable!()
+    }
+}
 
 impl PivApplet {
     /// GENERATE ASYMMETRIC KEY PAIR (`0x47`): the host's `generate_key`
@@ -87,11 +133,11 @@ impl PivApplet {
             // NOTE: generating a new key in this slot breaks attestation until a new certificate is imported.
             // The imported certificate is normally signed by a
             self.attestation.cert = None;
-            let mut inner = Vec::with_capacity(2 + point.len());
-            push_tlv(&mut inner, &[0x86], &point);
-            let mut data = Vec::with_capacity(inner.len() + 2);
-            push_tlv(&mut data, &[0x7F, 0x49], &inner);
-            return data.into();
+
+            let response = GenerateResponse {
+                public_key: PublicKey::Point(point),
+            };
+            return response.encode_top_level().into();
         }
         let Some(slot) = Slot::from_u8(command.p2) else {
             return iso7816::Status::IncorrectP1OrP2Parameter.into();
@@ -100,12 +146,14 @@ impl PivApplet {
             Ok(slot_key) => slot_key,
             Err(status) => return status.into(),
         };
-        let public_key = slot_key.public_inner();
+
+        let response = GenerateResponse {
+            public_key: slot_key.public_key(),
+        };
+
         self.commit_slot_key(slot, slot_key, false, ctrl.pin_policy, ctrl.touch_policy);
 
-        let mut data = Vec::with_capacity(3 + public_key.len());
-        push_tlv(&mut data, &[0x7F, 0x49], &public_key);
-        data.into()
+        response.encode_top_level().into()
     }
 
     /// IMPORT ASYMMETRIC KEY (`0xFE`): the host's
@@ -483,6 +531,7 @@ mod tests {
 
     /// The uncompressed point in the `7F 49 86` template.
     fn point_of(r: &Response) -> Vec<u8> {
+        println!("{}", hex::encode(r.data()));
         match parse_public_key(r.data()).expect("a well-formed public-key template") {
             PublicKey::Ecc { point } => point,
             PublicKey::Rsa { .. } => panic!("expected an EC point"),

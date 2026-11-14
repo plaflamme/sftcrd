@@ -220,20 +220,6 @@ tlv_struct! {
     }
 }
 
-/// Append `tag` + BER length + `value` to `out` — short form up to `0x7F`,
-/// `81`/`82` long form above, the same encoding the host's `put_data`
-/// builder emits.
-#[allow(clippy::cast_possible_truncation)]
-pub(crate) fn push_tlv(out: &mut Vec<u8>, tag: &[u8], value: &[u8]) {
-    out.extend_from_slice(tag);
-    match value.len() {
-        n if n <= 0x7F => out.push(n as u8),
-        n if n <= 0xFF => out.extend_from_slice(&[0x81, n as u8]),
-        n => out.extend_from_slice(&[0x82, (n >> 8) as u8, n as u8]),
-    }
-    out.extend_from_slice(value);
-}
-
 #[cfg(test)]
 #[allow(clippy::cast_possible_truncation)]
 mod tests {

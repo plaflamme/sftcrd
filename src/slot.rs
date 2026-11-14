@@ -76,6 +76,11 @@ pub(crate) enum KeyMaterial<'a> {
     },
 }
 
+pub(crate) enum PublicKey {
+    Point(Vec<u8>),
+    Rsa { n: Vec<u8>, e: Vec<u8> },
+}
+
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub(crate) enum RsaBits {
     Rsa1024 = 1024,
@@ -99,12 +104,6 @@ pub(crate) enum SlotKey {
     EccP384(elliptic_curve::SecretKey<p384::NistP384>),
     EccP521(elliptic_curve::SecretKey<p521::NistP521>),
     Rsa(RsaBits, rsa::PrivateKey),
-}
-
-fn encode_public_point(point: &[u8]) -> Vec<u8> {
-    let mut inner = Vec::with_capacity(2 + point.len());
-    crate::data::push_tlv(&mut inner, &[0x86], point);
-    inner
 }
 
 impl SlotKey {
@@ -148,27 +147,21 @@ impl SlotKey {
         }
     }
 
-    /// The `7F49`-inner public-key TLVs this key reports — the same shape
-    /// GENERATE's answer, the GET METADATA `04` member and the host's
-    /// `parse_public_key`/`parse_metadata` all carry: the uncompressed
-    /// point under `86` for EC keys, the modulus under `81` and the
-    /// exponent under `82` for RSA keys. `None` for an algorithm this
-    /// applet does not store.
-    pub(crate) fn public_inner(&self) -> Vec<u8> {
+    pub(crate) fn public_key(&self) -> PublicKey {
         match self {
-            SlotKey::EccP256(secret) => encode_public_point(&secret.public_key().to_sec1_bytes()),
-            SlotKey::EccP384(secret) => encode_public_point(&secret.public_key().to_sec1_bytes()),
-            SlotKey::EccP521(secret) => encode_public_point(&secret.public_key().to_sec1_bytes()),
-            SlotKey::Rsa(_, secret) => {
-                let (n, e) = (
-                    secret.n().to_be_bytes(),
-                    secret.e().to_be_bytes_trimmed_vartime(), // NOTE: keyroost is sensitive to leading zeroes.
-                );
-                let mut inner = Vec::with_capacity(2 + n.len() + 5);
-                crate::data::push_tlv(&mut inner, &[0x81], &n);
-                crate::data::push_tlv(&mut inner, &[0x82], &e);
-                inner
+            SlotKey::EccP256(secret) => {
+                PublicKey::Point(secret.public_key().to_sec1_bytes().to_vec())
             }
+            SlotKey::EccP384(secret) => {
+                PublicKey::Point(secret.public_key().to_sec1_bytes().to_vec())
+            }
+            SlotKey::EccP521(secret) => {
+                PublicKey::Point(secret.public_key().to_sec1_bytes().to_vec())
+            }
+            SlotKey::Rsa(_, secret) => PublicKey::Rsa {
+                n: secret.n().to_be_bytes().to_vec(),
+                e: secret.e().to_be_bytes_trimmed_vartime().to_vec(),
+            },
         }
     }
 
