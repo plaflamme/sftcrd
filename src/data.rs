@@ -54,11 +54,7 @@ impl PivApplet {
             return iso7816::Status::IncorrectDataParameter.into();
         };
         match self.data_object_value(get_data.selector) {
-            Some(value) => {
-                let mut full = Vec::with_capacity(2 + value.len());
-                push_tlv(&mut full, &[0x53], &value);
-                full.into()
-            }
+            Some(value) => GetDataResponse { data: &value }.encode_top_level().into(),
             None => iso7816::Status::NotFound.into(),
         }
     }
@@ -201,6 +197,15 @@ tlv_struct! {
     struct GetDataRequest {
         #[tag=0x5C]
         selector: Selector,
+    }
+}
+
+tlv_struct! {
+    #[derive(Debug)]
+    #[length(crate::tlv::BerLength)]
+    struct GetDataResponse<'a> {
+        #[tag=0x53]
+        data: &'a [u8],
     }
 }
 

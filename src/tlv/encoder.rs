@@ -10,6 +10,7 @@ impl<'a> Encoder<'a> {
         Self { buf, pos: 0 }
     }
 
+    #[allow(unused)]
     fn into_inner(self) -> &'a mut [u8] {
         &mut self.buf[0..self.pos]
     }

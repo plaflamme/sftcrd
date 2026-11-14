@@ -86,7 +86,7 @@ impl ValueEncoder for Vec<u8> {
     }
 
     fn encode(&self, buf: &mut [u8]) {
-        buf.copy_from_slice(&self);
+        buf.copy_from_slice(self);
     }
 }
 

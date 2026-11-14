@@ -14,6 +14,7 @@ impl Length for U8Length {
         1
     }
 
+    #[allow(clippy::cast_possible_truncation)]
     fn encode(length: usize, buf: &mut [u8]) {
         buf[0] = length as u8;
     }
@@ -40,17 +41,26 @@ impl Length for BerLength {
     fn length(length: usize) -> usize {
         match length {
             0..0x80 => 1,
-            0x80.. => 8, // TOOD: proper variable length encoding
+            0x80..=0xFF => 2,
+            0x0100..0xFFFF => 3,
+            _ => todo!(),
         }
     }
 
     fn encode(length: usize, buf: &mut [u8]) {
-        if let Ok(l) = u8::try_from(length) {
-            buf[0] = l;
-        } else {
-            buf[0] = 0x88;
-            let l = length.to_be_bytes();
-            buf.copy_from_slice(&l);
+        match u8::try_from(length) {
+            Ok(l @ 0..0x80) => buf[0] = l,
+            Ok(l @ 0x80..=0xFF) => {
+                buf[0] = 0x81;
+                buf[1] = l;
+            }
+            Err(_) => match u16::try_from(length) {
+                Ok(value) => {
+                    buf[0] = 0x82;
+                    buf[1..].copy_from_slice(&value.to_be_bytes());
+                }
+                Err(_) => todo!(),
+            },
         }
     }
 
