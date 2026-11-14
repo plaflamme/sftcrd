@@ -24,7 +24,10 @@ impl<'a> Encoder<'a> {
 
     fn write_tag_length<T: Tag, L: Length>(&mut self, tag: T, value_length: usize) {
         tag.encode(self.advance_by(T::length()));
-        L::encode(value_length, self.advance_by(L::length(value_length)));
+        L::encode(
+            value_length,
+            self.advance_by(L::length(value_length) as usize),
+        );
     }
 
     pub fn write_tlv<T: Tag, L: Length, V: ValueEncoder>(&mut self, tag: T, value: &V) {

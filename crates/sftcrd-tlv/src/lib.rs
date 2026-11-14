@@ -12,6 +12,9 @@ pub use length::{BerLength, Length, U8Length};
 pub use tag::Tag;
 pub use value::{ValueDecoder, ValueEncoder};
 
+#[cfg(not(any(target_pointer_width = "64", target_pointer_width = "32")))]
+compile_error!("This crate only supports 32 or 64-bit targets.");
+
 /// Declarative macro to generate a struct and a corresponding [`ValueDecoder`] and [`ValueEncoder`] implementations to decode/encode it out of/to TLV bytes.
 #[macro_export]
 macro_rules! tlv_struct {
@@ -233,7 +236,7 @@ macro_rules! tlv_struct {
                         None => (),
                         Some(value) => {
                             let value_len = <$parse_ty as $crate::ValueEncoder>::length(value);
-                            let length_len = <$len_ty as $crate::Length>::length(value_len);
+                            let length_len = <$len_ty as $crate::Length>::length(value_len) as usize;
                             length += tag_length + length_len + value_len;
                         },
                     };

@@ -1,8 +1,15 @@
 use super::DecodeError;
 
 pub trait Length {
-    fn length(value: usize) -> usize;
-    fn encode(length: usize, buf: &mut [u8]);
+    /// Returns the number of bytes required to write the value's length.
+    fn length(value_length: usize) -> u8;
+
+    /// Encodes the length in the provided buffer.
+    ///
+    /// # Panics
+    ///
+    /// Panics if the provided buffer's length is not exactly the value returned by [`BerLength::length`].
+    fn encode(value_length: usize, buf: &mut [u8]);
 
     #[allow(clippy::missing_errors_doc)]
     fn decode(buf: &[u8]) -> Result<(usize, usize), DecodeError>
@@ -12,13 +19,14 @@ pub trait Length {
 
 pub struct U8Length;
 impl Length for U8Length {
-    fn length(_value: usize) -> usize {
+    fn length(_value: usize) -> u8 {
         1
     }
 
-    #[allow(clippy::cast_possible_truncation)]
     fn encode(length: usize, buf: &mut [u8]) {
-        buf[0] = length as u8;
+        let length = u8::try_from(length)
+            .expect("cannot encode length larger than 0xFF, got 0x{length:02X}");
+        buf[0] = length;
     }
 
     fn decode(buf: &[u8]) -> Result<(usize, usize), DecodeError>
@@ -40,10 +48,13 @@ impl Length for U8Length {
 /// * `first > 0x80` => "variable "definite lenth form", bits 0x7f indicate the number of bytes the length is encoded on (big-endian)
 pub struct BerLength;
 impl Length for BerLength {
-    fn length(length: u64) -> u64 {
+    fn length(value_length: usize) -> u8 {
+        let length = u64::try_from(value_length)
+            .expect("this crate will not compile on anything but 32 or 64 architectures");
+
         match length {
             0..0x80 => 1,
-            0x80..=0xFF => 2,
+            0x0000_0000_0000_0080..=0x0000_0000_0000_00FF => 2,
             0x0000_0000_0000_0100..=0x0000_0000_0000_FFFF => 3,
             0x0000_0000_0001_0000..=0x0000_0000_00FF_FFFF => 4,
             0x0000_0000_0100_0000..=0x0000_0000_FFFF_FFFF => 5,
@@ -54,19 +65,25 @@ impl Length for BerLength {
         }
     }
 
-    fn encode(length: u64, buf: &mut [u8]) {
-        match u8::try_from(length) {
-            Ok(l @ 0..0x80) => buf[0] = l,
-            Ok(l @ 0x80..=0xFF) => {
-                todo!()
+    fn encode(value_length: usize, buf: &mut [u8]) {
+        let length = BerLength::length(value_length);
+
+        assert_eq!(
+            length as usize,
+            buf.len(),
+            "Programming error. Expected buffer of exactly {length} bytes, got {} bytes",
+            buf.len()
+        );
+
+        match length {
+            1 => buf[0] = u8::try_from(value_length).expect("can be represented on u8"),
+            len => {
+                let n_bytes = len - 1;
+                let bytes = value_length.to_be_bytes();
+                let start = bytes.len() - n_bytes as usize;
+                buf[0] = 0x80 | n_bytes;
+                buf[1..].copy_from_slice(&bytes[start..]);
             }
-            Err(_) => match u16::try_from(length) {
-                Ok(value) => {
-                    buf[0] = 0x82;
-                    buf[1..].copy_from_slice(&value.to_be_bytes());
-                }
-                Err(_) => todo!(),
-            },
         }
     }
 
@@ -116,16 +133,49 @@ mod tests {
 
     #[test]
     fn test_ber_length() {
-        assert_eq!(BerLength::length(0), 1);
-        assert_eq!(BerLength::length(0xFF), 2);
-        assert_eq!(BerLength::length(0xFFFF), 3);
+        let cases: &[(usize, &[u8])] = &[
+            (0x00, &[0x00]),
+            (0x7F, &[0x7F]),
+            (0x80, &[0x81, 0x80]),
+            (0xFF, &[0x81, 0xFF]),
+            (0x0102, &[0x82, 0x01, 0x02]),
+            (0x01_0203, &[0x83, 0x01, 0x02, 0x03]),
+            (0x0102_0304, &[0x84, 0x01, 0x02, 0x03, 0x04]),
+            (0x01_0203_0405, &[0x85, 0x01, 0x02, 0x03, 0x04, 0x05]),
+            (
+                0x0102_0304_0506,
+                &[0x86, 0x01, 0x02, 0x03, 0x04, 0x05, 0x06],
+            ),
+            (
+                0x01_0203_0405_0607,
+                &[0x87, 0x01, 0x02, 0x03, 0x04, 0x05, 0x06, 0x07],
+            ),
+            (
+                0x0102_0304_0506_0708,
+                &[0x88, 0x01, 0x02, 0x03, 0x04, 0x05, 0x06, 0x07, 0x08],
+            ),
+        ];
 
-        let mut buf = [0; 3];
-        BerLength::encode(0, &mut buf);
-        assert_eq!(buf, [0, 0, 0]);
-        BerLength::encode(0xFF, &mut buf);
-        assert_eq!(buf, [0x81, 0xFF, 0]);
-        BerLength::encode(0xFFFF, &mut buf);
-        assert_eq!(buf, [0x82, 0xFF, 0xFF]);
+        for &(value_length, expected) in cases {
+            assert_eq!(
+                BerLength::length(value_length) as usize,
+                expected.len(),
+                "BerLength({value_length}) == {}",
+                expected.len()
+            );
+
+            let mut buf = vec![0u8; expected.len()];
+            BerLength::encode(value_length, &mut buf);
+            assert_eq!(
+                buf, expected,
+                "BerLength::encode({value_length}) == {expected:?}"
+            );
+        }
+    }
+
+    #[test]
+    #[should_panic = "Programming error. Expected buffer of exactly 3 bytes, got 2 bytes"]
+    fn test_ber_length_encode_assertion() {
+        BerLength::encode(0xFFFF, &mut [0; 2]);
     }
 }
