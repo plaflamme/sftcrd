@@ -220,7 +220,7 @@ impl<'buf, T: Tag, L: Length> Iterator for TlvIter<'buf, T, L> {
 }
 
 /// Declarative macro to generate a struct and a corresponding [`ValueDecoder`] implementation to parse it out of TLV bytes.
-macro_rules! parse_struct {
+macro_rules! tlv_struct {
     // -------------------------------------------------------------------------
     // 1) Attribute Munching
     // -------------------------------------------------------------------------
@@ -234,7 +234,7 @@ macro_rules! parse_struct {
         retained: [ $($retained:tt)* ],
         input: [ #[length($len_ty:ty)] $($rest:tt)* ]
     ) => {
-        parse_struct!(@parse_attrs
+        tlv_struct!(@parse_attrs
             tag_type: [ $($tag_ty)* ],
             length: [ $len_ty ],
             impl_lt: [ $impl_lt ],
@@ -253,7 +253,7 @@ macro_rules! parse_struct {
         retained: [ $($retained:tt)* ],
         input: [ #[tag_type($new_tag_ty:ty)] $($rest:tt)* ]
     ) => {
-        parse_struct!(@parse_attrs
+        tlv_struct!(@parse_attrs
             tag_type: [ $new_tag_ty ],
             length: [ $($len)* ],
             impl_lt: [ $impl_lt ],
@@ -272,7 +272,7 @@ macro_rules! parse_struct {
         retained: [ $($retained:tt)* ],
         input: [ #[$($attr:tt)*] $($rest:tt)* ]
     ) => {
-        parse_struct!(@parse_attrs
+        tlv_struct!(@parse_attrs
             tag_type: [ $($tag_ty)* ],
             length: [ $($len)* ],
             impl_lt: [ $impl_lt ],
@@ -292,7 +292,7 @@ macro_rules! parse_struct {
         // We drop whatever lifetime the input had here, relying instead on our tracked state
         input: [ $vis:vis struct $name:ident $(<$ignore_lt:lifetime>)? { $($fields:tt)* } ]
     ) => {
-        $crate::tlv::parse_struct!(@parse_fields
+        tlv_struct!(@parse_fields
             tag_type: [ $tag_ty ],
             length: [ $len_ty ],
             impl_lt: [ $impl_lt ],
@@ -322,7 +322,7 @@ macro_rules! parse_struct {
             $(, $($rest:tt)*)?
         ]
     ) => {
-        parse_struct!(@parse_fields
+        tlv_struct!(@parse_fields
             tag_type: [ $tag_ty ],
             length: [ $len_ty ],
             impl_lt: [ $impl_lt ],
@@ -359,7 +359,7 @@ macro_rules! parse_struct {
             $(, $($rest:tt)*)?
         ]
     ) => {
-        parse_struct!(@parse_fields
+        tlv_struct!(@parse_fields
             tag_type: [ $tag_ty ],
             length: [ $len_ty ],
             impl_lt: [ $impl_lt ],
@@ -424,7 +424,7 @@ macro_rules! parse_struct {
                 }
 
                 Ok(Self {
-                    $( $field_name: parse_struct!(@unwrap_field $kind, $field_name), )*
+                    $( $field_name: tlv_struct!(@unwrap_field $kind, $field_name), )*
                 })
             }
         }
@@ -448,7 +448,7 @@ macro_rules! parse_struct {
             $($fields:tt)*
         }
     ) => {
-        parse_struct!(@parse_attrs
+        tlv_struct!(@parse_attrs
             tag_type: [ u8 ],
             length: [ $crate::tlv::U8Length ],
             impl_lt: [ $lt ],     // Trait uses the provided lifetime
@@ -465,7 +465,7 @@ macro_rules! parse_struct {
             $($fields:tt)*
         }
     ) => {
-        parse_struct!(@parse_attrs
+        tlv_struct!(@parse_attrs
             tag_type: [ u8 ],
             length: [ $crate::tlv::U8Length ],
             impl_lt: [ 'a ], // Trait uses a synthetic generated lifetime
@@ -475,7 +475,7 @@ macro_rules! parse_struct {
         );
     };
 }
-pub(crate) use parse_struct;
+pub(crate) use tlv_struct;
 
 #[cfg(test)]
 mod test {
@@ -524,7 +524,7 @@ mod test {
 
     #[test]
     fn test_parse_struct() {
-        parse_struct! {
+        tlv_struct! {
             #[derive(Debug, PartialEq)]
             pub struct Packet {
                 #[tag = 0x01]
@@ -563,7 +563,7 @@ mod test {
 
     #[test]
     fn test_parse_struct_tag_type() {
-        parse_struct! {
+        tlv_struct! {
             #[derive(Debug, PartialEq)]
             #[tag_type(u16)]
             pub struct Packet {
@@ -584,7 +584,7 @@ mod test {
 
     #[test]
     fn test_parse_struct_length() {
-        parse_struct! {
+        tlv_struct! {
             #[derive(Debug, PartialEq)]
             #[length(BerLength)]
             pub struct Packet {
@@ -616,7 +616,7 @@ mod test {
 
     #[test]
     fn test_parse_struct_lifetime() {
-        parse_struct! {
+        tlv_struct! {
             #[derive(Debug, PartialEq)]
             #[length(BerLength)]
             pub struct Packet<'a> {

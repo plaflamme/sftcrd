@@ -31,7 +31,7 @@ use crate::Response;
 use crate::data::push_tlv;
 use crate::slot::{KeyMaterial, SlotKey};
 use crate::tlv::ValueDecoder;
-use crate::tlv::parse_struct;
+use crate::tlv::tlv_struct;
 
 impl PivApplet {
     /// GENERATE ASYMMETRIC KEY PAIR (`0x47`): the host's `generate_key`
@@ -230,7 +230,7 @@ impl ValueDecoder<'_> for Defaultable<TouchPolicy> {
     }
 }
 
-parse_struct! {
+tlv_struct! {
     #[derive(Debug, PartialEq)]
     pub struct Control {
         #[tag = 0x80]
@@ -242,7 +242,7 @@ parse_struct! {
     }
 }
 
-parse_struct! {
+tlv_struct! {
     struct ImportTemplate<'a> {
         #[tag = 0x01]
         p: Option<&'a [u8]>,

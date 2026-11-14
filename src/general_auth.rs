@@ -5,7 +5,7 @@
 use iso7816::Status;
 
 use crate::piv::MgmtAlg;
-use crate::tlv::{BerLength, ValueDecoder, parse_struct};
+use crate::tlv::{BerLength, ValueDecoder, tlv_struct};
 use crate::{PivApplet, Response};
 
 /// SP 800-73-4 §4.1.3 dynamic-authentication tags: the `7C` wrapper and its
@@ -172,7 +172,7 @@ impl PivApplet {
     }
 }
 
-parse_struct! {
+tlv_struct! {
     #[derive(Debug)]
     #[length(BerLength)]
     struct GaTemplate<'a> {
@@ -187,7 +187,7 @@ parse_struct! {
     }
 }
 
-parse_struct! {
+tlv_struct! {
     #[derive(Debug)]
     #[length(crate::tlv::BerLength)]
     struct GaRequest<'a> {

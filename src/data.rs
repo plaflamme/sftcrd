@@ -12,7 +12,7 @@
 
 use crate::{
     PivApplet, Response,
-    tlv::{ValueDecoder, parse_struct},
+    tlv::{ValueDecoder, tlv_struct},
 };
 use x509_cert::der::{Decode, Encode};
 
@@ -167,7 +167,7 @@ impl ValueDecoder<'_> for Selector {
     }
 }
 
-parse_struct! {
+tlv_struct! {
     #[derive(Debug)]
     #[length(crate::tlv::BerLength)]
     struct GetDataRequest {
@@ -176,7 +176,7 @@ parse_struct! {
     }
 }
 
-parse_struct! {
+tlv_struct! {
     #[derive(Debug)]
     #[length(crate::tlv::BerLength)]
     struct PutDataRequest<'a> {
