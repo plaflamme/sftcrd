@@ -1,4 +1,4 @@
-use crate::tlv::{Length, Tag, ValueEncoder};
+use super::{Length, Tag, ValueEncoder};
 
 pub struct Encoder<'a> {
     buf: &'a mut [u8],
@@ -37,7 +37,7 @@ impl<'a> Encoder<'a> {
 #[cfg(test)]
 mod test {
     use super::*;
-    use crate::tlv::U8Length;
+    use crate::U8Length;
 
     #[test]
     fn test_encode_u8() {

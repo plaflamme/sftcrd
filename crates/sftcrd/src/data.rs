@@ -134,7 +134,7 @@ enum Selector {
 }
 
 impl ValueDecoder<'_> for Selector {
-    fn decode(bytes: &'_ [u8]) -> Result<Self, crate::tlv::DecodeError> {
+    fn decode(bytes: &'_ [u8]) -> Result<Self, sftcrd_tlv::DecodeError> {
         fn cert_slot_index(tag: u8) -> Option<crate::piv::Slot> {
             match tag {
                 0x05 => Some(crate::piv::Slot::Authentication),
@@ -147,7 +147,7 @@ impl ValueDecoder<'_> for Selector {
         }
 
         let Some(bytes) = bytes.first_chunk() else {
-            return Err(crate::tlv::DecodeError::InvalidValue);
+            return Err(sftcrd_tlv::DecodeError::InvalidValue);
         };
 
         match *bytes {
@@ -158,7 +158,7 @@ impl ValueDecoder<'_> for Selector {
             [0x5F, 0xC1, slot] if let Some(slot) = cert_slot_index(slot) => {
                 Ok(Selector::Slot(slot))
             }
-            _ => Err(crate::tlv::DecodeError::InvalidValue),
+            _ => Err(sftcrd_tlv::DecodeError::InvalidValue),
         }
     }
 }
@@ -193,7 +193,7 @@ impl ValueEncoder for Selector {
 
 tlv_struct! {
     #[derive(Debug)]
-    #[length(crate::tlv::BerLength)]
+    #[length(sftcrd_tlv::BerLength)]
     struct GetDataRequest {
         #[tag=0x5C]
         selector: Selector,
@@ -202,7 +202,7 @@ tlv_struct! {
 
 tlv_struct! {
     #[derive(Debug)]
-    #[length(crate::tlv::BerLength)]
+    #[length(sftcrd_tlv::BerLength)]
     struct GetDataResponse<'a> {
         #[tag=0x53]
         data: &'a [u8],
@@ -211,7 +211,7 @@ tlv_struct! {
 
 tlv_struct! {
     #[derive(Debug)]
-    #[length(crate::tlv::BerLength)]
+    #[length(sftcrd_tlv::BerLength)]
     struct PutDataRequest<'a> {
         #[tag=0x5C]
         selector: Selector,

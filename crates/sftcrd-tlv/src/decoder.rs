@@ -8,6 +8,7 @@ pub struct Decoder<'buf> {
 }
 
 impl<'buf> Decoder<'buf> {
+    #[must_use]
     pub fn new(buf: &'buf [u8]) -> Self {
         Self { buf, pos: 0 }
     }
@@ -50,6 +51,7 @@ impl<'buf> Decoder<'buf> {
         Ok((tag, value))
     }
 
+    #[must_use]
     pub fn into_iter_tags<T: Tag, L: Length>(self) -> TlvIter<'buf, T, L> {
         TlvIter {
             decoder: self,
@@ -78,7 +80,7 @@ impl<'buf, T: Tag, L: Length> Iterator for TlvIter<'buf, T, L> {
 #[cfg(test)]
 mod test {
     use super::*;
-    use crate::tlv::U8Length;
+    use crate::U8Length;
 
     #[test]
     fn test_u8_is_tag() {

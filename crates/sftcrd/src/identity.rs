@@ -9,10 +9,10 @@ use crate::piv::PinPolicy;
 use crate::piv::TouchPolicy;
 use crate::slot::KeyOrigin;
 use crate::slot::factory_pin_policy;
-use crate::tlv::BerLength;
-use crate::tlv::ValueDecoder;
-use crate::tlv::ValueEncoder;
-use crate::tlv::tlv_struct;
+use sftcrd_tlv::BerLength;
+use sftcrd_tlv::ValueDecoder;
+use sftcrd_tlv::ValueEncoder;
+use sftcrd_tlv::tlv_struct;
 use crate::{PivApplet, Response};
 
 impl PivApplet {
@@ -124,13 +124,7 @@ impl ValueEncoder for KeyOrigin {
 }
 
 impl ValueDecoder<'_> for KeyOrigin {
-    fn decode(_bytes: &'_ [u8]) -> Result<Self, crate::tlv::DecodeError> {
-        unreachable!("this is never invoked since we only use this on the response path")
-    }
-}
-
-impl<A, B> ValueDecoder<'_> for (A, B) {
-    fn decode(_bytes: &'_ [u8]) -> Result<Self, crate::tlv::DecodeError> {
+    fn decode(_bytes: &'_ [u8]) -> Result<Self, sftcrd_tlv::DecodeError> {
         unreachable!("this is never invoked since we only use this on the response path")
     }
 }

@@ -905,12 +905,17 @@ dependencies = [
  "p521",
  "rand",
  "rsa",
+ "sftcrd-tlv",
  "sha2",
  "tracing",
  "tracing-subscriber",
  "x509-cert",
  "zeroize",
 ]
+
+[[package]]
+name = "sftcrd-tlv"
+version = "0.1.0"
 
 [[package]]
 name = "sha1"

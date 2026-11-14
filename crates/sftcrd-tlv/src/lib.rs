@@ -13,6 +13,7 @@ pub use tag::Tag;
 pub use value::{ValueDecoder, ValueEncoder};
 
 /// Declarative macro to generate a struct and a corresponding [`ValueDecoder`] and [`ValueEncoder`] implementations to decode/encode it out of/to TLV bytes.
+#[macro_export]
 macro_rules! tlv_struct {
     // -------------------------------------------------------------------------
     // 1) Attribute Munching
@@ -196,23 +197,23 @@ macro_rules! tlv_struct {
         }
 
         // $impl_lt is ALWAYS present here, while $struct_lt is optional!
-        impl <$impl_lt> $crate::tlv::ValueDecoder<$impl_lt> for $name $(<$struct_lt>)? {
-            fn decode(input: &$impl_lt [u8]) -> Result<Self, crate::tlv::DecodeError> {
+        impl <$impl_lt> $crate::ValueDecoder<$impl_lt> for $name $(<$struct_lt>)? {
+            fn decode(input: &$impl_lt [u8]) -> Result<Self, $crate::DecodeError> {
                 $( let mut $field_name: Option<$parse_ty> = None; )*
 
-                for entry in crate::tlv::Decoder::new(input).into_iter_tags::<$tag_ty, $len_ty>() {
+                for entry in $crate::Decoder::new(input).into_iter_tags::<$tag_ty, $len_ty>() {
                     let (tag, value_bytes) = entry?;
                     match tag {
                         $(
                             $tag => {
                                 if $field_name.is_some() {
-                                    return Err($crate::tlv::DecodeError::DuplicateTag);
+                                    return Err($crate::DecodeError::DuplicateTag);
                                 }
-                                let val = <$parse_ty as $crate::tlv::ValueDecoder>::decode(value_bytes)?;
+                                let val = <$parse_ty as $crate::ValueDecoder>::decode(value_bytes)?;
                                 $field_name = Some(val);
                             }
                         )*
-                        _ => return Err(crate::tlv::DecodeError::InvalidTag),
+                        _ => return Err($crate::DecodeError::InvalidTag),
                     }
                 }
 
@@ -222,17 +223,17 @@ macro_rules! tlv_struct {
             }
         }
 
-        impl <$impl_lt> $crate::tlv::ValueEncoder for $name $(<$struct_lt>)? {
+        impl <$impl_lt> $crate::ValueEncoder for $name $(<$struct_lt>)? {
             fn length(&self) -> usize {
                 let mut length = 0;
-                let tag_length = <$tag_ty as $crate::tlv::Tag>::length();
+                let tag_length = <$tag_ty as $crate::Tag>::length();
                 $(
                     let value = &self.$field_name;
                     match tlv_struct!(@wrap_field $kind, value) {
                         None => (),
                         Some(value) => {
-                            let value_len = <$parse_ty as $crate::tlv::ValueEncoder>::length(value);
-                            let length_len = <$len_ty as $crate::tlv::Length>::length(value_len);
+                            let value_len = <$parse_ty as $crate::ValueEncoder>::length(value);
+                            let length_len = <$len_ty as $crate::Length>::length(value_len);
                             length += tag_length + length_len + value_len;
                         },
                     };
@@ -241,7 +242,7 @@ macro_rules! tlv_struct {
             }
 
             fn encode(&self, buf: &mut [u8]) {
-                let mut encoder = $crate::tlv::Encoder::new(buf);
+                let mut encoder = $crate::Encoder::new(buf);
                 $(
                     let value = &self.$field_name;
                     match tlv_struct!(@wrap_field $kind, value) {
@@ -254,7 +255,7 @@ macro_rules! tlv_struct {
     };
 
     (@unwrap_field req, $field_name:ident) => {
-        $field_name.ok_or(crate::tlv::DecodeError::MissingRequiredField)?
+        $field_name.ok_or($crate::DecodeError::MissingRequiredField)?
     };
     (@unwrap_field opt, $field_name:ident) => {
         $field_name
@@ -280,7 +281,7 @@ macro_rules! tlv_struct {
     ) => {
         tlv_struct!(@parse_attrs
             tag_type: [ u8 ],
-            length: [ $crate::tlv::U8Length ],
+            length: [ $crate::U8Length ],
             impl_lt: [ $lt ],     // Trait uses the provided lifetime
             struct_lt: [ $lt ],   // Struct uses the provided lifetime
             retained: [],
@@ -297,7 +298,7 @@ macro_rules! tlv_struct {
     ) => {
         tlv_struct!(@parse_attrs
             tag_type: [ u8 ],
-            length: [ $crate::tlv::U8Length ],
+            length: [ $crate::U8Length ],
             impl_lt: [ 'a ], // Trait uses a synthetic generated lifetime
             struct_lt: [],   // Struct has no lifetime
             retained: [],
@@ -305,10 +306,9 @@ macro_rules! tlv_struct {
         );
     };
 }
-pub(crate) use tlv_struct;
 
 #[cfg(test)]
-mod test {
+mod tests {
     use super::*;
 
     #[test]

@@ -3,6 +3,8 @@ use super::DecodeError;
 pub trait Length {
     fn length(value: usize) -> usize;
     fn encode(length: usize, buf: &mut [u8]);
+
+    #[allow(clippy::missing_errors_doc)]
     fn decode(buf: &[u8]) -> Result<(usize, usize), DecodeError>
     where
         Self: Sized;
@@ -106,7 +108,7 @@ impl Length for BerLength {
 
 #[cfg(test)]
 mod tests {
-    use crate::tlv::{BerLength, Length};
+    use crate::{BerLength, Length};
 
     #[test]
     fn test_ber_length() {

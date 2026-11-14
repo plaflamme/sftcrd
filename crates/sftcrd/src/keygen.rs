@@ -31,11 +31,11 @@ use crate::Response;
 use crate::slot::KeyOrigin;
 use crate::slot::PublicKey;
 use crate::slot::{KeyMaterial, SlotKey};
-use crate::tlv::BerLength;
-use crate::tlv::DecodeError;
-use crate::tlv::ValueDecoder;
-use crate::tlv::ValueEncoder;
-use crate::tlv::tlv_struct;
+use sftcrd_tlv::BerLength;
+use sftcrd_tlv::DecodeError;
+use sftcrd_tlv::ValueDecoder;
+use sftcrd_tlv::ValueEncoder;
+use sftcrd_tlv::tlv_struct;
 
 tlv_struct! {
     #[length(BerLength)]
@@ -258,9 +258,9 @@ impl PivApplet {
 }
 
 impl ValueDecoder<'_> for KeyAlg {
-    fn decode(bytes: &[u8]) -> Result<Self, crate::tlv::DecodeError> {
+    fn decode(bytes: &[u8]) -> Result<Self, sftcrd_tlv::DecodeError> {
         u8::decode(bytes)
-            .and_then(|value| KeyAlg::from_u8(value).ok_or(crate::tlv::DecodeError::InvalidValue))
+            .and_then(|value| KeyAlg::from_u8(value).ok_or(sftcrd_tlv::DecodeError::InvalidValue))
     }
 }
 
@@ -268,7 +268,7 @@ impl<'a, T> ValueDecoder<'a> for Defaultable<T>
 where
     T: TryFrom<u8>,
 {
-    fn decode(bytes: &'a [u8]) -> Result<Self, crate::tlv::DecodeError> {
+    fn decode(bytes: &'a [u8]) -> Result<Self, sftcrd_tlv::DecodeError> {
         match u8::decode(bytes) {
             Ok(0x00) => Ok(Defaultable::Default),
             Ok(value) => Ok(Defaultable::Specified(

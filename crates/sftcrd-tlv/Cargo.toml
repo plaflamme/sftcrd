@@ -1,0 +1,12 @@
+[package]
+name = "sftcrd-tlv"
+version = "0.1.0"
+edition = "2024"
+description = "TLV utilities for sftcrd"
+
+[dependencies]
+
+[dev-dependencies]
+
+[lints.clippy]
+pedantic = "warn"

@@ -4,6 +4,7 @@ pub trait ValueDecoder<'a>
 where
     Self: Sized,
 {
+    #[allow(clippy::missing_errors_doc)]
     fn decode(bytes: &'a [u8]) -> Result<Self, DecodeError>;
 }
 
@@ -50,6 +51,12 @@ impl ValueDecoder<'_> for Vec<u8> {
 impl<'a> ValueDecoder<'a> for &'a [u8] {
     fn decode(bytes: &'a [u8]) -> Result<Self, DecodeError> {
         Ok(bytes)
+    }
+}
+
+impl<'a, A, B> ValueDecoder<'a> for (A, B) {
+    fn decode(_bytes: &'a [u8]) -> Result<Self, DecodeError> {
+        unreachable!("this is never invoked since we only use this on the response path")
     }
 }
 

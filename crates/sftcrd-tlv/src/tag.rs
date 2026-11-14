@@ -3,7 +3,9 @@ use super::EncodeError;
 
 pub trait Tag {
     fn length() -> usize;
+    #[allow(clippy::missing_errors_doc)]
     fn encode(self, buf: &mut [u8]) -> Result<(), EncodeError>;
+    #[allow(clippy::missing_errors_doc)]
     fn decode(buf: &[u8]) -> Result<(Self, usize), DecodeError>
     where
         Self: Sized;
