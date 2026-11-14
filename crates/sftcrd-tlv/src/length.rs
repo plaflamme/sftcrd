@@ -1,3 +1,5 @@
+use crate::error::EncodeError;
+
 use super::DecodeError;
 
 pub trait Length {
@@ -6,10 +8,11 @@ pub trait Length {
 
     /// Encodes the length in the provided buffer.
     ///
-    /// # Panics
+    /// # Errors
     ///
-    /// Panics if the provided buffer's length is not exactly the value returned by [`BerLength::length`].
-    fn encode(value_length: usize, buf: &mut [u8]);
+    /// Returns [`EncodeError::BufferUnderrun`] if the provided buffer's length is not exactly the value returned by [`Length::length`].
+    /// Returns [`EncodeError::InvalidLength`] if `value_length` cannot be represented by the implementation.
+    fn encode(value_length: usize, buf: &mut [u8]) -> Result<(), EncodeError>;
 
     #[allow(clippy::missing_errors_doc)]
     fn decode(buf: &[u8]) -> Result<(usize, usize), DecodeError>
@@ -23,10 +26,10 @@ impl Length for U8Length {
         1
     }
 
-    fn encode(length: usize, buf: &mut [u8]) {
-        let length = u8::try_from(length)
-            .expect("cannot encode length larger than 0xFF, got 0x{length:02X}");
+    fn encode(length: usize, buf: &mut [u8]) -> Result<(), EncodeError> {
+        let length = u8::try_from(length).map_err(|_| EncodeError::InvalidLength)?;
         buf[0] = length;
+        Ok(())
     }
 
     fn decode(buf: &[u8]) -> Result<(usize, usize), DecodeError>
@@ -65,15 +68,12 @@ impl Length for BerLength {
         }
     }
 
-    fn encode(value_length: usize, buf: &mut [u8]) {
+    fn encode(value_length: usize, buf: &mut [u8]) -> Result<(), EncodeError> {
         let length = BerLength::length(value_length);
 
-        assert_eq!(
-            length as usize,
-            buf.len(),
-            "Programming error. Expected buffer of exactly {length} bytes, got {} bytes",
-            buf.len()
-        );
+        if buf.len() != length as usize {
+            return Err(EncodeError::BufferUnderrun);
+        }
 
         match length {
             1 => buf[0] = u8::try_from(value_length).expect("can be represented on u8"),
@@ -85,6 +85,7 @@ impl Length for BerLength {
                 buf[1..].copy_from_slice(&bytes[start..]);
             }
         }
+        Ok(())
     }
 
     fn decode(buf: &[u8]) -> Result<(usize, usize), DecodeError>
@@ -129,7 +130,7 @@ impl Length for BerLength {
 
 #[cfg(test)]
 mod tests {
-    use crate::{BerLength, Length};
+    use crate::{BerLength, Length, error::EncodeError};
 
     #[test]
     fn test_ber_length() {
@@ -165,7 +166,7 @@ mod tests {
             );
 
             let mut buf = vec![0u8; expected.len()];
-            BerLength::encode(value_length, &mut buf);
+            assert!(BerLength::encode(value_length, &mut buf).is_ok());
             assert_eq!(
                 buf, expected,
                 "BerLength::encode({value_length}) == {expected:?}"
@@ -174,8 +175,10 @@ mod tests {
     }
 
     #[test]
-    #[should_panic = "Programming error. Expected buffer of exactly 3 bytes, got 2 bytes"]
     fn test_ber_length_encode_assertion() {
-        BerLength::encode(0xFFFF, &mut [0; 2]);
+        assert_eq!(
+            BerLength::encode(0xFFFF, &mut [0; 2]),
+            Err(EncodeError::BufferUnderrun)
+        );
     }
 }

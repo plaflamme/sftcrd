@@ -244,15 +244,16 @@ macro_rules! tlv_struct {
                 length
             }
 
-            fn encode(&self, buf: &mut [u8]) {
+            fn encode(&self, buf: &mut [u8]) -> Result<(), $crate::EncodeError> {
                 let mut encoder = $crate::Encoder::new(buf);
                 $(
                     let value = &self.$field_name;
                     match tlv_struct!(@wrap_field $kind, value) {
                         None => (),
-                        Some(value) => encoder.write_tlv::<$tag_ty, $len_ty, $parse_ty>($tag, value),
+                        Some(value) => encoder.write_tlv::<$tag_ty, $len_ty, $parse_ty>($tag, value)?,
                     };
                 )*
+                Ok(())
             }
         }
     };
@@ -387,7 +388,7 @@ mod tests {
                 opt: None
             }
             .encode_top_level(),
-            &[0x01, 0x01, 0xFF, 0x02, 0x02, 0xFF, 0xFE]
+            Ok(vec![0x01, 0x01, 0xFF, 0x02, 0x02, 0xFF, 0xFE])
         );
         assert_eq!(
             Packet {
@@ -396,9 +397,9 @@ mod tests {
                 opt: Some(0xFDFC)
             }
             .encode_top_level(),
-            &[
+            Ok(vec![
                 0x01, 0x01, 0xFF, 0x02, 0x02, 0xFF, 0xFE, 0x03, 0x02, 0xFD, 0xFC
-            ]
+            ])
         );
     }
 
@@ -427,7 +428,7 @@ mod tests {
                 payload_len: 0xFE,
             }
             .encode_top_level(),
-            &[0x01, 0x01, 0x01, 0xFF, 0x01, 0x02, 0x01, 0xFE]
+            Ok(vec![0x01, 0x01, 0x01, 0xFF, 0x01, 0x02, 0x01, 0xFE])
         );
     }
 

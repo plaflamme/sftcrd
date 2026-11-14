@@ -1,5 +1,9 @@
 #[derive(Clone, Debug, PartialEq, Eq)]
-pub enum EncodeError {}
+pub enum EncodeError {
+    BufferUnderrun,
+    InvalidLength,
+}
+
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub enum DecodeError {
     BufferUnderrun,

@@ -1,3 +1,5 @@
+use crate::error::EncodeError;
+
 use super::DecodeError;
 
 pub trait ValueDecoder<'a>
@@ -62,12 +64,22 @@ impl<'a, A, B> ValueDecoder<'a> for (A, B) {
 
 pub trait ValueEncoder {
     fn length(&self) -> usize;
-    fn encode(&self, buf: &mut [u8]);
+    /// Writes the value in the provided buffer.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if the buffer is not large enough or if the value cannot be encoded safely.
+    fn encode(&self, buf: &mut [u8]) -> Result<(), EncodeError>;
 
-    fn encode_top_level(&self) -> Vec<u8> {
+    /// Encodes the value to a newly allocated buffer and returns it.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if the buffer is not large enough or if the value cannot be encoded safely.
+    fn encode_top_level(&self) -> Result<Vec<u8>, EncodeError> {
         let mut value = vec![0; self.length()];
-        self.encode(&mut value);
-        value
+        self.encode(&mut value)?;
+        Ok(value)
     }
 }
 
@@ -76,8 +88,9 @@ impl ValueEncoder for bool {
         1
     }
 
-    fn encode(&self, buf: &mut [u8]) {
+    fn encode(&self, buf: &mut [u8]) -> Result<(), EncodeError> {
         buf[0] = u8::from(*self);
+        Ok(())
     }
 }
 
@@ -86,8 +99,9 @@ impl ValueEncoder for u8 {
         1
     }
 
-    fn encode(&self, buf: &mut [u8]) {
+    fn encode(&self, buf: &mut [u8]) -> Result<(), EncodeError> {
         buf[0] = *self;
+        Ok(())
     }
 }
 
@@ -96,8 +110,9 @@ impl ValueEncoder for u16 {
         2
     }
 
-    fn encode(&self, buf: &mut [u8]) {
+    fn encode(&self, buf: &mut [u8]) -> Result<(), EncodeError> {
         buf.copy_from_slice(&self.to_be_bytes());
+        Ok(())
     }
 }
 
@@ -106,8 +121,9 @@ impl ValueEncoder for &[u8] {
         self.len()
     }
 
-    fn encode(&self, buf: &mut [u8]) {
+    fn encode(&self, buf: &mut [u8]) -> Result<(), EncodeError> {
         buf.copy_from_slice(self);
+        Ok(())
     }
 }
 
@@ -116,8 +132,9 @@ impl ValueEncoder for Vec<u8> {
         self.len()
     }
 
-    fn encode(&self, buf: &mut [u8]) {
+    fn encode(&self, buf: &mut [u8]) -> Result<(), EncodeError> {
         buf.copy_from_slice(self);
+        Ok(())
     }
 }
 
@@ -132,11 +149,12 @@ where
         }
     }
 
-    fn encode(&self, buf: &mut [u8]) {
+    fn encode(&self, buf: &mut [u8]) -> Result<(), EncodeError> {
         match self {
             None => (),
-            Some(v) => v.encode(buf),
+            Some(v) => v.encode(buf)?,
         }
+        Ok(())
     }
 }
 
@@ -149,8 +167,9 @@ where
         self.0.length() + self.1.length()
     }
 
-    fn encode(&self, buf: &mut [u8]) {
-        self.0.encode(&mut buf[0..self.0.length()]);
-        self.1.encode(&mut buf[self.0.length()..]);
+    fn encode(&self, buf: &mut [u8]) -> Result<(), EncodeError> {
+        self.0.encode(&mut buf[0..self.0.length()])?;
+        self.1.encode(&mut buf[self.0.length()..])?;
+        Ok(())
     }
 }
