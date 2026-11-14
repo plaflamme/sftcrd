@@ -30,6 +30,7 @@ pub enum YubicoInstruction {
 impl YubicoInstruction {
     /// Convert a raw instruction byte to a `YubicoInstruction`, if it's one of
     /// the Yubico extensions.
+    #[must_use]
     pub fn from_code(code: u8) -> Option<Self> {
         match code {
             0xF6 => Some(YubicoInstruction::MoveKey),
@@ -46,7 +47,7 @@ impl YubicoInstruction {
     }
 
     /// Convert a `YubicoInstruction` to its raw instruction byte.
-    #[allow(unused)]
+    #[must_use]
     pub fn to_code(self) -> u8 {
         match self {
             YubicoInstruction::MoveKey => 0xF6,
