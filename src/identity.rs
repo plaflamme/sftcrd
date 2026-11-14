@@ -2,12 +2,12 @@
 //! read-only Yubico extension commands.
 
 use crate::constants::VERSION;
+use crate::keygen::PublicKeyResponse;
 use crate::pin::Pin;
 use crate::piv::KeyAlg;
 use crate::piv::PinPolicy;
 use crate::piv::TouchPolicy;
 use crate::slot::KeyOrigin;
-use crate::slot::PublicKey;
 use crate::slot::factory_pin_policy;
 use crate::tlv::BerLength;
 use crate::tlv::ValueDecoder;
@@ -68,7 +68,7 @@ impl PivApplet {
             key_alg: key.alg(),
             policies: (slot_state.pin_policy, slot_state.touch_policy),
             origin: slot_state.origin,
-            public_key: key.public_key(),
+            public_key: key.public_key().into(),
             is_default,
         })
     }
@@ -105,7 +105,7 @@ tlv_struct! {
         origin: KeyOrigin,
 
         #[tag=0x04]
-        public_key: PublicKey,
+        public_key: PublicKeyResponse,
 
         #[tag=0x05]
         is_default: bool,

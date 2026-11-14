@@ -12,7 +12,7 @@ pub use length::{BerLength, Length, U8Length};
 pub use tag::Tag;
 pub use value::{ValueDecoder, ValueEncoder};
 
-/// Declarative macro to generate a struct and a corresponding [`ValueDecoder`] implementation to parse it out of TLV bytes.
+/// Declarative macro to generate a struct and a corresponding [`ValueDecoder`] and [`ValueEncoder`] implementations to decode/encode it out of/to TLV bytes.
 macro_rules! tlv_struct {
     // -------------------------------------------------------------------------
     // 1) Attribute Munching
@@ -227,9 +227,15 @@ macro_rules! tlv_struct {
                 let mut length = 0;
                 let tag_length = <$tag_ty as $crate::tlv::Tag>::length();
                 $(
-                    let value_len = <$full_ty as $crate::tlv::ValueEncoder>::length(&self.$field_name);
-                    let length_len = <$len_ty as $crate::tlv::Length>::length(value_len);
-                    length += tag_length + length_len + value_len;
+                    let value = &self.$field_name;
+                    match tlv_struct!(@wrap_field $kind, value) {
+                        None => (),
+                        Some(value) => {
+                            let value_len = <$parse_ty as $crate::tlv::ValueEncoder>::length(value);
+                            let length_len = <$len_ty as $crate::tlv::Length>::length(value_len);
+                            length += tag_length + length_len + value_len;
+                        },
+                    };
                 )*
                 length
             }
@@ -237,7 +243,11 @@ macro_rules! tlv_struct {
             fn encode(&self, buf: &mut [u8]) {
                 let mut encoder = $crate::tlv::Encoder::new(buf);
                 $(
-                    encoder.write_tlv::<$tag_ty, $len_ty, $full_ty>($tag, &self.$field_name);
+                    let value = &self.$field_name;
+                    match tlv_struct!(@wrap_field $kind, value) {
+                        None => (),
+                        Some(value) => encoder.write_tlv::<$tag_ty, $len_ty, $parse_ty>($tag, value),
+                    };
                 )*
             }
         }
@@ -248,6 +258,13 @@ macro_rules! tlv_struct {
     };
     (@unwrap_field opt, $field_name:ident) => {
         $field_name
+    };
+
+    (@wrap_field req, $field:expr) => {
+        Some($field)
+    };
+    (@wrap_field opt, $field:expr) => {
+        $field
     };
 
     // -------------------------------------------------------------------------
@@ -367,8 +384,18 @@ mod test {
                 opt: None
             }
             .encode_top_level(),
-            // TODO: Optional fields aren't handled correctly in the macro, this should be 7-bytes long
-            &[0x01, 0x01, 0xFF, 0x02, 0x02, 0xFF, 0xFE, 0x03, 0x00]
+            &[0x01, 0x01, 0xFF, 0x02, 0x02, 0xFF, 0xFE]
+        );
+        assert_eq!(
+            Packet {
+                version: 0xFF,
+                payload_len: 0xFFFE,
+                opt: Some(0xFDFC)
+            }
+            .encode_top_level(),
+            &[
+                0x01, 0x01, 0xFF, 0x02, 0x02, 0xFF, 0xFE, 0x03, 0x02, 0xFD, 0xFC
+            ]
         );
     }
 

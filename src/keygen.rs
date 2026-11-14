@@ -33,52 +33,45 @@ use crate::slot::PublicKey;
 use crate::slot::{KeyMaterial, SlotKey};
 use crate::tlv::BerLength;
 use crate::tlv::DecodeError;
-use crate::tlv::Encoder;
-use crate::tlv::Length;
 use crate::tlv::ValueDecoder;
 use crate::tlv::ValueEncoder;
 use crate::tlv::tlv_struct;
 
-crate::tlv::tlv_struct! {
+tlv_struct! {
+    #[length(BerLength)]
+    pub(crate) struct PublicKeyResponse {
+        #[tag = 0x86]
+        point: Option<Vec<u8>>,
+        #[tag = 0x81]
+        n: Option<Vec<u8>>,
+        #[tag = 0x82]
+        e: Option<Vec<u8>>,
+    }
+}
+
+tlv_struct! {
     #[tag_type(u16)]
     #[length(BerLength)]
     struct GenerateResponse {
         #[tag = 0x7F49]
-        public_key: PublicKey,
+        public_key: PublicKeyResponse,
     }
 }
 
-// TODO: support tlv_enum!{}
-impl ValueEncoder for PublicKey {
-    fn length(&self) -> usize {
-        match self {
-            PublicKey::Point(pt) => 1 + BerLength::length(pt.length()) + pt.length(),
-            PublicKey::Rsa { n, e } => {
-                1 + BerLength::length(n.length())
-                    + n.length()
-                    + 1
-                    + BerLength::length(e.length())
-                    + e.length()
-            }
+impl From<PublicKey> for PublicKeyResponse {
+    fn from(value: PublicKey) -> Self {
+        match value {
+            PublicKey::Point(pt) => PublicKeyResponse {
+                point: Some(pt),
+                n: None,
+                e: None,
+            },
+            PublicKey::Rsa { n, e } => PublicKeyResponse {
+                point: None,
+                n: Some(n),
+                e: Some(e),
+            },
         }
-    }
-
-    fn encode(&self, buf: &mut [u8]) {
-        let mut encoder = Encoder::new(buf);
-
-        match self {
-            PublicKey::Point(pt) => encoder.write_tlv::<u8, BerLength, Vec<u8>>(0x86, pt),
-            PublicKey::Rsa { n, e } => {
-                encoder.write_tlv::<u8, BerLength, Vec<u8>>(0x81, n);
-                encoder.write_tlv::<u8, BerLength, Vec<u8>>(0x82, e);
-            }
-        }
-    }
-}
-
-impl ValueDecoder<'_> for PublicKey {
-    fn decode(_bytes: &'_ [u8]) -> Result<Self, DecodeError> {
-        unreachable!()
     }
 }
 
@@ -136,7 +129,7 @@ impl PivApplet {
             self.attestation.cert = None;
 
             let response = GenerateResponse {
-                public_key: PublicKey::Point(point),
+                public_key: PublicKey::Point(point).into(),
             };
             return response.encode_top_level().into();
         }
@@ -149,7 +142,7 @@ impl PivApplet {
         };
 
         let response = GenerateResponse {
-            public_key: slot_key.public_key(),
+            public_key: slot_key.public_key().into(),
         };
 
         self.commit_slot_key(
