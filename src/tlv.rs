@@ -235,14 +235,9 @@ macro_rules! tlv_struct {
             }
 
             fn encode(&self, buf: &mut [u8]) {
-                let tag_length = <$tag_ty as $crate::tlv::Tag>::length();
+                let mut encoder = $crate::tlv::Encoder::new(buf);
                 $(
-                    <$tag_ty as $crate::tlv::Tag>::encode($tag, &mut buf[0..tag_length]);
-                    let value_len = <$full_ty as $crate::tlv::ValueEncoder>::length(&self.$field_name);
-                    let length_len = <$len_ty as $crate::tlv::Length>::length(value_len);
-                    <$len_ty as $crate::tlv::Length>::encode(value_len, &mut buf[tag_length..tag_length+length_len]);
-                    <$full_ty as $crate::tlv::ValueEncoder>::encode(&self.$field_name, &mut buf[tag_length+length_len..]);
-
+                    encoder.write_tlv::<$tag_ty, $len_ty, $full_ty>($tag, &self.$field_name);
                 )*
             }
         }
@@ -327,7 +322,7 @@ mod test {
     }
 
     #[test]
-    fn test_parse_struct() {
+    fn test_tlv_struct_default() {
         tlv_struct! {
             #[derive(Debug, PartialEq)]
             pub struct Packet {
@@ -363,10 +358,22 @@ mod test {
             Packet::decode(&[0x01, 0x01, 0xFF]),
             Err(DecodeError::MissingRequiredField)
         );
+
+        // encode
+        assert_eq!(
+            Packet {
+                version: 0xFF,
+                payload_len: 0xFFFE,
+                opt: None
+            }
+            .encode_top_level(),
+            // TODO: Optional fields aren't handled correctly in the macro, this should be 7-bytes long
+            &[0x01, 0x01, 0xFF, 0x02, 0x02, 0xFF, 0xFE, 0x03, 0x00]
+        );
     }
 
     #[test]
-    fn test_parse_struct_tag_type() {
+    fn test_tlv_struct_tag_type() {
         tlv_struct! {
             #[derive(Debug, PartialEq)]
             #[tag_type(u16)]
@@ -384,10 +391,18 @@ mod test {
                 payload_len: 0xFE,
             })
         );
+        assert_eq!(
+            Packet {
+                version: 0xFF,
+                payload_len: 0xFE,
+            }
+            .encode_top_level(),
+            &[0x01, 0x01, 0x01, 0xFF, 0x01, 0x02, 0x01, 0xFE]
+        );
     }
 
     #[test]
-    fn test_parse_struct_length() {
+    fn test_tlv_struct_length() {
         tlv_struct! {
             #[derive(Debug, PartialEq)]
             #[length(BerLength)]
@@ -419,7 +434,7 @@ mod test {
     }
 
     #[test]
-    fn test_parse_struct_lifetime() {
+    fn test_tlv_struct_lifetime() {
         tlv_struct! {
             #[derive(Debug, PartialEq)]
             #[length(BerLength)]

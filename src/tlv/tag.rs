@@ -13,10 +13,12 @@ impl Tag for u8 {
     fn length() -> usize {
         1
     }
+
     fn encode(self, buf: &mut [u8]) -> Result<(), EncodeError> {
         buf[0] = self;
         Ok(())
     }
+
     fn decode(buf: &[u8]) -> Result<(Self, usize), DecodeError>
     where
         Self: Sized,

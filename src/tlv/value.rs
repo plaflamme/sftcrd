@@ -42,8 +42,9 @@ impl<'a> ValueDecoder<'a> for &'a [u8] {
 pub trait ValueEncoder {
     fn length(&self) -> usize;
     fn encode(&self, buf: &mut [u8]);
+
     fn encode_top_level(&self) -> Vec<u8> {
-        let mut value = Vec::with_capacity(self.length());
+        let mut value = vec![0; self.length()];
         self.encode(&mut value);
         value
     }

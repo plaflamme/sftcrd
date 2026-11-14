@@ -173,13 +173,24 @@ impl ValueEncoder for Selector {
     }
 
     fn encode(&self, buf: &mut [u8]) {
+        fn cert_slot_index(slot: crate::piv::Slot) -> u8 {
+            match slot {
+                crate::piv::Slot::Authentication => 0x05,
+                crate::piv::Slot::Signature => 0x0A,
+                crate::piv::Slot::KeyManagement => 0x0B,
+                crate::piv::Slot::CardAuthentication => 0x01,
+                crate::piv::Slot::Retired(index) => index.value() + 0x0C,
+            }
+        }
+
         let value = match self {
             Selector::Chuid => OBJECT_CHUID,
             Selector::PinData => OBJECT_PIN_PROTECTED_DATA,
             Selector::AdminData => OBJECT_ADMIN_DATA,
-            Selector::Slot(slot) => [0x5F, 0xC1, 0x02], // TODO
+            Selector::Slot(slot) => [0x5F, 0xC1, cert_slot_index(*slot)],
             Selector::AttestationCert => ATTESTATION_OBJECT_TAG,
         };
+
         buf.copy_from_slice(&value);
     }
 }
