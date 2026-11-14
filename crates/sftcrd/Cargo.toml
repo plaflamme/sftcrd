@@ -2,30 +2,17 @@
 name = "sftcrd"
 version = "0.1.0"
 edition = "2024"
-description = "Pure-Rust PIV (NIST SP 800-73-4 / FIPS 201) card-side applet."
+description = "Smartcard server for PIV applet via VSmartCard protocol."
 
 [dependencies]
+sftcrd-piv = { path = "../sftcrd-piv" }
 sftcrd-tlv = { path = "../sftcrd-tlv" }
-aes = "0.9"
-apdu-app = "0.2"
 apdu-dispatch = "0.4"
-cipher = "0.5"
-clap = { version = "4", features = ["derive"] }
-des = "0.9"
-ecdsa = { version = "0.17.0", features = ["der"] }
-elliptic-curve = "0.14"
 hex = "0.4"
 iso7816 = "0.2"
-p256 = { version = "0.14.0", features = ["ecdh"] }
-p384 = { version = "0.14.0", features = ["ecdh"] }
-p521 = { version = "0.14.0", features = ["ecdh"] }
-rand = { version = "0.10" }
-rsa = { version = "0.10", features = ["hazmat"] }
-sha2 = "0.11"
 tracing = "0.1"
 tracing-subscriber = { version = "0.3", features = ["env-filter"] }
-x509-cert = { version = "0.3.0", features = ["builder"] }
-zeroize = { version = "1", default-features = false, features = ["alloc"] }
+clap = { version = "4", features = ["derive"] }
 
 [dev-dependencies]
 keyroost-piv = "0.15.0"

@@ -50,7 +50,7 @@ pub(crate) enum KeyOrigin {
 /// `key` with the key-generation commands, `cert` with GET/PUT DATA,
 /// `touch_policy` with GENERATE and GET METADATA, `imported` with GENERATE
 /// and MOVE KEY.
-pub(crate) struct Slot {
+pub struct Slot {
     /// The slot's key, or `None` for an empty slot.
     // read by slot GA (T3) and GET METADATA (T5).
     pub(crate) key: Option<SlotKey>,
@@ -452,7 +452,7 @@ const fn slot_index(slot: crate::piv::Slot) -> usize {
     }
 }
 
-pub(crate) struct Slots([Slot; 24]);
+pub struct Slots([Slot; 24]);
 
 impl Slots {
     fn new() -> Self {

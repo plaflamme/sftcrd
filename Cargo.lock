@@ -889,11 +889,25 @@ dependencies = [
 name = "sftcrd"
 version = "0.1.0"
 dependencies = [
+ "apdu-dispatch",
+ "clap",
+ "hex",
+ "iso7816",
+ "keyroost-piv",
+ "sftcrd-piv",
+ "sftcrd-tlv",
+ "tracing",
+ "tracing-subscriber",
+]
+
+[[package]]
+name = "sftcrd-piv"
+version = "0.1.0"
+dependencies = [
  "aes",
  "apdu-app",
  "apdu-dispatch",
  "cipher",
- "clap",
  "des",
  "ecdsa",
  "elliptic-curve",
@@ -908,7 +922,6 @@ dependencies = [
  "sftcrd-tlv",
  "sha2",
  "tracing",
- "tracing-subscriber",
  "x509-cert",
  "zeroize",
 ]

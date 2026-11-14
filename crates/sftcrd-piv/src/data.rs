@@ -29,7 +29,7 @@ const ATTESTATION_OBJECT_TAG: [u8; 3] = [0x5F, 0xFF, 0x01];
 /// stored opaquely as the value of its `53` template, `None` until first
 /// written.
 #[derive(Default)]
-pub(crate) struct PivData {
+pub struct PivData {
     /// The CHUID (card holder unique identifier), `None` at the factory.
     chuid: Option<Vec<u8>>,
     /// The PIN-protected data object, `None` at the factory.

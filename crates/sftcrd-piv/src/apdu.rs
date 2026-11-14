@@ -4,7 +4,7 @@ use iso7816::Status;
 pub type CommandView<'a> = iso7816::command::CommandView<'a>;
 
 #[derive(Debug)]
-pub(crate) struct Response(ApduResponse);
+pub struct Response(ApduResponse);
 
 impl Response {
     pub(crate) fn into_inner(self) -> ApduResponse {

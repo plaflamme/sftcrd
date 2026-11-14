@@ -1,6 +1,7 @@
 [workspace]
 members = [
     "crates/sftcrd-tlv",
+    "crates/sftcrd-piv",
     "crates/sftcrd",
 ]
 resolver = "2"

@@ -3,7 +3,7 @@ use std::fmt::Display;
 use crate::yubico::YubicoInstruction;
 
 #[derive(Clone)]
-pub(crate) enum Trace<'a> {
+pub enum Trace<'a> {
     Byte(u8),
     Slice(&'a [u8]),
     Ins(iso7816::Instruction),

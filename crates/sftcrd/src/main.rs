@@ -25,7 +25,7 @@ use clap::Parser;
 use tracing::{info, trace, warn};
 use tracing_subscriber::EnvFilter;
 
-use sftcrd::PivApplet;
+use sftcrd_piv::PivApplet;
 
 /// The ATR of a `YubiKey` 5.7
 const DEFAULT_ATR: &str = "3BFD1300008131FE158073C021C057597562694B657940";

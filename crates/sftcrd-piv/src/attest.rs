@@ -36,7 +36,7 @@ const OID_YUBICO_FIRMWARE: ObjectIdentifier = ObjectIdentifier::new_unwrap("1.3.
 const OID_YUBICO_SERIAL: ObjectIdentifier = ObjectIdentifier::new_unwrap("1.3.6.1.4.1.41482.3.7");
 const OID_YUBICO_POLICY: ObjectIdentifier = ObjectIdentifier::new_unwrap("1.3.6.1.4.1.41482.3.8");
 
-pub(crate) struct Attestation {
+pub struct Attestation {
     pub(crate) secret_key: elliptic_curve::SecretKey<p256::NistP256>,
     /// Option because after replacing the secret key (via keygen), the certificate that was in place is no longer valid until a new one is stored in its place.
     pub(crate) cert: Option<x509_cert::Certificate>,
