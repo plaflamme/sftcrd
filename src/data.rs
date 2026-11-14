@@ -12,7 +12,7 @@
 
 use crate::{
     PivApplet, Response,
-    tlv::{ValueDecoder, tlv_struct},
+    tlv::{ValueDecoder, ValueEncoder, tlv_struct},
 };
 use x509_cert::der::{Decode, Encode};
 
@@ -164,6 +164,23 @@ impl ValueDecoder<'_> for Selector {
             }
             _ => Err(crate::tlv::DecodeError::InvalidValue),
         }
+    }
+}
+
+impl ValueEncoder for Selector {
+    fn length(&self) -> usize {
+        3
+    }
+
+    fn encode(&self, buf: &mut [u8]) {
+        let value = match self {
+            Selector::Chuid => OBJECT_CHUID,
+            Selector::PinData => OBJECT_PIN_PROTECTED_DATA,
+            Selector::AdminData => OBJECT_ADMIN_DATA,
+            Selector::Slot(slot) => [0x5F, 0xC1, 0x02], // TODO
+            Selector::AttestationCert => ATTESTATION_OBJECT_TAG,
+        };
+        buf.copy_from_slice(&value);
     }
 }
 

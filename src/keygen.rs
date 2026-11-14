@@ -30,7 +30,9 @@ use crate::PivApplet;
 use crate::Response;
 use crate::data::push_tlv;
 use crate::slot::{KeyMaterial, SlotKey};
+use crate::tlv::DecodeError;
 use crate::tlv::ValueDecoder;
+use crate::tlv::ValueEncoder;
 use crate::tlv::tlv_struct;
 
 impl PivApplet {
@@ -214,19 +216,64 @@ impl ValueDecoder<'_> for KeyAlg {
     }
 }
 
-impl ValueDecoder<'_> for Defaultable<PinPolicy> {
-    fn decode(bytes: &[u8]) -> Result<Self, crate::tlv::DecodeError> {
-        u8::decode(bytes).and_then(|value| {
-            PinPolicy::from_u8(value).ok_or(crate::tlv::DecodeError::InvalidValue)
-        })
+impl<'a, T> ValueDecoder<'a> for Defaultable<T>
+where
+    T: TryFrom<u8>,
+{
+    fn decode(bytes: &'a [u8]) -> Result<Self, crate::tlv::DecodeError> {
+        match u8::decode(bytes) {
+            Ok(0x00) => Ok(Defaultable::Default),
+            Ok(value) => Ok(Defaultable::Specified(
+                T::try_from(value).map_err(|_| DecodeError::InvalidValue)?,
+            )),
+            Err(_) => Err(DecodeError::InvalidValue),
+        }
     }
 }
 
-impl ValueDecoder<'_> for Defaultable<TouchPolicy> {
-    fn decode(bytes: &[u8]) -> Result<Self, crate::tlv::DecodeError> {
-        u8::decode(bytes).and_then(|value| {
-            TouchPolicy::from_u8(value).ok_or(crate::tlv::DecodeError::InvalidValue)
-        })
+impl ValueEncoder for KeyAlg {
+    fn length(&self) -> usize {
+        1
+    }
+
+    fn encode(&self, buf: &mut [u8]) {
+        buf[0] = *self as u8;
+    }
+}
+
+impl ValueEncoder for PinPolicy {
+    fn length(&self) -> usize {
+        1
+    }
+
+    fn encode(&self, buf: &mut [u8]) {
+        buf[0] = *self as u8;
+    }
+}
+
+impl ValueEncoder for TouchPolicy {
+    fn length(&self) -> usize {
+        1
+    }
+
+    fn encode(&self, buf: &mut [u8]) {
+        buf[0] = *self as u8;
+    }
+}
+
+impl<T> ValueEncoder for Defaultable<T>
+where
+    T: ValueEncoder,
+{
+    fn length(&self) -> usize {
+        1
+    }
+
+    fn encode(&self, buf: &mut [u8]) {
+        match self {
+            Defaultable::Default => buf[0] = 0x00,
+            Defaultable::Specified(value) => value.encode(buf),
+        }
     }
 }
 

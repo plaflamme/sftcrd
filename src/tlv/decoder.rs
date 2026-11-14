@@ -2,45 +2,6 @@ use std::marker::PhantomData;
 
 use super::{DecodeError, Length, Tag};
 
-pub trait ValueDecoder<'a>
-where
-    Self: Sized,
-{
-    fn decode(bytes: &'a [u8]) -> Result<Self, DecodeError>;
-}
-
-impl ValueDecoder<'_> for u8 {
-    fn decode(bytes: &[u8]) -> Result<Self, DecodeError> {
-        if let [byte] = bytes {
-            Ok(*byte)
-        } else {
-            Err(DecodeError::BufferUnderrun)
-        }
-    }
-}
-
-impl ValueDecoder<'_> for u16 {
-    fn decode(bytes: &[u8]) -> Result<Self, DecodeError> {
-        if let [msb, lsb] = bytes {
-            Ok(u16::from_be_bytes([*msb, *lsb]))
-        } else {
-            Err(DecodeError::BufferUnderrun)
-        }
-    }
-}
-
-impl ValueDecoder<'_> for Vec<u8> {
-    fn decode(bytes: &[u8]) -> Result<Self, DecodeError> {
-        Ok(Vec::from(bytes))
-    }
-}
-
-impl<'a> ValueDecoder<'a> for &'a [u8] {
-    fn decode(bytes: &'a [u8]) -> Result<Self, DecodeError> {
-        Ok(bytes)
-    }
-}
-
 pub struct Decoder<'buf> {
     buf: &'buf [u8],
     pos: usize,

@@ -3,11 +3,14 @@ mod encoder;
 mod error;
 mod length;
 mod tag;
+mod value;
 
-pub use decoder::{Decoder, ValueDecoder};
+pub use decoder::Decoder;
+pub use encoder::Encoder;
 pub use error::{DecodeError, EncodeError};
 pub use length::{BerLength, Length, U8Length};
 pub use tag::Tag;
+pub use value::{ValueDecoder, ValueEncoder};
 
 /// Declarative macro to generate a struct and a corresponding [`ValueDecoder`] implementation to parse it out of TLV bytes.
 macro_rules! tlv_struct {
@@ -216,6 +219,31 @@ macro_rules! tlv_struct {
                 Ok(Self {
                     $( $field_name: tlv_struct!(@unwrap_field $kind, $field_name), )*
                 })
+            }
+        }
+
+        impl <$impl_lt> $crate::tlv::ValueEncoder for $name $(<$struct_lt>)? {
+            fn length(&self) -> usize {
+                let mut length = 0;
+                let tag_length = <$tag_ty as $crate::tlv::Tag>::length();
+                $(
+                    let value_len = <$full_ty as $crate::tlv::ValueEncoder>::length(&self.$field_name);
+                    let length_len = <$len_ty as $crate::tlv::Length>::length(value_len);
+                    length += tag_length + length_len + value_len;
+                )*
+                length
+            }
+
+            fn encode(&self, buf: &mut [u8]) {
+                let tag_length = <$tag_ty as $crate::tlv::Tag>::length();
+                $(
+                    <$tag_ty as $crate::tlv::Tag>::encode($tag, &mut buf[0..tag_length]);
+                    let value_len = <$full_ty as $crate::tlv::ValueEncoder>::length(&self.$field_name);
+                    let length_len = <$len_ty as $crate::tlv::Length>::length(value_len);
+                    <$len_ty as $crate::tlv::Length>::encode(value_len, &mut buf[tag_length..tag_length+length_len]);
+                    <$full_ty as $crate::tlv::ValueEncoder>::encode(&self.$field_name, &mut buf[tag_length+length_len..]);
+
+                )*
             }
         }
     };

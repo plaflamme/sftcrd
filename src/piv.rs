@@ -173,30 +173,61 @@ pub enum PinPolicy {
 }
 
 impl PinPolicy {
-    pub(crate) fn from_u8(value: u8) -> Option<Defaultable<Self>> {
+    pub(crate) fn from_u8(value: u8) -> Option<Self> {
         match value {
-            0x00 => Some(Defaultable::Default),
-            0x01 => Some(Defaultable::Specified(Self::Never)),
-            0x02 => Some(Defaultable::Specified(Self::Once)),
-            0x03 => Some(Defaultable::Specified(Self::Always)),
+            0x01 => Some(Self::Never),
+            0x02 => Some(Self::Once),
+            0x03 => Some(Self::Always),
             _ => None,
         }
     }
 }
+
+impl TryFrom<u8> for PinPolicy {
+    type Error = ();
+
+    fn try_from(value: u8) -> Result<Self, Self::Error> {
+        PinPolicy::from_u8(value).ok_or(())
+    }
+}
+
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum TouchPolicy {
     Never = 0x01,
     Always = 0x02,
     Cached = 0x03,
 }
+
 impl TouchPolicy {
-    pub(crate) fn from_u8(value: u8) -> Option<Defaultable<Self>> {
+    pub(crate) fn from_u8(value: u8) -> Option<Self> {
         match value {
-            0x00 => Some(Defaultable::Default),
-            0x01 => Some(Defaultable::Specified(Self::Never)),
-            0x02 => Some(Defaultable::Specified(Self::Always)),
-            0x03 => Some(Defaultable::Specified(Self::Cached)),
+            0x01 => Some(Self::Never),
+            0x02 => Some(Self::Always),
+            0x03 => Some(Self::Cached),
             _ => None,
+        }
+    }
+}
+
+impl TryFrom<u8> for TouchPolicy {
+    type Error = ();
+
+    fn try_from(value: u8) -> Result<Self, Self::Error> {
+        TouchPolicy::from_u8(value).ok_or(())
+    }
+}
+
+impl<T> TryFrom<u8> for Defaultable<T>
+where
+    T: TryFrom<u8>,
+    (): std::convert::From<<T as std::convert::TryFrom<u8>>::Error>,
+{
+    type Error = ();
+
+    fn try_from(value: u8) -> Result<Self, Self::Error> {
+        match value {
+            0x00 => Ok(Defaultable::Default),
+            value => Ok(T::try_from(value).map(Defaultable::Specified)?),
         }
     }
 }

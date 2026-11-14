@@ -1,6 +1,8 @@
 use super::DecodeError;
 
 pub trait Length {
+    fn length(value: usize) -> usize;
+    fn encode(length: usize, buf: &mut [u8]);
     fn decode(buf: &[u8]) -> Result<(usize, usize), DecodeError>
     where
         Self: Sized;
@@ -8,6 +10,14 @@ pub trait Length {
 
 pub struct U8Length;
 impl Length for U8Length {
+    fn length(_value: usize) -> usize {
+        1
+    }
+
+    fn encode(length: usize, buf: &mut [u8]) {
+        buf[0] = length as u8;
+    }
+
     fn decode(buf: &[u8]) -> Result<(usize, usize), DecodeError>
     where
         Self: Sized,
@@ -27,6 +37,23 @@ impl Length for U8Length {
 /// * `first > 0x80` => "variable "definite lenth form", bits 0x7f indicate the number of bytes the length is encoded on (big-endian)
 pub struct BerLength;
 impl Length for BerLength {
+    fn length(length: usize) -> usize {
+        match length {
+            0..0x80 => 1,
+            0x80.. => 8, // TOOD: proper variable length encoding
+        }
+    }
+
+    fn encode(length: usize, buf: &mut [u8]) {
+        if let Ok(l) = u8::try_from(length) {
+            buf[0] = l;
+        } else {
+            buf[0] = 0x88;
+            let l = length.to_be_bytes();
+            buf.copy_from_slice(&l);
+        }
+    }
+
     fn decode(buf: &[u8]) -> Result<(usize, usize), DecodeError>
     where
         Self: Sized,
