@@ -9,11 +9,12 @@ use crate::piv::PinPolicy;
 use crate::piv::TouchPolicy;
 use crate::slot::KeyOrigin;
 use crate::slot::factory_pin_policy;
+use crate::{PivApplet, Response};
 use sftcrd_tlv::BerLength;
+use sftcrd_tlv::EncodeError;
 use sftcrd_tlv::ValueDecoder;
 use sftcrd_tlv::ValueEncoder;
 use sftcrd_tlv::tlv_struct;
-use crate::{PivApplet, Response};
 
 impl PivApplet {
     /// GET VERSION (0xFD, Yubico extension): the applet version as three
@@ -55,7 +56,10 @@ impl PivApplet {
                 None => return iso7816::Status::IncorrectP1OrP2Parameter.into(),
             },
         };
-        body.into()
+        match body {
+            Ok(response) => response.into(),
+            Err(_) => iso7816::Status::MemoryFailure.into(),
+        }
     }
 
     fn key_reference_metadata(&self, slot: crate::piv::Slot) -> Option<KeyReferenceMetadata> {
@@ -118,8 +122,9 @@ impl ValueEncoder for KeyOrigin {
         1
     }
 
-    fn encode(&self, buf: &mut [u8]) {
+    fn encode(&self, buf: &mut [u8]) -> Result<(), EncodeError> {
         buf[0] = *self as u8;
+        Ok(())
     }
 }
 

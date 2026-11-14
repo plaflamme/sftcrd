@@ -21,6 +21,7 @@
 //! `6A86`.
 
 use elliptic_curve::Generate;
+use sftcrd_tlv::EncodeError;
 
 use crate::piv::Defaultable;
 use crate::piv::Slot;
@@ -131,7 +132,10 @@ impl PivApplet {
             let response = GenerateResponse {
                 public_key: PublicKey::Point(point).into(),
             };
-            return response.encode_top_level().into();
+            let Ok(response) = response.encode_top_level() else {
+                return iso7816::Status::MemoryFailure.into();
+            };
+            return response.into();
         }
         let Some(slot) = Slot::from_u8(command.p2) else {
             return iso7816::Status::IncorrectP1OrP2Parameter.into();
@@ -153,7 +157,10 @@ impl PivApplet {
             ctrl.touch_policy,
         );
 
-        response.encode_top_level().into()
+        let Ok(response) = response.encode_top_level() else {
+            return iso7816::Status::MemoryFailure.into();
+        };
+        response.into()
     }
 
     /// IMPORT ASYMMETRIC KEY (`0xFE`): the host's
@@ -284,8 +291,9 @@ impl ValueEncoder for KeyAlg {
         1
     }
 
-    fn encode(&self, buf: &mut [u8]) {
+    fn encode(&self, buf: &mut [u8]) -> Result<(), EncodeError> {
         buf[0] = *self as u8;
+        Ok(())
     }
 }
 
@@ -294,8 +302,9 @@ impl ValueEncoder for PinPolicy {
         1
     }
 
-    fn encode(&self, buf: &mut [u8]) {
+    fn encode(&self, buf: &mut [u8]) -> Result<(), EncodeError> {
         buf[0] = *self as u8;
+        Ok(())
     }
 }
 
@@ -304,8 +313,9 @@ impl ValueEncoder for TouchPolicy {
         1
     }
 
-    fn encode(&self, buf: &mut [u8]) {
+    fn encode(&self, buf: &mut [u8]) -> Result<(), EncodeError> {
         buf[0] = *self as u8;
+        Ok(())
     }
 }
 
@@ -317,11 +327,12 @@ where
         1
     }
 
-    fn encode(&self, buf: &mut [u8]) {
+    fn encode(&self, buf: &mut [u8]) -> Result<(), EncodeError> {
         match self {
             Defaultable::Default => buf[0] = 0x00,
-            Defaultable::Specified(value) => value.encode(buf),
+            Defaultable::Specified(value) => value.encode(buf)?,
         }
+        Ok(())
     }
 }
 

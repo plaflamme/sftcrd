@@ -14,6 +14,7 @@ use crate::{
     PivApplet, Response,
     tlv::{ValueDecoder, ValueEncoder, tlv_struct},
 };
+use sftcrd_tlv::EncodeError;
 use x509_cert::der::{Decode, Encode};
 
 const OBJECT_CHUID: [u8; 3] = [0x5F, 0xC1, 0x02];
@@ -54,7 +55,13 @@ impl PivApplet {
             return iso7816::Status::IncorrectDataParameter.into();
         };
         match self.data_object_value(get_data.selector) {
-            Some(value) => GetDataResponse { data: &value }.encode_top_level().into(),
+            Some(value) => {
+                let response = GetDataResponse { data: &value }.encode_top_level();
+                match response {
+                    Ok(response) => response.into(),
+                    Err(_) => iso7816::Status::MemoryFailure.into(),
+                }
+            }
             None => iso7816::Status::NotFound.into(),
         }
     }
@@ -168,7 +175,7 @@ impl ValueEncoder for Selector {
         3
     }
 
-    fn encode(&self, buf: &mut [u8]) {
+    fn encode(&self, buf: &mut [u8]) -> Result<(), EncodeError> {
         fn cert_slot_index(slot: crate::piv::Slot) -> u8 {
             match slot {
                 crate::piv::Slot::Authentication => 0x05,
@@ -188,6 +195,7 @@ impl ValueEncoder for Selector {
         };
 
         buf.copy_from_slice(&value);
+        Ok(())
     }
 }
 
