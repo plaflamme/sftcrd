@@ -37,6 +37,12 @@ use crate::PivApplet;
 /// Public RSA exponent
 const RSA_EXPONENT: u64 = 65537;
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) enum KeyOrigin {
+    Generated = 0x01,
+    Imported = 0x02,
+}
+
 /// One key slot: its key material (or the absence of one), its policies
 /// and its certificate data object.
 ///
@@ -58,7 +64,7 @@ pub(crate) struct Slot {
     /// Whether the current key was imported by the host (`true`, origin
     /// `0x02`) or generated on the card (`false`, origin `0x01`).
     #[allow(dead_code)] // set by GENERATE/IMPORT/MOVE, read by GET METADATA (T5).
-    pub(crate) imported: bool,
+    pub(crate) origin: KeyOrigin,
     /// The slot's certificate as stored under its data object (the `53`-
     /// wrapped value GET DATA returns verbatim), or `None` when the slot
     /// holds no certificate.
@@ -386,7 +392,7 @@ impl Slot {
             key: None,
             pin_policy,
             touch_policy: TouchPolicy::Never,
-            imported: false,
+            origin: KeyOrigin::Generated,
             cert: None,
         }
     }
@@ -579,7 +585,7 @@ mod tests {
         for slot in &slots.0 {
             assert!(slot.key.is_none());
             assert!(slot.cert.is_none());
-            assert!(!slot.imported);
+            assert_eq!(slot.origin, KeyOrigin::Generated);
             assert_eq!(slot.touch_policy, TouchPolicy::Never);
         }
     }

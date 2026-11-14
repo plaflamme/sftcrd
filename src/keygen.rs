@@ -28,6 +28,7 @@ use crate::piv::{KeyAlg, PinPolicy, TouchPolicy};
 
 use crate::PivApplet;
 use crate::Response;
+use crate::slot::KeyOrigin;
 use crate::slot::PublicKey;
 use crate::slot::{KeyMaterial, SlotKey};
 use crate::tlv::BerLength;
@@ -151,7 +152,13 @@ impl PivApplet {
             public_key: slot_key.public_key(),
         };
 
-        self.commit_slot_key(slot, slot_key, false, ctrl.pin_policy, ctrl.touch_policy);
+        self.commit_slot_key(
+            slot,
+            slot_key,
+            KeyOrigin::Generated,
+            ctrl.pin_policy,
+            ctrl.touch_policy,
+        );
 
         response.encode_top_level().into()
     }
@@ -196,7 +203,7 @@ impl PivApplet {
         self.commit_slot_key(
             index,
             slot_key,
-            true,
+            KeyOrigin::Imported,
             import.pin_policy,
             import.touch_policy,
         );
@@ -242,16 +249,16 @@ impl PivApplet {
         }
 
         let key = self.slots[source].key.take().expect("checked above");
-        let (pin_policy, touch_policy, imported) = (
+        let (pin_policy, touch_policy, origin) = (
             self.slots[source].pin_policy,
             self.slots[source].touch_policy,
-            self.slots[source].imported,
+            self.slots[source].origin,
         );
         if let Some(dest) = dest {
             self.slots[dest].key = Some(key);
             self.slots[dest].pin_policy = pin_policy;
             self.slots[dest].touch_policy = touch_policy;
-            self.slots[dest].imported = imported;
+            self.slots[dest].origin = origin;
         }
         iso7816::Status::Success.into()
     }
@@ -404,13 +411,13 @@ impl PivApplet {
         &mut self,
         slot: crate::piv::Slot,
         key: SlotKey,
-        imported: bool,
+        origin: KeyOrigin,
         pin_policy: Option<Defaultable<PinPolicy>>,
         touch_policy: Option<Defaultable<TouchPolicy>>,
     ) {
         let slot_state = &mut self.slots[slot];
         slot_state.key = Some(key);
-        slot_state.imported = imported;
+        slot_state.origin = origin;
         slot_state.pin_policy = match pin_policy {
             Some(Defaultable::Default) => crate::slot::factory_pin_policy(slot),
             Some(Defaultable::Specified(policy)) => policy,
@@ -640,7 +647,7 @@ mod tests {
         assert!(slot.key.is_some());
         assert_eq!(slot.pin_policy, PinPolicy::Always);
         assert_eq!(slot.touch_policy, TouchPolicy::Always);
-        assert!(!slot.imported);
+        assert_eq!(slot.origin, KeyOrigin::Generated);
 
         // Absent policy requests keep the slot's current policies.
         assert_eq!(
@@ -723,7 +730,7 @@ mod tests {
             panic!("invalid slot key")
         };
         assert_eq!(secret.to_bytes().to_vec(), &scalar[..]);
-        assert!(slot.imported);
+        assert_eq!(slot.origin, KeyOrigin::Imported);
         assert_eq!(slot.pin_policy, PinPolicy::Once);
         assert_eq!(slot.touch_policy, TouchPolicy::Always);
 
@@ -1125,7 +1132,7 @@ mod tests {
         assert_eq!(secret.to_bytes().as_slice(), &scalar);
         assert_eq!(dest.pin_policy, PinPolicy::Once);
         assert_eq!(dest.touch_policy, TouchPolicy::Always);
-        assert!(dest.imported);
+        assert_eq!(dest.origin, KeyOrigin::Imported);
         // The certificate objects are left untouched (host contract).
         assert_eq!(read_object(&mut app, &[0x5F, 0xC1, 0x0A]), cert_a);
         assert_eq!(read_object(&mut app, &[0x5F, 0xC1, 0x0D]), cert_b);
@@ -1339,7 +1346,10 @@ mod tests {
                 .alg(),
             KeyAlg::EccP384
         );
-        assert!(app.slots[crate::piv::Slot::Authentication].imported);
+        assert_eq!(
+            app.slots[crate::piv::Slot::Authentication].origin,
+            KeyOrigin::Imported
+        );
         use p384::ecdsa::signature::hazmat::PrehashVerifier;
         let expected_point = p384::SecretKey::from_slice(&scalar)
             .expect("a valid scalar")
@@ -1388,7 +1398,10 @@ mod tests {
                 .alg(),
             KeyAlg::EccP521
         );
-        assert!(app.slots[crate::piv::Slot::retired(1).expect("retired slot 1")].imported);
+        assert_eq!(
+            app.slots[crate::piv::Slot::retired(1).expect("retired slot 1")].origin,
+            KeyOrigin::Imported
+        );
     }
 
     #[test]

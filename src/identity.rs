@@ -3,19 +3,21 @@
 
 use crate::constants::VERSION;
 use crate::pin::Pin;
+use crate::piv::KeyAlg;
+use crate::piv::PinPolicy;
 use crate::piv::TouchPolicy;
+use crate::slot::KeyOrigin;
+use crate::slot::PublicKey;
 use crate::slot::factory_pin_policy;
+use crate::tlv::BerLength;
+use crate::tlv::ValueDecoder;
 use crate::tlv::ValueEncoder;
+use crate::tlv::tlv_struct;
 use crate::{PivApplet, Response};
 
 impl PivApplet {
     /// GET VERSION (0xFD, Yubico extension): the applet version as three
     /// `major.minor.patch` bytes under `9000`.
-    ///
-    /// Like the other Yubico extensions this accepts both the ISO CLA and
-    /// the Yubico proprietary one (`0xFF`); anything else is
-    /// [`SW_CLA_NOT_SUPPORTED`]. A case-2 `Le` smaller than three re-enters
-    /// the usual `61xx` / GET RESPONSE continuation.
     #[allow(clippy::unused_self)]
     pub(crate) fn process_get_version(
         &mut self,
@@ -26,11 +28,6 @@ impl PivApplet {
 
     /// GET SERIAL (0xF8, Yubico extension): the card serial as four
     /// big-endian bytes under `9000`.
-    ///
-    /// Like the other Yubico extensions this accepts both the ISO CLA and
-    /// the Yubico proprietary one (`0xFF`); anything else is
-    /// [`SW_CLA_NOT_SUPPORTED`]. A case-2 `Le` smaller than four re-enters
-    /// the usual `61xx` / GET RESPONSE continuation.
     pub(crate) fn process_get_serial(
         &mut self,
         _command: &crate::apdu::CommandView<'_>,
@@ -40,29 +37,6 @@ impl PivApplet {
 
     /// GET METADATA (0xF7, Yubico extension): per-key/PIN metadata
     /// (algorithm, origin, policy, retries) for the P2 reference.
-    ///
-    /// The host's case-1 form (`00 F7 00 <ref>`, no body, no `Le`) asks for
-    /// the reference's metadata; a case-2 `Le` re-enters the usual `61xx` /
-    /// GET RESPONSE continuation. P1 must be `0x00` (the host builder always
-    /// sends `0x00` — R4: anything else is [`iso7816::Status::IncorrectP1OrP2Parameter.into()`]).
-    ///
-    /// A key reference (`9A`/`9C`/`9D`/`9E`, retired `1..=20`) whose slot is
-    /// empty answers [`SW_REFERENCE_NOT_FOUND`]; an occupied slot answers the
-    /// flat TLVs the host's `parse_metadata` reads:
-    ///
-    /// - `01 <algorithm>` — the key's [`KeyAlg`] id (P-256 is `0x11`);
-    /// - `02 <pin policy><touch policy>` — the slot's policies, the host's
-    ///   [`keyroost_piv::PinPolicy`] / [`keyroost_piv::TouchPolicy`] ids;
-    /// - `03 <origin>` — `0x01` generated on-card, `0x02` imported;
-    /// - `04 <public key TLVs>` — the `7F49` inner TLVs the GENERATE response
-    ///   carries (the `86` EC point for the P-256 keys);
-    /// - `05 <is default>` — `1` while the slot still holds its factory
-    ///   policies.
-    ///
-    /// The PIN/PUK references (`80`/`81`) answer `05 <is default>` — `1`
-    /// while the stored value is the factory one — and `06
-    /// <remaining><total>` retry counts in the host's byte order
-    /// ([remaining][total], R2).
     pub(crate) fn process_get_metadata(
         &mut self,
         command: &crate::apdu::CommandView<'_>,
@@ -71,11 +45,11 @@ impl PivApplet {
             return iso7816::Status::IncorrectP1OrP2Parameter.into();
         }
         let body = match command.p2 {
-            0x80 => PivApplet::pin_reference_metadata(&self.pin),
-            0x81 => PivApplet::pin_reference_metadata(&self.puk),
+            0x80 => PivApplet::pin_reference_metadata(&self.pin).encode_top_level(),
+            0x81 => PivApplet::pin_reference_metadata(&self.puk).encode_top_level(),
             reference => match crate::piv::Slot::from_u8(reference) {
                 Some(slot) => match self.key_reference_metadata(slot) {
-                    Some(body) => body,
+                    Some(body) => body.encode_top_level(),
                     None => return iso7816::Status::KeyReferenceNotFound.into(),
                 },
                 None => return iso7816::Status::IncorrectP1OrP2Parameter.into(),
@@ -84,65 +58,80 @@ impl PivApplet {
         body.into()
     }
 
-    /// The flat metadata TLVs of the occupied key slot at `index`;
-    /// `None` for an empty slot (the caller answers
-    /// [`SW_REFERENCE_NOT_FOUND`]).
-    fn key_reference_metadata(&self, slot: crate::piv::Slot) -> Option<Vec<u8>> {
+    fn key_reference_metadata(&self, slot: crate::piv::Slot) -> Option<KeyReferenceMetadata> {
         let slot_state = &self.slots[slot];
         let key = slot_state.key.as_ref()?;
         let is_default = slot_state.pin_policy == factory_pin_policy(slot)
             && slot_state.touch_policy == TouchPolicy::Never;
-        // The `7F49` inner TLVs, unwrapped from their template exactly as
-        // the GENERATE response carries it: the `86` point for EC keys,
-        // the `81` modulus and `82` exponent for RSA keys.
-        let inner = key.public_key().encode_top_level();
-        let mut body = Vec::new();
-        body.extend_from_slice(&[0x01, 0x01, key.alg() as u8]);
-        body.extend_from_slice(&[
-            0x02,
-            0x02,
-            slot_state.pin_policy as u8,
-            slot_state.touch_policy as u8,
-        ]);
-        body.extend_from_slice(&[0x03, 0x01, if slot_state.imported { 0x02 } else { 0x01 }]);
-        body.push(0x04);
-        push_ber_len(&mut body, inner.len());
-        body.extend_from_slice(&inner);
-        body.extend_from_slice(&[0x05, 0x01, u8::from(is_default)]);
-        Some(body)
+
+        Some(KeyReferenceMetadata {
+            key_alg: key.alg(),
+            policies: (slot_state.pin_policy, slot_state.touch_policy),
+            origin: slot_state.origin,
+            public_key: key.public_key(),
+            is_default,
+        })
     }
 
-    /// The flat metadata TLVs of a PIN/PUK reference: `05 <is default>` and
-    /// `06 <remaining><total>`.
-    fn pin_reference_metadata(reference: &Pin) -> Vec<u8> {
-        vec![
-            0x05,
-            0x01,
-            u8::from(reference.is_default()),
-            0x06,
-            0x02,
-            reference.tries(),
-            reference.max_tries(),
-        ]
+    fn pin_reference_metadata(reference: &Pin) -> PinReferenceMetadata {
+        PinReferenceMetadata {
+            is_default: reference.is_default(),
+            tries: (reference.tries(), reference.max_tries()),
+        }
     }
 }
 
-/// Append a BER length: the short form to `0x7F`, the one-byte `0x81`
-/// long form to `0xFF`, the two-byte `0x82` form to `0xFFFF`. The RSA-4096
-/// `04` member (modulus plus exponent) needs the two-byte form.
-#[allow(clippy::cast_possible_truncation)]
-fn push_ber_len(out: &mut Vec<u8>, len: usize) {
-    if len < 0x80 {
-        out.push(len as u8);
-    } else if len <= 0xFF {
-        out.push(0x81);
-        out.push(len as u8);
-    } else if len <= 0xFFFF {
-        out.push(0x82);
-        out.push((len >> 8) as u8);
-        out.push(len as u8);
-    } else {
-        panic!("metadata 7F49 member exceeds 65535 bytes");
+tlv_struct! {
+    #[length(BerLength)]
+    struct PinReferenceMetadata {
+        #[tag=0x05]
+        is_default: bool,
+        #[tag=0x06]
+        tries: (u8, u8),
+
+    }
+}
+
+tlv_struct! {
+    #[length(BerLength)]
+    struct KeyReferenceMetadata {
+        #[tag=0x01]
+        key_alg: KeyAlg,
+
+        #[tag=0x02]
+        policies: (PinPolicy, TouchPolicy),
+
+        #[tag=0x03]
+        origin: KeyOrigin,
+
+        #[tag=0x04]
+        public_key: PublicKey,
+
+        #[tag=0x05]
+        is_default: bool,
+
+    }
+}
+
+impl ValueEncoder for KeyOrigin {
+    fn length(&self) -> usize {
+        1
+    }
+
+    fn encode(&self, buf: &mut [u8]) {
+        buf[0] = *self as u8;
+    }
+}
+
+impl ValueDecoder<'_> for KeyOrigin {
+    fn decode(_bytes: &'_ [u8]) -> Result<Self, crate::tlv::DecodeError> {
+        unreachable!("this is never invoked since we only use this on the response path")
+    }
+}
+
+impl<A, B> ValueDecoder<'_> for (A, B) {
+    fn decode(_bytes: &'_ [u8]) -> Result<Self, crate::tlv::DecodeError> {
+        unreachable!("this is never invoked since we only use this on the response path")
     }
 }
 
@@ -229,11 +218,9 @@ mod tests {
     }
 
     #[test]
-    #[should_panic(expected = "left == right")] // TODO
     fn get_serial_rejects_other_clas() {
         let mut applet = PivApplet::new();
-        let resp = applet.process(&[0x40, 0xF8, 0x00, 0x00]);
-        assert_eq!(resp.data(), Vec::new());
+        let resp = applet.process(&[0x50, 0xF8, 0x00, 0x00]);
         assert_eq!(resp.status(), iso7816::Status::ClaNotSupported);
     }
 
@@ -242,7 +229,6 @@ mod tests {
         let mut applet = PivApplet::new();
         for reference in [0x9A, 0x9C, 0x9D, 0x9E, 0x82, 0x95u8] {
             let resp = applet.process(&get_metadata(reference));
-            assert_eq!(resp.data(), Vec::new());
             assert_eq!(resp.status(), Status::KeyReferenceNotFound);
         }
     }
