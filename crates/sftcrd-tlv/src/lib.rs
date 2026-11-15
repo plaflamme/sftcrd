@@ -10,10 +10,7 @@ pub use encoder::Encoder;
 pub use error::{DecodeError, EncodeError};
 pub use length::{BerLength, Length, U8Length};
 pub use tag::Tag;
-pub use value::{ValueDecoder, ValueEncoder};
-
-#[cfg(not(any(target_pointer_width = "64", target_pointer_width = "32")))]
-compile_error!("This crate only supports 32 or 64-bit targets.");
+pub use value::{ConstLength, ValueDecoder, ValueEncoder};
 
 /// Declarative macro to generate a struct and a corresponding [`ValueDecoder`] and [`ValueEncoder`] implementations to decode/encode it out of/to TLV bytes.
 #[macro_export]

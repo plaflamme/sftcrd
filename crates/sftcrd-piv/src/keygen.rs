@@ -21,7 +21,6 @@
 //! `6A86`.
 
 use elliptic_curve::Generate;
-use sftcrd_tlv::EncodeError;
 
 use crate::piv::Defaultable;
 use crate::piv::Slot;
@@ -32,11 +31,8 @@ use crate::Response;
 use crate::slot::KeyOrigin;
 use crate::slot::PublicKey;
 use crate::slot::{KeyMaterial, SlotKey};
-use sftcrd_tlv::BerLength;
-use sftcrd_tlv::DecodeError;
-use sftcrd_tlv::ValueDecoder;
-use sftcrd_tlv::ValueEncoder;
 use sftcrd_tlv::tlv_struct;
+use sftcrd_tlv::{BerLength, ValueDecoder, ValueEncoder};
 
 tlv_struct! {
     #[length(BerLength)]
@@ -261,78 +257,6 @@ impl PivApplet {
             self.slots[dest].origin = origin;
         }
         iso7816::Status::Success.into()
-    }
-}
-
-impl ValueDecoder<'_> for KeyAlg {
-    fn decode(bytes: &[u8]) -> Result<Self, sftcrd_tlv::DecodeError> {
-        u8::decode(bytes)
-            .and_then(|value| KeyAlg::from_u8(value).ok_or(sftcrd_tlv::DecodeError::InvalidValue))
-    }
-}
-
-impl<'a, T> ValueDecoder<'a> for Defaultable<T>
-where
-    T: TryFrom<u8>,
-{
-    fn decode(bytes: &'a [u8]) -> Result<Self, sftcrd_tlv::DecodeError> {
-        match u8::decode(bytes) {
-            Ok(0x00) => Ok(Defaultable::Default),
-            Ok(value) => Ok(Defaultable::Specified(
-                T::try_from(value).map_err(|_| DecodeError::InvalidValue)?,
-            )),
-            Err(_) => Err(DecodeError::InvalidValue),
-        }
-    }
-}
-
-impl ValueEncoder for KeyAlg {
-    fn length(&self) -> usize {
-        1
-    }
-
-    fn encode(&self, buf: &mut [u8]) -> Result<(), EncodeError> {
-        buf[0] = *self as u8;
-        Ok(())
-    }
-}
-
-impl ValueEncoder for PinPolicy {
-    fn length(&self) -> usize {
-        1
-    }
-
-    fn encode(&self, buf: &mut [u8]) -> Result<(), EncodeError> {
-        buf[0] = *self as u8;
-        Ok(())
-    }
-}
-
-impl ValueEncoder for TouchPolicy {
-    fn length(&self) -> usize {
-        1
-    }
-
-    fn encode(&self, buf: &mut [u8]) -> Result<(), EncodeError> {
-        buf[0] = *self as u8;
-        Ok(())
-    }
-}
-
-impl<T> ValueEncoder for Defaultable<T>
-where
-    T: ValueEncoder,
-{
-    fn length(&self) -> usize {
-        1
-    }
-
-    fn encode(&self, buf: &mut [u8]) -> Result<(), EncodeError> {
-        match self {
-            Defaultable::Default => buf[0] = 0x00,
-            Defaultable::Specified(value) => value.encode(buf)?,
-        }
-        Ok(())
     }
 }
 

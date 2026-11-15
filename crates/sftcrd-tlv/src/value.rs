@@ -16,6 +16,11 @@ where
     fn decode(bytes: &'a [u8]) -> Result<Self, DecodeError>;
 }
 
+/// Implemented by values that know they encode to a constant number of bytes.
+pub trait ConstLength {
+    const LENGTH: usize;
+}
+
 impl ValueDecoder<'_> for bool {
     fn decode(bytes: &[u8]) -> Result<Self, DecodeError> {
         if let [byte] = bytes {
@@ -30,6 +35,10 @@ impl ValueDecoder<'_> for bool {
     }
 }
 
+impl ConstLength for bool {
+    const LENGTH: usize = 1;
+}
+
 impl ValueDecoder<'_> for u8 {
     fn decode(bytes: &[u8]) -> Result<Self, DecodeError> {
         if let [byte] = bytes {
@@ -38,6 +47,10 @@ impl ValueDecoder<'_> for u8 {
             Err(DecodeError::BufferUnderrun)
         }
     }
+}
+
+impl ConstLength for u8 {
+    const LENGTH: usize = 1;
 }
 
 impl ValueDecoder<'_> for u16 {
@@ -62,9 +75,14 @@ impl<'a> ValueDecoder<'a> for &'a [u8] {
     }
 }
 
-impl<'a, A, B> ValueDecoder<'a> for (A, B) {
-    fn decode(_bytes: &'a [u8]) -> Result<Self, DecodeError> {
-        unreachable!("this is never invoked since we only use this on the response path")
+impl<'a, A, B> ValueDecoder<'a> for (A, B)
+where
+    A: ValueDecoder<'a> + ConstLength,
+    B: ValueDecoder<'a>,
+{
+    fn decode(bytes: &'a [u8]) -> Result<Self, DecodeError> {
+        let (left, right) = bytes.split_at(A::LENGTH);
+        Ok((A::decode(left)?, B::decode(right)?))
     }
 }
 

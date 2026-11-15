@@ -129,8 +129,12 @@ impl ValueEncoder for KeyOrigin {
 }
 
 impl ValueDecoder<'_> for KeyOrigin {
-    fn decode(_bytes: &'_ [u8]) -> Result<Self, sftcrd_tlv::DecodeError> {
-        unreachable!("this is never invoked since we only use this on the response path")
+    fn decode(bytes: &'_ [u8]) -> Result<Self, sftcrd_tlv::DecodeError> {
+        match u8::decode(bytes)? {
+            0x01 => Ok(KeyOrigin::Generated),
+            0x02 => Ok(KeyOrigin::Imported),
+            _ => Err(sftcrd_tlv::DecodeError::InvalidValue),
+        }
     }
 }
 

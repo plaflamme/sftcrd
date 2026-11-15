@@ -1,3 +1,5 @@
+use sftcrd_tlv::{ConstLength, DecodeError, EncodeError, ValueDecoder, ValueEncoder};
+
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct RetiredIndex(u8);
 
@@ -154,15 +156,22 @@ impl KeyAlg {
     }
 }
 
-/// Pin and Touch policies can be set to their "default" state.
-/// But the "default" member is only ever used when writing the policy to the slot.
-/// So instead of adding "Default" members to those enums, we use this type which can represent the default value
-/// only when writing the policies. This eliminates the need to handle the "default" member later on when using the policies.
-#[derive(Clone, Copy, Default, Debug, PartialEq, Eq)]
-pub enum Defaultable<T> {
-    #[default]
-    Default,
-    Specified(T),
+impl ValueDecoder<'_> for KeyAlg {
+    fn decode(bytes: &[u8]) -> Result<Self, sftcrd_tlv::DecodeError> {
+        u8::decode(bytes)
+            .and_then(|value| KeyAlg::from_u8(value).ok_or(sftcrd_tlv::DecodeError::InvalidValue))
+    }
+}
+
+impl ValueEncoder for KeyAlg {
+    fn length(&self) -> usize {
+        1
+    }
+
+    fn encode(&self, buf: &mut [u8]) -> Result<(), EncodeError> {
+        buf[0] = *self as u8;
+        Ok(())
+    }
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -188,6 +197,27 @@ impl TryFrom<u8> for PinPolicy {
 
     fn try_from(value: u8) -> Result<Self, Self::Error> {
         PinPolicy::from_u8(value).ok_or(())
+    }
+}
+
+impl ValueDecoder<'_> for PinPolicy {
+    fn decode(bytes: &'_ [u8]) -> Result<Self, sftcrd_tlv::DecodeError> {
+        PinPolicy::try_from(u8::decode(bytes)?).map_err(|()| sftcrd_tlv::DecodeError::InvalidValue)
+    }
+}
+
+impl ConstLength for PinPolicy {
+    const LENGTH: usize = 1;
+}
+
+impl ValueEncoder for PinPolicy {
+    fn length(&self) -> usize {
+        1
+    }
+
+    fn encode(&self, buf: &mut [u8]) -> Result<(), EncodeError> {
+        buf[0] = *self as u8;
+        Ok(())
     }
 }
 
@@ -217,6 +247,39 @@ impl TryFrom<u8> for TouchPolicy {
     }
 }
 
+impl ValueDecoder<'_> for TouchPolicy {
+    fn decode(bytes: &'_ [u8]) -> Result<Self, sftcrd_tlv::DecodeError> {
+        TouchPolicy::try_from(u8::decode(bytes)?)
+            .map_err(|()| sftcrd_tlv::DecodeError::InvalidValue)
+    }
+}
+
+impl ConstLength for TouchPolicy {
+    const LENGTH: usize = 1;
+}
+
+impl ValueEncoder for TouchPolicy {
+    fn length(&self) -> usize {
+        1
+    }
+
+    fn encode(&self, buf: &mut [u8]) -> Result<(), EncodeError> {
+        buf[0] = *self as u8;
+        Ok(())
+    }
+}
+
+/// Pin and Touch policies can be set to their "default" state.
+/// But the "default" member is only ever used when writing the policy to the slot.
+/// So instead of adding "Default" members to those enums, we use this type which can represent the default value
+/// only when writing the policies. This eliminates the need to handle the "default" member later on when using the policies.
+#[derive(Clone, Copy, Default, Debug, PartialEq, Eq)]
+pub enum Defaultable<T> {
+    #[default]
+    Default,
+    Specified(T),
+}
+
 impl<T> TryFrom<u8> for Defaultable<T>
 where
     T: TryFrom<u8>,
@@ -229,5 +292,35 @@ where
             0x00 => Ok(Defaultable::Default),
             value => Ok(T::try_from(value).map(Defaultable::Specified)?),
         }
+    }
+}
+
+impl<'a, T> ValueDecoder<'a> for Defaultable<T>
+where
+    T: TryFrom<u8>,
+    (): std::convert::From<<T as std::convert::TryFrom<u8>>::Error>,
+{
+    fn decode(bytes: &'a [u8]) -> Result<Self, sftcrd_tlv::DecodeError> {
+        match u8::decode(bytes) {
+            Ok(value) => Ok(Self::try_from(value).map_err(|()| DecodeError::InvalidValue)?),
+            Err(_) => Err(DecodeError::InvalidValue),
+        }
+    }
+}
+
+impl<T> ValueEncoder for Defaultable<T>
+where
+    T: ValueEncoder,
+{
+    fn length(&self) -> usize {
+        1
+    }
+
+    fn encode(&self, buf: &mut [u8]) -> Result<(), EncodeError> {
+        match self {
+            Defaultable::Default => buf[0] = 0x00,
+            Defaultable::Specified(value) => value.encode(buf)?,
+        }
+        Ok(())
     }
 }
