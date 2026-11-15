@@ -177,12 +177,8 @@ impl PivApplet {
         let Some(index) = crate::piv::Slot::from_u8(command.p2) else {
             return iso7816::Status::IncorrectP1OrP2Parameter.into();
         };
-        let alg = match KeyAlg::from_u8(command.p1) {
-            Some(alg @ (KeyAlg::EccP256 | KeyAlg::EccP384 | KeyAlg::EccP521)) => alg,
-            Some(alg @ (KeyAlg::Rsa1024 | KeyAlg::Rsa2048 | KeyAlg::Rsa3072 | KeyAlg::Rsa4096)) => {
-                alg
-            }
-            _ => return iso7816::Status::IncorrectDataParameter.into(),
+        let Some(alg @ (KeyAlg::EccP256 | KeyAlg::EccP384 | KeyAlg::EccP521 | KeyAlg::Rsa(_))) = KeyAlg::from_u8(command.p1) else {
+            return iso7816::Status::IncorrectDataParameter.into();
         };
         let Ok(import) = ImportTemplate::decode(command.data()) else {
             return iso7816::Status::IncorrectDataParameter.into();
@@ -295,10 +291,7 @@ tlv_struct! {
 
 impl ImportTemplate<'_> {
     fn key_material(&self, key_alg: KeyAlg) -> Result<KeyMaterial<'_>, ()> {
-        let key_material = if matches!(
-            key_alg,
-            KeyAlg::Rsa1024 | KeyAlg::Rsa2048 | KeyAlg::Rsa3072 | KeyAlg::Rsa4096
-        ) {
+        let key_material = if matches!(key_alg, KeyAlg::Rsa(_)) {
             // The EC scalar must not sneak in alongside the CRT set.
             if self.scalar.is_some() {
                 return Err(());

@@ -125,33 +125,53 @@ impl MgmtAlg {
     }
 }
 
+/// RSA key size in bits.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum RsaBits {
+    Rsa1024 = 1024,
+    Rsa2048 = 2048,
+    Rsa3072 = 3072,
+    Rsa4096 = 4096,
+}
+
 /// Asymmetric key algorithm
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum KeyAlg {
-    Rsa1024 = 0x06,
-    Rsa2048 = 0x07,
-    Rsa3072 = 0x05,
-    Rsa4096 = 0x16,
-    EccP256 = 0x11,
-    EccP384 = 0x14,
-    EccP521 = 0x15,
-    Ed25519 = 0xE0,
-    X25519 = 0xE1,
+    Rsa(RsaBits),
+    EccP256,
+    EccP384,
+    EccP521,
+    Ed25519,
+    X25519,
 }
 
 impl KeyAlg {
     pub(crate) fn from_u8(value: u8) -> Option<Self> {
         match value {
-            0x06 => Some(Self::Rsa1024),
-            0x07 => Some(Self::Rsa2048),
-            0x05 => Some(Self::Rsa3072),
-            0x16 => Some(Self::Rsa4096),
+            0x06 => Some(Self::Rsa(RsaBits::Rsa1024)),
+            0x07 => Some(Self::Rsa(RsaBits::Rsa2048)),
+            0x05 => Some(Self::Rsa(RsaBits::Rsa3072)),
+            0x16 => Some(Self::Rsa(RsaBits::Rsa4096)),
             0x11 => Some(Self::EccP256),
             0x14 => Some(Self::EccP384),
             0x15 => Some(Self::EccP521),
             0xE0 => Some(Self::Ed25519),
             0xE1 => Some(Self::X25519),
             _ => None,
+        }
+    }
+
+    pub(crate) fn into_u8(self) -> u8 {
+        match self {
+            KeyAlg::Rsa(RsaBits::Rsa1024) => 0x06,
+            KeyAlg::Rsa(RsaBits::Rsa2048) => 0x07,
+            KeyAlg::Rsa(RsaBits::Rsa3072) => 0x05,
+            KeyAlg::Rsa(RsaBits::Rsa4096) => 0x16,
+            KeyAlg::EccP256 => 0x11,
+            KeyAlg::EccP384 => 0x14,
+            KeyAlg::EccP521 => 0x15,
+            KeyAlg::Ed25519 => 0xE0,
+            KeyAlg::X25519 => 0xE1,
         }
     }
 }
@@ -169,7 +189,7 @@ impl ValueEncoder for KeyAlg {
     }
 
     fn encode(&self, buf: &mut [u8]) -> Result<(), EncodeError> {
-        buf[0] = *self as u8;
+        buf[0] = self.into_u8();
         Ok(())
     }
 }

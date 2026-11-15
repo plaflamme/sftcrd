@@ -85,7 +85,7 @@ impl PivApplet {
         let Some(key) = self.slots[slot].key.as_ref() else {
             return iso7816::Status::IncorrectP1OrP2Parameter.into();
         };
-        if p1 != key.alg() as u8 {
+        if p1 != key.alg().into_u8() {
             return iso7816::Status::IncorrectP1OrP2Parameter.into();
         }
         let Ok(request) = GaRequest::decode(body) else {
