@@ -2,11 +2,17 @@ use crate::error::EncodeError;
 
 use super::DecodeError;
 
+/// Implemented by values for reading them out of TLV byte buffers.
 pub trait ValueDecoder<'a>
 where
     Self: Sized,
 {
-    #[allow(clippy::missing_errors_doc)]
+    /// Decodes a value from the provided bytes.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error when there are not enough bytes to decode a value ([`DecodeError::BufferUnderrun`])
+    /// or if the encoded value is invalid ([`DecodeError::InvalidValue`]).
     fn decode(bytes: &'a [u8]) -> Result<Self, DecodeError>;
 }
 
@@ -62,8 +68,10 @@ impl<'a, A, B> ValueDecoder<'a> for (A, B) {
     }
 }
 
+/// Implemented by values for writing them into TLV byte buffers.
 pub trait ValueEncoder {
     fn length(&self) -> usize;
+
     /// Writes the value in the provided buffer.
     ///
     /// # Errors

@@ -2,6 +2,9 @@ use crate::error::EncodeError;
 
 use super::{Length, Tag, ValueEncoder};
 
+/// Wraps a pre-allocated buffer to simplify writing TLVs to it.
+///
+/// Values must implement [`ValueEncoder`] which is designed to write values to a pre-allocated buffer.
 pub struct Encoder<'a> {
     buf: &'a mut [u8],
     pos: usize,
@@ -18,10 +21,13 @@ impl<'a> Encoder<'a> {
     }
 
     /// Moves the write pointer forward by `len` and returns a mutable slice over the region created.
-    fn advance_by(&mut self, len: usize) -> &mut [u8] {
-        let pos = self.pos;
+    fn advance_by(&mut self, len: usize) -> Result<&mut [u8], EncodeError> {
+        if self.pos + len > self.buf.len() {
+            return Err(EncodeError::BufferUnderrun);
+        }
+        let start = self.pos;
         self.pos += len;
-        &mut self.buf[pos..pos + len]
+        Ok(&mut self.buf[start..self.pos])
     }
 
     fn write_tag_length<T: Tag, L: Length>(
@@ -29,10 +35,10 @@ impl<'a> Encoder<'a> {
         tag: T,
         value_length: usize,
     ) -> Result<(), EncodeError> {
-        tag.encode(self.advance_by(T::length()))?;
+        tag.encode(self.advance_by(T::length())?)?;
         L::encode(
             value_length,
-            self.advance_by(L::length(value_length) as usize),
+            self.advance_by(L::length(value_length) as usize)?,
         )?;
         Ok(())
     }
@@ -49,7 +55,7 @@ impl<'a> Encoder<'a> {
     ) -> Result<(), EncodeError> {
         let value_length = value.length();
         self.write_tag_length::<T, L>(tag, value_length)?;
-        value.encode(self.advance_by(value_length))?;
+        value.encode(self.advance_by(value_length)?)?;
         Ok(())
     }
 }
