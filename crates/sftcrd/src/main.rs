@@ -19,6 +19,7 @@
 //!   APDU: the response data, followed by the two-byte status word.
 use std::io::{self, Read, Write};
 use std::net::{TcpListener, TcpStream};
+use std::path::PathBuf;
 use std::process::ExitCode;
 
 use clap::Parser;
@@ -54,6 +55,10 @@ struct Args {
     /// ATR presented to PC/SC clients, as a hex string.
     #[arg(long, default_value = DEFAULT_ATR)]
     atr: String,
+
+    /// Path to a TOML configuration file to initialize the card state.
+    #[arg(short, long)]
+    config: Option<PathBuf>,
 }
 
 fn main() -> ExitCode {
@@ -89,7 +94,7 @@ fn main() -> ExitCode {
         match listener.accept() {
             Ok((stream, addr)) => {
                 info!(%addr, "vpcd connected");
-                if let Err(e) = serve_connection(stream, &atr) {
+                if let Err(e) = serve_connection(stream, &atr, args.config.as_deref()) {
                     warn!("connection with {addr} failed: {e}");
                 }
             }
@@ -99,9 +104,17 @@ fn main() -> ExitCode {
 }
 
 /// Serve one vpcd connection until it drops.
-fn serve_connection(mut stream: TcpStream, atr: &[u8]) -> io::Result<()> {
+fn serve_connection(
+    mut stream: TcpStream,
+    atr: &[u8],
+    config_path: Option<&std::path::Path>,
+) -> io::Result<()> {
     // The card: the applet instance
-    let mut applet = PivApplet::new();
+    let mut applet = match config_path {
+        Some(path) => PivApplet::from_toml_file(path)
+            .map_err(|e| io::Error::new(io::ErrorKind::InvalidData, e.to_string()))?,
+        None => PivApplet::new(),
+    };
     let mut power_on = false;
 
     let contact = apdu_dispatch::interchanges::Channel::new();

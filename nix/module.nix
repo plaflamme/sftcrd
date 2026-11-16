@@ -59,6 +59,14 @@ in
       ];
       description = "Set the log level";
     };
+
+    config-file = lib.mkOption {
+      type = lib.types.nullOr lib.types.path;
+      default = null;
+      description = ''
+        Path to a TOML configuration file to initialize the card state.
+      '';
+    };
   };
 
   config = lib.mkIf cfg.enable {
@@ -76,7 +84,8 @@ in
         Environment = "RUST_LOG=${cfg.log-level}";
         ExecStart =
           "${cfg.package}/bin/sftcrd --port ${toString cfg.port} --host ${cfg.hostname}"
-          + lib.optionalString (cfg.atr != null) " --atr ${cfg.atr}";
+          + lib.optionalString (cfg.atr != null) " --atr ${cfg.atr}"
+          + lib.optionalString (cfg.config-file != null) " --config ${cfg.config-file}";
       };
     };
   };
