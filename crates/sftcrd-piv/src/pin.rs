@@ -8,9 +8,9 @@ const DEFAULT_PIN_VALUE: [u8; 8] = [0x31, 0x32, 0x33, 0x34, 0x35, 0x36, 0xFF, 0x
 /// The factory PUK: "12345678".
 const DEFAULT_PUK_VALUE: [u8; 8] = [0x31, 0x32, 0x33, 0x34, 0x35, 0x36, 0x37, 0x38];
 /// The factory PIN retry limit
-const DEFAULT_PIN_TRIES: u8 = 5;
+pub(crate) const DEFAULT_PIN_TRIES: u8 = 5;
 /// The factory PUK retry limit
-const DEFAULT_PUK_TRIES: u8 = 3;
+pub(crate) const DEFAULT_PUK_TRIES: u8 = 3;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
 enum VerifiedState {
@@ -58,7 +58,7 @@ pub(crate) struct Pin {
 }
 
 impl Pin {
-    fn new(value: [u8; 8], max_tries: u8) -> Self {
+    pub(crate) fn new(value: [u8; 8], max_tries: u8) -> Self {
         Self {
             default_value: Zeroizing::new(value),
             value: Zeroizing::new(value),

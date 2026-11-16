@@ -15,6 +15,7 @@
 mod apdu;
 mod attest;
 mod auth;
+pub mod config;
 mod constants;
 mod data;
 mod general_auth;
@@ -37,6 +38,7 @@ use pin::Pin;
 
 pub use crate::{slot::Slots, yubico::YubicoInstruction};
 pub use apdu::Response;
+pub use config::{CardConfig, ConfigError, MgmtKeyConfig, PinConfig, PivConfig, SlotConfig};
 pub use trace::Trace;
 
 /// A PIV applet instance: the card side of NIST SP 800-73-4.

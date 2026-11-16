@@ -87,7 +87,7 @@ impl MgmtKeySlot {
     /// zero-padded into the 32-byte array; the old material is zeroed
     /// before the copy. The pending challenge and the unlocked status are
     /// untouched.
-    fn set_key(&mut self, alg: MgmtAlg, key: &[u8]) -> Result<(), cipher::InvalidLength> {
+    pub(crate) fn set_key(&mut self, alg: MgmtAlg, key: &[u8]) -> Result<(), cipher::InvalidLength> {
         let len = alg.key_len();
         let key = &key[..len];
         self.key = match alg {
