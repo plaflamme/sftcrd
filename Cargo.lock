@@ -538,9 +538,9 @@ dependencies = [
 
 [[package]]
 name = "keyroost-piv"
-version = "0.15.0"
+version = "0.16.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "84c0a2c57ca2d228bf66f451c6cfd438d7a19260a97df2ec029ad7e9e8453379"
+checksum = "128d0d819e09a09dc870f74fabf22e0c2f987d0c17c795015483b9d1660d9491"
 dependencies = [
  "keyroost-proto",
  "zeroize",
@@ -548,9 +548,9 @@ dependencies = [
 
 [[package]]
 name = "keyroost-proto"
-version = "0.15.0"
+version = "0.16.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "8152ede67c73a7840712556fa1ccfc3f94cd74e6f619c70b55cccf7bb18e5747"
+checksum = "b0ad98090df1475bdfdb753ca7c423f028b658982fc2025805408e566f4badf9"
 
 [[package]]
 name = "lazy_static"

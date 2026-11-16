@@ -26,7 +26,7 @@ x509-cert = { version = "0.3.0", features = ["builder"] }
 zeroize = { version = "1", default-features = false, features = ["alloc"] }
 
 [dev-dependencies]
-keyroost-piv = "0.15.0"
+keyroost-piv = "0.16.0"
 
 [lints.clippy]
 pedantic = "warn"
