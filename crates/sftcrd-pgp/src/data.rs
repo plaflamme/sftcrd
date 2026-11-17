@@ -64,7 +64,7 @@ impl KeySlotMeta {
 pub(crate) struct CardData {
     pub(crate) name: Vec<u8>,
     pub(crate) language: Vec<u8>,
-    pub(crate) sex: Gender,
+    pub(crate) gender: Gender,
     pub(crate) url: Vec<u8>,
     pub(crate) login_data: Vec<u8>,
     pub(crate) ds_counter: u32,
@@ -82,7 +82,7 @@ tlv_struct! {
         #[tag = 0x5F2D]
         language: &'a [u8],
         #[tag = 0x5F35]
-        sex: u8,
+        gender: u8,
     }
 }
 
@@ -159,7 +159,7 @@ impl CardData {
         CardholderRelatedData {
             name: &self.name,
             language: &self.language,
-            sex: self.sex as u8,
+            gender: self.gender as u8,
         }
     }
 
@@ -456,7 +456,7 @@ impl PgpApplet {
                 let Some(gender) = Gender::from_u8(data[0]) else {
                     return Status::IncorrectDataParameter.into();
                 };
-                self.data.sex = gender;
+                self.data.gender = gender;
             }
             PutDataSelector::Url => {
                 if data.len() > MAX_URL_LEN {
@@ -700,7 +700,7 @@ mod tests {
 
         verify_pw3(&mut applet);
 
-        // Cardholder metadata: Name, Language, Sex, URL, Login data
+        // Cardholder metadata: Name, Language, Gender, URL, Login data
         assert_eq!(
             applet
                 .process(&keyroost_openpgp::put_cardholder_name(b"Doe<<Jane"))
