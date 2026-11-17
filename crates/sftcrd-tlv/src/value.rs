@@ -16,6 +16,31 @@ where
     fn decode(bytes: &'a [u8]) -> Result<Self, DecodeError>;
 }
 
+/// Implemented by structs decoded from an ISO/IEC 7816-4 header list
+/// (a `(template, values)` pair of sibling TLVs, such as `OpenPGP` `7F48` + `5F48`).
+pub trait HeaderListDecoder<'a>: Sized {
+    /// Decodes `Self` from a tag-length `template` and flat `values` buffer.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`DecodeError`] if the template or values are malformed or a required field is missing.
+    fn decode_header_list(template: &'a [u8], values: &'a [u8]) -> Result<Self, DecodeError>;
+}
+
+/// Implemented by structs encoded as an ISO/IEC 7816-4 header list
+/// (a `(template, values)` pair of sibling TLVs).
+pub trait HeaderListEncoder {
+    /// Returns the encoded `(template_len, values_len)` byte lengths.
+    fn header_list_lengths(&self) -> (usize, usize);
+
+    /// Encodes `self` into a `(template, values)` byte-vector pair.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`EncodeError`] if any tag, length, or value fails to encode.
+    fn encode_header_list(&self) -> Result<(Vec<u8>, Vec<u8>), EncodeError>;
+}
+
 /// Implemented by values that know they encode to a constant number of bytes.
 pub trait ConstLength {
     const LENGTH: usize;

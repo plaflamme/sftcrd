@@ -5,12 +5,12 @@ mod length;
 mod tag;
 mod value;
 
-pub use decoder::Decoder;
+pub use decoder::{Decoder, HeaderListIter, TagLengthIter, decode_header_list};
 pub use encoder::{Encoder, encode_sequence};
 pub use error::{DecodeError, EncodeError};
 pub use length::{BerLength, Length, U8Length};
 pub use tag::{BerTag, Tag, U8Tag, U16Tag};
-pub use value::{ConstLength, ValueDecoder, ValueEncoder};
+pub use value::{ConstLength, HeaderListDecoder, HeaderListEncoder, ValueDecoder, ValueEncoder};
 
 /// Declarative macro to generate a struct and a corresponding [`ValueDecoder`] and [`ValueEncoder`] implementations to decode/encode it out of/to TLV bytes.
 #[macro_export]
@@ -89,6 +89,7 @@ macro_rules! tlv_struct {
         tlv_struct!(@parse_fields
             tag_type: [ $tag_ty ],
             length: [ $len_ty ],
+            has_hl: [ false ],
             impl_lt: [ $impl_lt ],
             struct_lt: [ $($struct_lt)? ],
             header: [ $($retained)* $vis struct $name $(<$struct_lt>)? ],
@@ -105,6 +106,7 @@ macro_rules! tlv_struct {
     (@parse_fields
         tag_type: [ $tag_ty:path ],
         length: [ $len_ty:ty ],
+        has_hl: [ $has_hl:ident ],
         impl_lt: [ $impl_lt:lifetime ],
         struct_lt: [ $($struct_lt:lifetime)? ],
         header: [ $($header:tt)* ],
@@ -119,6 +121,7 @@ macro_rules! tlv_struct {
         tlv_struct!(@parse_fields
             tag_type: [ $tag_ty ],
             length: [ $len_ty ],
+            has_hl: [ $has_hl ],
             impl_lt: [ $impl_lt ],
             struct_lt: [ $($struct_lt)? ],
             header: [ $($header)* ],
@@ -138,10 +141,50 @@ macro_rules! tlv_struct {
         );
     };
 
-    // Muncher Arm 1: Optional field (`Option<T>`)
+    // Muncher Arm 1: Paired header-list field (`#[header_list(tpl_tag, val_tag)]`)
     (@parse_fields
         tag_type: [ $tag_ty:path ],
         length: [ $len_ty:ty ],
+        has_hl: [ $has_hl:ident ],
+        impl_lt: [ $impl_lt:lifetime ],
+        struct_lt: [ $($struct_lt:lifetime)? ],
+        header: [ $($header:tt)* ],
+        parsed: [ $($parsed:tt)* ],
+        remaining: [
+            #[header_list($tpl_tag:expr, $val_tag:expr)]
+            $(#[$field_meta:meta])*
+            $field_vis:vis $field_name:ident : $field_ty:ty
+            $(, $($rest:tt)*)?
+        ]
+    ) => {
+        tlv_struct!(@parse_fields
+            tag_type: [ $tag_ty ],
+            length: [ $len_ty ],
+            has_hl: [ true ],
+            impl_lt: [ $impl_lt ],
+            struct_lt: [ $($struct_lt)? ],
+            header: [ $($header)* ],
+            parsed: [
+                $($parsed)*
+                (
+                    header_list,
+                    ($tpl_tag, $val_tag),
+                    [ $(#[$field_meta])* ],
+                    $field_vis,
+                    $field_name,
+                    $field_ty,
+                    $field_ty
+                )
+            ],
+            remaining: [ $($($rest)*)? ]
+        );
+    };
+
+    // Muncher Arm 2: Optional field (`Option<T>`)
+    (@parse_fields
+        tag_type: [ $tag_ty:path ],
+        length: [ $len_ty:ty ],
+        has_hl: [ $has_hl:ident ],
         impl_lt: [ $impl_lt:lifetime ],
         struct_lt: [ $($struct_lt:lifetime)? ],
         header: [ $($header:tt)* ],
@@ -156,6 +199,7 @@ macro_rules! tlv_struct {
         tlv_struct!(@parse_fields
             tag_type: [ $tag_ty ],
             length: [ $len_ty ],
+            has_hl: [ $has_hl ],
             impl_lt: [ $impl_lt ],
             struct_lt: [ $($struct_lt)? ],
             header: [ $($header)* ],
@@ -175,10 +219,11 @@ macro_rules! tlv_struct {
         );
     };
 
-    // Muncher Arm 2: Required field (`T`)
+    // Muncher Arm 3: Required field (`T`)
     (@parse_fields
         tag_type: [ $tag_ty:path ],
         length: [ $len_ty:ty ],
+        has_hl: [ $has_hl:ident ],
         impl_lt: [ $impl_lt:lifetime ],
         struct_lt: [ $($struct_lt:lifetime)? ],
         header: [ $($header:tt)* ],
@@ -193,6 +238,7 @@ macro_rules! tlv_struct {
         tlv_struct!(@parse_fields
             tag_type: [ $tag_ty ],
             length: [ $len_ty ],
+            has_hl: [ $has_hl ],
             impl_lt: [ $impl_lt ],
             struct_lt: [ $($struct_lt)? ],
             header: [ $($header)* ],
@@ -212,16 +258,17 @@ macro_rules! tlv_struct {
         );
     };
 
-    // Base Case: Generate struct and `from_bytes` (Unified!)
+    // Base Case: Generate struct and codecs
     (@parse_fields
         tag_type: [ $tag_ty:path ],
         length: [ $len_ty:ty ],
+        has_hl: [ $has_hl:ident ],
         impl_lt: [ $impl_lt:lifetime ],
         struct_lt: [ $($struct_lt:lifetime)? ],
         // The header arrives perfectly formed from `@parse_attrs`
         header: [ $(#[$meta:meta])* $vis:vis struct $name:ident $(<$lt_header:lifetime>)? ],
         parsed: [
-            $( ( $kind:ident, $tag:expr, [ $(#[$field_meta:meta])* ], $field_vis:vis, $field_name:ident, $full_ty:ty, $parse_ty:ty ) )*
+            $( ( $kind:ident, $tag:tt, [ $(#[$field_meta:meta])* ], $field_vis:vis, $field_name:ident, $full_ty:ty, $parse_ty:ty ) )*
         ],
         remaining: []
     ) => {
@@ -236,22 +283,15 @@ macro_rules! tlv_struct {
         // $impl_lt is ALWAYS present here, while $struct_lt is optional!
         impl <$impl_lt> $crate::ValueDecoder<$impl_lt> for $name $(<$struct_lt>)? {
             fn decode(input: &$impl_lt [u8]) -> Result<Self, $crate::DecodeError> {
-                $( tlv_struct!(@init_field $kind, $field_name, $parse_ty); )*
+                $( tlv_struct!(@init_field $kind, $impl_lt, $field_name, $parse_ty); )*
 
                 for entry in $crate::Decoder::new(input).into_iter_tags::<$tag_ty, $len_ty>() {
                     let (tag, value_bytes) = entry?;
-                    match tag {
-                        $(
-                            $tag_ty($tag) => {
-                                tlv_struct!(@decode_field $kind, $field_name, $parse_ty, value_bytes);
-                            }
-                        )*
-                        _ => return Err($crate::DecodeError::InvalidTag),
-                    }
+                    tlv_struct!(@match_tag tag, $tag_ty, value_bytes, $( ( $kind, $tag, $field_name, $parse_ty ) )* );
                 }
 
                 Ok(Self {
-                    $( $field_name: tlv_struct!(@unwrap_field $kind, $field_name), )*
+                    $( $field_name: tlv_struct!(@unwrap_field $kind, $field_name, $parse_ty), )*
                 })
             }
         }
@@ -260,12 +300,7 @@ macro_rules! tlv_struct {
             fn length(&self) -> usize {
                 let mut length = 0;
                 $(
-                    for value in tlv_struct!(@as_slice $kind, &self.$field_name) {
-                        let value_len = <$parse_ty as $crate::ValueEncoder>::length(value);
-                        let length_len = <$len_ty as $crate::Length>::length(value_len) as usize;
-                        let tag_length = $crate::Tag::length(&$tag_ty($tag));
-                        length += tag_length + length_len + value_len;
-                    }
+                    tlv_struct!(@add_len $kind, $tag_ty, $len_ty, $tag, &self.$field_name, $parse_ty, length);
                 )*
                 length
             }
@@ -273,20 +308,157 @@ macro_rules! tlv_struct {
             fn encode(&self, buf: &mut [u8]) -> Result<(), $crate::EncodeError> {
                 let mut encoder = $crate::Encoder::new(buf);
                 $(
-                    for value in tlv_struct!(@as_slice $kind, &self.$field_name) {
-                        encoder.write_tlv::<$tag_ty, $len_ty, $parse_ty>(&$tag_ty($tag), value)?;
-                    }
+                    tlv_struct!(@write_field $kind, $tag_ty, $len_ty, $tag, &self.$field_name, $parse_ty, encoder);
                 )*
                 Ok(())
             }
         }
+
+        tlv_struct!(@impl_header_list
+            has_hl: [ $has_hl ],
+            tag_type: [ $tag_ty ],
+            length: [ $len_ty ],
+            impl_lt: [ $impl_lt ],
+            struct_lt: [ $($struct_lt)? ],
+            name: [ $name ],
+            parsed: [ $( ( $kind, $tag, $field_name, $parse_ty ) )* ]
+        );
     };
 
-    (@init_field rep, $field_name:ident, $parse_ty:ty) => {
+    (@impl_header_list
+        has_hl: [ true ],
+        tag_type: [ $tag_ty:path ],
+        length: [ $len_ty:ty ],
+        impl_lt: [ $impl_lt:lifetime ],
+        struct_lt: [ $($struct_lt:lifetime)? ],
+        name: [ $name:ident ],
+        parsed: [ $( ( $kind:ident, $tag:tt, $field_name:ident, $parse_ty:ty ) )* ]
+    ) => {};
+
+    (@impl_header_list
+        has_hl: [ false ],
+        tag_type: [ $tag_ty:path ],
+        length: [ $len_ty:ty ],
+        impl_lt: [ $impl_lt:lifetime ],
+        struct_lt: [ $($struct_lt:lifetime)? ],
+        name: [ $name:ident ],
+        parsed: [ $( ( $kind:ident, $tag:tt, $field_name:ident, $parse_ty:ty ) )* ]
+    ) => {
+        impl <$impl_lt> $crate::HeaderListDecoder<$impl_lt> for $name $(<$struct_lt>)? {
+            fn decode_header_list(
+                template: &$impl_lt [u8],
+                values: &$impl_lt [u8],
+            ) -> Result<Self, $crate::DecodeError> {
+                $( tlv_struct!(@init_field $kind, $impl_lt, $field_name, $parse_ty); )*
+
+                for entry in $crate::decode_header_list::<$tag_ty, $len_ty>(template, values) {
+                    let (tag, value_bytes) = entry?;
+                    tlv_struct!(@match_tag tag, $tag_ty, value_bytes, $( ( $kind, $tag, $field_name, $parse_ty ) )* );
+                }
+
+                Ok(Self {
+                    $( $field_name: tlv_struct!(@unwrap_field $kind, $field_name, $parse_ty), )*
+                })
+            }
+        }
+
+        impl <$impl_lt> $crate::HeaderListEncoder for $name $(<$struct_lt>)? {
+            fn header_list_lengths(&self) -> (usize, usize) {
+                let mut tpl_len = 0;
+                let mut val_len = 0;
+                $(
+                    for value in tlv_struct!(@as_slice $kind, &self.$field_name) {
+                        let v_len = <$parse_ty as $crate::ValueEncoder>::length(value);
+                        let l_len = <$len_ty as $crate::Length>::length(v_len) as usize;
+                        let t_len = $crate::Tag::length(&$tag_ty($tag));
+                        tpl_len += t_len + l_len;
+                        val_len += v_len;
+                    }
+                )*
+                (tpl_len, val_len)
+            }
+
+            fn encode_header_list(&self) -> Result<(Vec<u8>, Vec<u8>), $crate::EncodeError> {
+                let (tpl_len, val_len) = self.header_list_lengths();
+                let mut template = vec![0u8; tpl_len];
+                let mut values = vec![0u8; val_len];
+                let mut tpl_enc = $crate::Encoder::new(&mut template);
+                let mut val_enc = $crate::Encoder::new(&mut values);
+                $(
+                    for value in tlv_struct!(@as_slice $kind, &self.$field_name) {
+                        let v_len = <$parse_ty as $crate::ValueEncoder>::length(value);
+                        tpl_enc.write_tag_length::<$tag_ty, $len_ty>(&$tag_ty($tag), v_len)?;
+                        val_enc.write_value::<$parse_ty>(value)?;
+                    }
+                )*
+                Ok((template, values))
+            }
+        }
+    };
+
+    (@init_field header_list, $impl_lt:lifetime, $field_name:ident, $parse_ty:ty) => {
+        let mut $field_name: (Option<&$impl_lt [u8]>, Option<&$impl_lt [u8]>) = (None, None);
+    };
+    (@init_field rep, $impl_lt:lifetime, $field_name:ident, $parse_ty:ty) => {
         let mut $field_name: Vec<$parse_ty> = Vec::new();
     };
-    (@init_field $kind:ident, $field_name:ident, $parse_ty:ty) => {
+    (@init_field $kind:ident, $impl_lt:lifetime, $field_name:ident, $parse_ty:ty) => {
         let mut $field_name: Option<$parse_ty> = None;
+    };
+
+    (@match_tag $tag_var:ident, $tag_ty:path, $value_bytes:ident, ) => {
+        return Err($crate::DecodeError::InvalidTag);
+    };
+    (@match_tag $tag_var:ident, $tag_ty:path, $value_bytes:ident, (header_list, ($tpl_tag:expr, $val_tag:expr), $field_name:ident, $parse_ty:ty) $($rest:tt)* ) => {
+        if $tag_var == $tag_ty($tpl_tag) {
+            if $field_name.0.is_some() {
+                return Err($crate::DecodeError::DuplicateTag);
+            }
+            $field_name.0 = Some($value_bytes);
+        } else if $tag_var == $tag_ty($val_tag) {
+            if $field_name.1.is_some() {
+                return Err($crate::DecodeError::DuplicateTag);
+            }
+            $field_name.1 = Some($value_bytes);
+        } else {
+            tlv_struct!(@match_tag $tag_var, $tag_ty, $value_bytes, $($rest)*);
+        }
+    };
+    (@match_tag $tag_var:ident, $tag_ty:path, $value_bytes:ident, ($kind:ident, $tag:expr, $field_name:ident, $parse_ty:ty) $($rest:tt)* ) => {
+        if $tag_var == $tag_ty($tag) {
+            tlv_struct!(@decode_field $kind, $field_name, $parse_ty, $value_bytes);
+        } else {
+            tlv_struct!(@match_tag $tag_var, $tag_ty, $value_bytes, $($rest)*);
+        }
+    };
+
+    (@add_len header_list, $tag_ty:path, $len_ty:ty, ($tpl_tag:expr, $val_tag:expr), $field:expr, $parse_ty:ty, $length:ident) => {
+        let (tpl_len, val_len) = <$parse_ty as $crate::HeaderListEncoder>::header_list_lengths($field);
+        $length += $crate::Tag::length(&$tag_ty($tpl_tag))
+            + <$len_ty as $crate::Length>::length(tpl_len) as usize
+            + tpl_len
+            + $crate::Tag::length(&$tag_ty($val_tag))
+            + <$len_ty as $crate::Length>::length(val_len) as usize
+            + val_len;
+    };
+    (@add_len $kind:ident, $tag_ty:path, $len_ty:ty, $tag:expr, $field:expr, $parse_ty:ty, $length:ident) => {
+        for value in tlv_struct!(@as_slice $kind, $field) {
+            let value_len = <$parse_ty as $crate::ValueEncoder>::length(value);
+            let length_len = <$len_ty as $crate::Length>::length(value_len) as usize;
+            let tag_length = $crate::Tag::length(&$tag_ty($tag));
+            $length += tag_length + length_len + value_len;
+        }
+    };
+
+    (@write_field header_list, $tag_ty:path, $len_ty:ty, ($tpl_tag:expr, $val_tag:expr), $field:expr, $parse_ty:ty, $encoder:ident) => {
+        let (tpl, vals) = <$parse_ty as $crate::HeaderListEncoder>::encode_header_list($field)?;
+        $encoder.write_tlv::<$tag_ty, $len_ty, Vec<u8>>(&$tag_ty($tpl_tag), &tpl)?;
+        $encoder.write_tlv::<$tag_ty, $len_ty, Vec<u8>>(&$tag_ty($val_tag), &vals)?;
+    };
+    (@write_field $kind:ident, $tag_ty:path, $len_ty:ty, $tag:expr, $field:expr, $parse_ty:ty, $encoder:ident) => {
+        for value in tlv_struct!(@as_slice $kind, $field) {
+            $encoder.write_tlv::<$tag_ty, $len_ty, $parse_ty>(&$tag_ty($tag), value)?;
+        }
     };
 
     (@decode_field rep, $field_name:ident, $parse_ty:ty, $value_bytes:ident) => {
@@ -299,13 +471,21 @@ macro_rules! tlv_struct {
         $field_name = Some(<$parse_ty as $crate::ValueDecoder>::decode($value_bytes)?);
     };
 
-    (@unwrap_field req, $field_name:ident) => {
+    (@unwrap_field header_list, $field_name:ident, $parse_ty:ty) => {
+        {
+            let (tpl, vals) = $field_name;
+            let tpl = tpl.ok_or($crate::DecodeError::MissingRequiredField)?;
+            let vals = vals.ok_or($crate::DecodeError::MissingRequiredField)?;
+            <$parse_ty as $crate::HeaderListDecoder>::decode_header_list(tpl, vals)?
+        }
+    };
+    (@unwrap_field req, $field_name:ident, $parse_ty:ty) => {
         $field_name.ok_or($crate::DecodeError::MissingRequiredField)?
     };
-    (@unwrap_field opt, $field_name:ident) => {
+    (@unwrap_field opt, $field_name:ident, $parse_ty:ty) => {
         $field_name
     };
-    (@unwrap_field rep, $field_name:ident) => {
+    (@unwrap_field rep, $field_name:ident, $parse_ty:ty) => {
         $field_name
     };
 
@@ -676,6 +856,75 @@ mod tests {
                 sig: Vec::new(),
                 dec: Vec::new(),
             })
+        );
+    }
+
+    #[test]
+    fn test_tlv_struct_header_list() {
+        tlv_struct! {
+            #[derive(Debug, PartialEq)]
+            #[tag_type(BerTag)]
+            #[length(BerLength)]
+            struct KeyHeaderList<'a> {
+                #[tag(0x91)]
+                e: &'a [u8],
+                #[tag(0x92)]
+                p: &'a [u8],
+                #[tag(0x97)]
+                n: Option<&'a [u8]>,
+            }
+        }
+
+        tlv_struct! {
+            #[derive(Debug, PartialEq)]
+            #[tag_type(BerTag)]
+            #[length(BerLength)]
+            struct OuterHeaderList<'a> {
+                #[tag(0xB6)]
+                crt: &'a [u8],
+                #[header_list(0x7F48, 0x5F48)]
+                key: KeyHeaderList<'a>,
+            }
+        }
+
+        let outer = OuterHeaderList {
+            crt: &[],
+            key: KeyHeaderList {
+                e: &[0x01, 0x00, 0x01],
+                p: &[0xAA; 128],
+                n: None,
+            },
+        };
+        let encoded = outer.encode_top_level().unwrap();
+        assert_eq!(OuterHeaderList::decode(&encoded), Ok(outer));
+
+        // Direct HeaderListDecoder errors
+        let (tpl, vals) = KeyHeaderList {
+            e: &[0x01, 0x00, 0x01],
+            p: &[0xAA; 128],
+            n: None,
+        }
+        .encode_header_list()
+        .unwrap();
+        assert_eq!(tpl, [0x91, 0x03, 0x92, 0x81, 0x80]);
+
+        let mut extra = vals.clone();
+        extra.push(0x00);
+        assert_eq!(
+            KeyHeaderList::decode_header_list(&tpl, &extra),
+            Err(DecodeError::InvalidLength)
+        );
+        assert_eq!(
+            KeyHeaderList::decode_header_list(&tpl, &vals[..10]),
+            Err(DecodeError::BufferUnderrun)
+        );
+        assert_eq!(
+            KeyHeaderList::decode_header_list(&[0x99, 0x01], &[0x00]),
+            Err(DecodeError::InvalidTag)
+        );
+        assert_eq!(
+            KeyHeaderList::decode_header_list(&[0x91, 0x01], &[0x03]),
+            Err(DecodeError::MissingRequiredField)
         );
     }
 }

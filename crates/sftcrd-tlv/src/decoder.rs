@@ -58,6 +58,89 @@ impl<'buf> Decoder<'buf> {
             _phantom: PhantomData,
         }
     }
+
+    /// Iterates over `(tag, length)` pairs without reading value bytes, as used
+    /// in ISO/IEC 7816-4 header-list templates (e.g. `OpenPGP` tag `7F48`).
+    #[must_use]
+    pub fn into_iter_tag_lengths<T: Tag, L: Length>(self) -> TagLengthIter<'buf, T, L> {
+        TagLengthIter {
+            decoder: self,
+            _phantom: PhantomData,
+        }
+    }
+}
+
+/// Iterator over `(tag, length)` pairs decoded from a tag-length template.
+pub struct TagLengthIter<'buf, T: Tag, L: Length> {
+    decoder: Decoder<'buf>,
+    _phantom: PhantomData<(T, L)>,
+}
+
+impl<T: Tag, L: Length> Iterator for TagLengthIter<'_, T, L> {
+    type Item = Result<(T, usize), DecodeError>;
+
+    fn next(&mut self) -> Option<Self::Item> {
+        if self.decoder.is_empty() {
+            None
+        } else {
+            Some(self.decoder.read_tag_length::<T, L>())
+        }
+    }
+}
+
+/// Pairs an ISO/IEC 7816-4 tag-length `template` (e.g. `7F48`) with a flat
+/// `values` buffer (e.g. `5F48`), yielding `(tag, value_slice)` entries.
+#[must_use]
+pub fn decode_header_list<'tpl, 'val, T: Tag, L: Length>(
+    template: &'tpl [u8],
+    values: &'val [u8],
+) -> HeaderListIter<'tpl, 'val, T, L> {
+    HeaderListIter {
+        tags: Decoder::new(template).into_iter_tag_lengths(),
+        values,
+        done: false,
+    }
+}
+
+/// Iterator over `(tag, value_slice)` entries decoded from a paired
+/// `(template, values)` header list.
+pub struct HeaderListIter<'tpl, 'val, T: Tag, L: Length> {
+    tags: TagLengthIter<'tpl, T, L>,
+    values: &'val [u8],
+    done: bool,
+}
+
+impl<'val, T: Tag, L: Length> Iterator for HeaderListIter<'_, 'val, T, L> {
+    type Item = Result<(T, &'val [u8]), DecodeError>;
+
+    fn next(&mut self) -> Option<Self::Item> {
+        if self.done {
+            return None;
+        }
+        match self.tags.next() {
+            Some(Ok((tag, len))) => {
+                if self.values.len() < len {
+                    self.done = true;
+                    return Some(Err(DecodeError::BufferUnderrun));
+                }
+                let (slice, rest) = self.values.split_at(len);
+                self.values = rest;
+                Some(Ok((tag, slice)))
+            }
+            Some(Err(err)) => {
+                self.done = true;
+                Some(Err(err))
+            }
+            None => {
+                self.done = true;
+                if self.values.is_empty() {
+                    None
+                } else {
+                    Some(Err(DecodeError::InvalidLength))
+                }
+            }
+        }
+    }
 }
 
 pub struct TlvIter<'buf, T: Tag, L: Length> {

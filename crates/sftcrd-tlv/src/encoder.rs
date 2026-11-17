@@ -30,7 +30,12 @@ impl<'a> Encoder<'a> {
         Ok(&mut self.buf[start..self.pos])
     }
 
-    fn write_tag_length<T: Tag, L: Length>(
+    /// Writes a tag and length (without value bytes) to the buffer.
+    ///
+    /// # Errors
+    ///
+    /// Returns an [`EncodeError`] if the buffer is too small or the tag or length cannot be encoded.
+    pub fn write_tag_length<T: Tag, L: Length>(
         &mut self,
         tag: &T,
         value_length: usize,
@@ -41,6 +46,16 @@ impl<'a> Encoder<'a> {
             self.advance_by(L::length(value_length) as usize)?,
         )?;
         Ok(())
+    }
+
+    /// Writes a value (without tag or length) to the buffer.
+    ///
+    /// # Errors
+    ///
+    /// Returns an [`EncodeError`] if the buffer is too small or the value fails to encode.
+    pub fn write_value<V: ValueEncoder>(&mut self, value: &V) -> Result<(), EncodeError> {
+        let value_length = value.length();
+        value.encode(self.advance_by(value_length)?)
     }
 
     /// Writes a tag-length-value to the buffer.

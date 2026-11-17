@@ -7,11 +7,11 @@ use rsa::{
     traits::{PrivateKeyParts, PublicKeyParts},
 };
 use sftcrd_apdu::CommandView;
-use sftcrd_tlv::{BerLength, BerTag, Length, Tag, ValueDecoder, ValueEncoder, tlv_struct};
+use sftcrd_tlv::{BerLength, BerTag, ValueDecoder, ValueEncoder, tlv_struct};
 
 use crate::{
     PgpApplet, Response,
-    pgp::{GenerateMode, KeyFieldTag, KeySlotId, RsaBits},
+    pgp::{GenerateMode, KeySlotId, RsaBits},
     pin::PwRef,
 };
 
@@ -87,6 +87,29 @@ tlv_struct! {
 tlv_struct! {
     #[tag_type(BerTag)]
     #[length(BerLength)]
+    struct KeyImportFields<'a> {
+        #[tag(0x91)]
+        exp: Option<&'a [u8]>,
+        #[tag(0x92)]
+        prime_p_or_scalar: &'a [u8],
+        #[tag(0x93)]
+        prime_q: Option<&'a [u8]>,
+        #[tag(0x94)]
+        crt_u: Option<&'a [u8]>,
+        #[tag(0x95)]
+        exp_p: Option<&'a [u8]>,
+        #[tag(0x96)]
+        exp_q: Option<&'a [u8]>,
+        #[tag(0x97)]
+        modulus: Option<&'a [u8]>,
+        #[tag(0x99)]
+        ecc_public: Option<&'a [u8]>,
+    }
+}
+
+tlv_struct! {
+    #[tag_type(BerTag)]
+    #[length(BerLength)]
     struct ExtendedHeaderList<'a> {
         #[tag(0xB6)]
         sig: Option<&'a [u8]>,
@@ -94,10 +117,8 @@ tlv_struct! {
         dec: Option<&'a [u8]>,
         #[tag(0xA4)]
         aut: Option<&'a [u8]>,
-        #[tag(0x7F48)]
-        template: &'a [u8],
-        #[tag(0x5F48)]
-        key_data: &'a [u8],
+        #[header_list(0x7F48, 0x5F48)]
+        fields: KeyImportFields<'a>,
     }
 }
 
@@ -259,12 +280,11 @@ impl PgpApplet {
         let ehl = body.header_list;
         let slot_id = resolve_crt(ehl.sig, ehl.dec, ehl.aut)?;
 
-        let fields = split_key_fields(ehl.template, ehl.key_data)?;
         let alg = self.data.slot(slot_id).slot_alg()?;
         let key = match alg {
-            SlotAlg::Rsa { n_bits, .. } => import_rsa(n_bits, &fields)?,
+            SlotAlg::Rsa { n_bits, .. } => import_rsa(n_bits, &ehl.fields)?,
             SlotAlg::P256 | SlotAlg::P384 | SlotAlg::P521 | SlotAlg::Ed25519 | SlotAlg::X25519 => {
-                import_ecc(alg, &fields)?
+                import_ecc(alg, &ehl.fields)?
             }
         };
 
@@ -274,10 +294,6 @@ impl PgpApplet {
         }
         Ok(())
     }
-}
-
-fn tag_to_u8(tag: BerTag) -> Option<u8> {
-    u8::try_from(tag.0).ok()
 }
 
 fn resolve_crt(
@@ -300,80 +316,24 @@ fn parse_crt(data: &[u8]) -> Result<KeySlotId, Status> {
     resolve_crt(crt.sig, crt.dec, crt.aut)
 }
 
-fn split_key_fields<'a>(
-    template: &[u8],
-    key_data: &'a [u8],
-) -> Result<Vec<(KeyFieldTag, &'a [u8])>, Status> {
-    let mut specs = Vec::new();
-    let mut rest = template;
-    let mut total_len: usize = 0;
-    while !rest.is_empty() {
-        let Ok((tag, tag_len)) = BerTag::decode(rest) else {
-            return Err(Status::IncorrectDataParameter);
-        };
-        rest = &rest[tag_len..];
-        let Ok((len, len_len)) = BerLength::decode(rest) else {
-            return Err(Status::IncorrectDataParameter);
-        };
-        rest = &rest[len_len..];
-        let field_tag = tag_to_u8(tag)
-            .and_then(KeyFieldTag::from_u8)
-            .ok_or(Status::IncorrectDataParameter)?;
-        total_len = total_len
-            .checked_add(len)
-            .ok_or(Status::IncorrectDataParameter)?;
-        specs.push((field_tag, len));
-    }
-
-    if total_len != key_data.len() {
+fn import_rsa(bits: RsaBits, fields: &KeyImportFields<'_>) -> Result<SlotKey, Status> {
+    if fields.ecc_public.is_some() {
         return Err(Status::IncorrectDataParameter);
     }
-
-    let mut fields = Vec::with_capacity(specs.len());
-    let mut offset = 0;
-    for (tag, len) in specs {
-        fields.push((tag, &key_data[offset..offset + len]));
-        offset += len;
-    }
-    Ok(fields)
-}
-
-fn import_rsa(bits: RsaBits, fields: &[(KeyFieldTag, &[u8])]) -> Result<SlotKey, Status> {
-    let mut exp = None;
-    let mut prime_p = None;
-    let mut prime_q = None;
-    let mut crt_u = None;
-    let mut exp_p = None;
-    let mut exp_q = None;
-    let mut modulus = None;
-
-    for &(tag, val) in fields {
-        let slot = match tag {
-            KeyFieldTag::RsaExponent => &mut exp,
-            KeyFieldTag::PrimePOrEccScalar => &mut prime_p,
-            KeyFieldTag::PrimeQ => &mut prime_q,
-            KeyFieldTag::CrtPq => &mut crt_u,
-            KeyFieldTag::CrtDp => &mut exp_p,
-            KeyFieldTag::CrtDq => &mut exp_q,
-            KeyFieldTag::Modulus => &mut modulus,
-            KeyFieldTag::EccPublic => return Err(Status::IncorrectDataParameter),
-        };
-        if slot.is_some() || val.is_empty() {
-            return Err(Status::IncorrectDataParameter);
-        }
-        *slot = Some(val);
-    }
-
-    let (Some(e_bytes), Some(p_bytes), Some(q_bytes)) = (exp, prime_p, prime_q) else {
+    let (Some(e_bytes), Some(q_bytes)) = (fields.exp, fields.prime_q) else {
         return Err(Status::IncorrectDataParameter);
     };
+    let p_bytes = fields.prime_p_or_scalar;
+    if e_bytes.is_empty() || p_bytes.is_empty() || q_bytes.is_empty() {
+        return Err(Status::IncorrectDataParameter);
+    }
 
     let half = bits.modulus_bytes() / 2;
     if p_bytes.len() > half || q_bytes.len() > half {
         return Err(Status::IncorrectDataParameter);
     }
-    if let Some(u_bytes) = crt_u
-        && u_bytes.len() > half
+    if let Some(u_bytes) = fields.crt_u
+        && (u_bytes.is_empty() || u_bytes.len() > half)
     {
         return Err(Status::IncorrectDataParameter);
     }
@@ -390,18 +350,19 @@ fn import_rsa(bits: RsaBits, fields: &[(KeyFieldTag, &[u8])]) -> Result<SlotKey,
     key.precompute()
         .map_err(|_| Status::IncorrectDataParameter)?;
 
-    if let Some(n_bytes) = modulus
-        && key.n().clone().get() != BoxedUint::from_be_slice_vartime(n_bytes)
+    if let Some(n_bytes) = fields.modulus
+        && (n_bytes.is_empty()
+            || key.n().clone().get() != BoxedUint::from_be_slice_vartime(n_bytes))
     {
         return Err(Status::IncorrectDataParameter);
     }
-    if let Some(dp_bytes) = exp_p
-        && key.dp() != Some(&BoxedUint::from_be_slice_vartime(dp_bytes))
+    if let Some(dp_bytes) = fields.exp_p
+        && (dp_bytes.is_empty() || key.dp() != Some(&BoxedUint::from_be_slice_vartime(dp_bytes)))
     {
         return Err(Status::IncorrectDataParameter);
     }
-    if let Some(dq_bytes) = exp_q
-        && key.dq() != Some(&BoxedUint::from_be_slice_vartime(dq_bytes))
+    if let Some(dq_bytes) = fields.exp_q
+        && (dq_bytes.is_empty() || key.dq() != Some(&BoxedUint::from_be_slice_vartime(dq_bytes)))
     {
         return Err(Status::IncorrectDataParameter);
     }
@@ -409,31 +370,27 @@ fn import_rsa(bits: RsaBits, fields: &[(KeyFieldTag, &[u8])]) -> Result<SlotKey,
     Ok(SlotKey::Rsa(bits, key))
 }
 
-fn import_ecc(alg: SlotAlg, fields: &[(KeyFieldTag, &[u8])]) -> Result<SlotKey, Status> {
-    let mut scalar = None;
-    let mut public = None;
-
-    for &(tag, val) in fields {
-        let slot = match tag {
-            KeyFieldTag::PrimePOrEccScalar => &mut scalar,
-            KeyFieldTag::EccPublic => &mut public,
-            _ => return Err(Status::IncorrectDataParameter),
-        };
-        if slot.is_some() || val.is_empty() {
-            return Err(Status::IncorrectDataParameter);
-        }
-        *slot = Some(val);
+fn import_ecc(alg: SlotAlg, fields: &KeyImportFields<'_>) -> Result<SlotKey, Status> {
+    if fields.exp.is_some()
+        || fields.prime_q.is_some()
+        || fields.crt_u.is_some()
+        || fields.exp_p.is_some()
+        || fields.exp_q.is_some()
+        || fields.modulus.is_some()
+    {
+        return Err(Status::IncorrectDataParameter);
     }
 
-    let Some(scalar_bytes) = scalar else {
+    let scalar = fields.prime_p_or_scalar;
+    if scalar.is_empty() || fields.ecc_public.is_some_and(<[u8]>::is_empty) {
         return Err(Status::IncorrectDataParameter);
-    };
+    }
 
     match alg {
         SlotAlg::P256 => {
-            let secret = elliptic_curve::SecretKey::<p256::NistP256>::from_slice(scalar_bytes)
+            let secret = elliptic_curve::SecretKey::<p256::NistP256>::from_slice(scalar)
                 .map_err(|_| Status::IncorrectDataParameter)?;
-            if let Some(pub_bytes) = public
+            if let Some(pub_bytes) = fields.ecc_public
                 && pub_bytes != secret.public_key().to_sec1_bytes().as_ref()
             {
                 return Err(Status::IncorrectDataParameter);
@@ -441,9 +398,9 @@ fn import_ecc(alg: SlotAlg, fields: &[(KeyFieldTag, &[u8])]) -> Result<SlotKey, 
             Ok(SlotKey::P256(secret))
         }
         SlotAlg::P384 => {
-            let secret = elliptic_curve::SecretKey::<p384::NistP384>::from_slice(scalar_bytes)
+            let secret = elliptic_curve::SecretKey::<p384::NistP384>::from_slice(scalar)
                 .map_err(|_| Status::IncorrectDataParameter)?;
-            if let Some(pub_bytes) = public
+            if let Some(pub_bytes) = fields.ecc_public
                 && pub_bytes != secret.public_key().to_sec1_bytes().as_ref()
             {
                 return Err(Status::IncorrectDataParameter);
@@ -451,9 +408,9 @@ fn import_ecc(alg: SlotAlg, fields: &[(KeyFieldTag, &[u8])]) -> Result<SlotKey, 
             Ok(SlotKey::P384(secret))
         }
         SlotAlg::P521 => {
-            let secret = elliptic_curve::SecretKey::<p521::NistP521>::from_slice(scalar_bytes)
+            let secret = elliptic_curve::SecretKey::<p521::NistP521>::from_slice(scalar)
                 .map_err(|_| Status::IncorrectDataParameter)?;
-            if let Some(pub_bytes) = public
+            if let Some(pub_bytes) = fields.ecc_public
                 && pub_bytes != secret.public_key().to_sec1_bytes().as_ref()
             {
                 return Err(Status::IncorrectDataParameter);
@@ -461,11 +418,11 @@ fn import_ecc(alg: SlotAlg, fields: &[(KeyFieldTag, &[u8])]) -> Result<SlotKey, 
             Ok(SlotKey::P521(secret))
         }
         SlotAlg::Ed25519 => {
-            let seed: [u8; 32] = scalar_bytes
+            let seed: [u8; 32] = scalar
                 .try_into()
                 .map_err(|_| Status::IncorrectDataParameter)?;
             let signing = ed25519_dalek::SigningKey::from_bytes(&seed);
-            if let Some(pub_bytes) = public
+            if let Some(pub_bytes) = fields.ecc_public
                 && pub_bytes != signing.verifying_key().as_bytes()
             {
                 return Err(Status::IncorrectDataParameter);
@@ -473,11 +430,11 @@ fn import_ecc(alg: SlotAlg, fields: &[(KeyFieldTag, &[u8])]) -> Result<SlotKey, 
             Ok(SlotKey::Ed25519(signing))
         }
         SlotAlg::X25519 => {
-            let raw: [u8; 32] = scalar_bytes
+            let raw: [u8; 32] = scalar
                 .try_into()
                 .map_err(|_| Status::IncorrectDataParameter)?;
             let secret = x25519_dalek::StaticSecret::from(raw);
-            if let Some(pub_bytes) = public
+            if let Some(pub_bytes) = fields.ecc_public
                 && pub_bytes != x25519_dalek::PublicKey::from(&secret).to_bytes().as_slice()
             {
                 return Err(Status::IncorrectDataParameter);
