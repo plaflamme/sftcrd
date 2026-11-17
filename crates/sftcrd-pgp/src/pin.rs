@@ -51,7 +51,7 @@ pub(crate) const MAX_PIN_LEN: usize = 127;
 /// Verification context within a [`PinSlot`].
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 #[repr(u8)]
-pub(crate) enum PinContext {
+enum PinContext {
     /// Primary context: `PW1_SIGN` (`0x81`) or `PW3_ADMIN` (`0x83`).
     Primary = 1 << 0,
     /// Secondary context: `PW1_OTHER` (`0x82`).
@@ -112,11 +112,11 @@ impl PinSlot {
         (self.min_len..=MAX_PIN_LEN).contains(&candidate.len())
     }
 
-    pub(crate) fn is_verified(&self, ctx: PinContext) -> bool {
+    fn is_verified(&self, ctx: PinContext) -> bool {
         self.verified_mask & ctx.bit() != 0
     }
 
-    pub(crate) fn clear_verified(&mut self, ctx: PinContext) {
+    fn clear_verified(&mut self, ctx: PinContext) {
         self.verified_mask &= !ctx.bit();
     }
 
@@ -144,7 +144,7 @@ impl PinSlot {
 
     /// Verify `presented` for `ctx`, updating both retry counter and the
     /// verification bit for `ctx`.
-    pub(crate) fn verify(&mut self, ctx: PinContext, presented: &[u8]) -> Result<(), u8> {
+    fn verify(&mut self, ctx: PinContext, presented: &[u8]) -> Result<(), u8> {
         match self.check(presented) {
             Ok(()) => {
                 self.verified_mask |= ctx.bit();
@@ -195,13 +195,39 @@ impl Default for PinState {
 }
 
 impl PinState {
-    /// Resolve a [`PwRef`] to its [`PinSlot`] and [`PinContext`].
-    pub(crate) fn slot_and_context(&mut self, pw_ref: PwRef) -> (&mut PinSlot, PinContext) {
+    fn slot_and_context(&self, pw_ref: PwRef) -> (&PinSlot, PinContext) {
+        match pw_ref {
+            PwRef::Pw1Sign => (&self.pw1, PinContext::Primary),
+            PwRef::Pw1Other => (&self.pw1, PinContext::Secondary),
+            PwRef::Pw3Admin => (&self.pw3, PinContext::Primary),
+        }
+    }
+
+    fn slot_and_context_mut(&mut self, pw_ref: PwRef) -> (&mut PinSlot, PinContext) {
         match pw_ref {
             PwRef::Pw1Sign => (&mut self.pw1, PinContext::Primary),
             PwRef::Pw1Other => (&mut self.pw1, PinContext::Secondary),
             PwRef::Pw3Admin => (&mut self.pw3, PinContext::Primary),
         }
+    }
+
+    pub(crate) fn slot(&self, pw_ref: PwRef) -> &PinSlot {
+        self.slot_and_context(pw_ref).0
+    }
+
+    pub(crate) fn is_verified(&self, pw_ref: PwRef) -> bool {
+        let (slot, ctx) = self.slot_and_context(pw_ref);
+        slot.is_verified(ctx)
+    }
+
+    pub(crate) fn clear_verified(&mut self, pw_ref: PwRef) {
+        let (slot, ctx) = self.slot_and_context_mut(pw_ref);
+        slot.clear_verified(ctx);
+    }
+
+    pub(crate) fn verify(&mut self, pw_ref: PwRef, presented: &[u8]) -> Result<(), u8> {
+        let (slot, ctx) = self.slot_and_context_mut(pw_ref);
+        slot.verify(ctx, presented)
     }
 
     /// Configure or replace the optional Resetting Code (RC).

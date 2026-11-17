@@ -5,7 +5,7 @@ use iso7816::Status;
 use crate::{
     PgpApplet, Response,
     apdu::CommandView,
-    pin::{MAX_PIN_LEN, PW1_MIN_LEN, PinContext, PwRef, RC_MIN_LEN},
+    pin::{MAX_PIN_LEN, PW1_MIN_LEN, PwRef, RC_MIN_LEN},
 };
 
 impl PgpApplet {
@@ -26,8 +26,7 @@ impl PgpApplet {
         let Some(pw_ref) = PwRef::from_u8(p2) else {
             return Status::KeyReferenceNotFound.into();
         };
-        let (slot, ctx) = self.pins.slot_and_context(pw_ref);
-        slot.clear_verified(ctx);
+        self.pins.clear_verified(pw_ref);
         Status::Success.into()
     }
 
@@ -35,10 +34,10 @@ impl PgpApplet {
         let Some(pw_ref) = PwRef::from_u8(p2) else {
             return Status::KeyReferenceNotFound.into();
         };
-        let (slot, ctx) = self.pins.slot_and_context(pw_ref);
+        let slot = self.pins.slot(pw_ref);
 
         if data.is_empty() {
-            return if slot.is_verified(ctx) {
+            return if self.pins.is_verified(pw_ref) {
                 Status::Success.into()
             } else if slot.tries() == 0 {
                 Status::OperationBlocked.into()
@@ -55,7 +54,7 @@ impl PgpApplet {
             return Status::WrongLength.into();
         }
 
-        match slot.verify(ctx, data) {
+        match self.pins.verify(pw_ref, data) {
             Ok(()) => Status::Success.into(),
             Err(tries) => Status::RemainingRetries(tries).into(),
         }
@@ -149,7 +148,7 @@ impl PgpApplet {
     }
 
     fn reset_pw1_by_admin(&mut self, new_pw1: &[u8]) -> Response {
-        if !self.pins.pw3.is_verified(PinContext::Primary) {
+        if !self.pins.is_verified(PwRef::Pw3Admin) {
             return Status::SecurityStatusNotSatisfied.into();
         }
         if !self.pins.pw1.is_valid_new_pin(new_pw1) {
