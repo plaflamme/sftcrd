@@ -1,7 +1,6 @@
 //! `OpenPGP` Card v3.4 PIN state: PW1, Resetting Code (RC), and PW3.
 
 use iso7816::Status;
-use zeroize::Zeroizing;
 
 /// `OpenPGP` Card password reference (`P2` in `VERIFY`, `CHANGE REFERENCE DATA`,
 /// and `RESET RETRY COUNTER`).
@@ -65,21 +64,9 @@ impl PinContext {
     }
 }
 
-/// Constant-time byte-slice equality.
-fn ct_eq(a: &[u8], b: &[u8]) -> bool {
-    if a.len() != b.len() {
-        return false;
-    }
-    let mut diff = 0u8;
-    for (x, y) in a.iter().zip(b.iter()) {
-        diff |= x ^ y;
-    }
-    diff == 0
-}
-
 /// Stored PIN or Resetting Code secret, retry counter, and session verification flags.
 pub(crate) struct PinSlot {
-    value: Zeroizing<Vec<u8>>,
+    value: Vec<u8>,
     min_len: usize,
     max_tries: u8,
     tries: u8,
@@ -89,7 +76,7 @@ pub(crate) struct PinSlot {
 impl PinSlot {
     pub(crate) fn new(default: &[u8], min_len: usize, max_tries: u8) -> Self {
         Self {
-            value: Zeroizing::new(default.to_vec()),
+            value: default.to_vec(),
             min_len,
             max_tries,
             tries: max_tries,
@@ -121,8 +108,7 @@ impl PinSlot {
         self.verified_mask = 0;
     }
 
-    /// Compare `presented` against the stored PIN in constant time without
-    /// modifying verification flags.
+    /// Compare `presented` against the stored PIN without modifying verification flags.
     ///
     /// On match, restores `tries` to `max_tries`. On mismatch, decrements
     /// `tries` and returns the remaining count.
@@ -130,7 +116,7 @@ impl PinSlot {
         if self.tries == 0 {
             return Err(0);
         }
-        if ct_eq(&self.value, presented) {
+        if self.value == presented {
             self.tries = self.max_tries;
             Ok(())
         } else {
@@ -186,7 +172,7 @@ impl PinSlot {
     /// Replace the stored value, restore `tries` to `max_tries`, and clear
     /// all verification flags.
     pub(crate) fn set_value(&mut self, new_value: &[u8]) {
-        *self.value = new_value.to_vec();
+        self.value = new_value.to_vec();
         self.tries = self.max_tries;
         self.verified_mask = 0;
     }
@@ -281,5 +267,146 @@ impl PinState {
     pub(crate) fn session_end(&mut self) {
         self.pw1.session_end();
         self.pw3.session_end();
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn pw_ref_from_u8_parses_known_values() {
+        assert_eq!(PwRef::from_u8(0x81), Some(PwRef::Pw1Sign));
+        assert_eq!(PwRef::from_u8(0x82), Some(PwRef::Pw1Other));
+        assert_eq!(PwRef::from_u8(0x83), Some(PwRef::Pw3Admin));
+        assert_eq!(PwRef::from_u8(0x80), None);
+        assert_eq!(PwRef::from_u8(0x84), None);
+    }
+
+    #[test]
+    fn pin_slot_contexts_are_independent() {
+        let mut slot = PinSlot::new(b"123456", 6, 3);
+
+        assert!(!slot.is_verified(PinContext::Primary));
+        assert!(!slot.is_verified(PinContext::Secondary));
+
+        assert_eq!(slot.verify(PinContext::Primary, b"123456"), Ok(()));
+        assert!(slot.is_verified(PinContext::Primary));
+        assert!(!slot.is_verified(PinContext::Secondary));
+
+        assert_eq!(slot.verify(PinContext::Secondary, b"123456"), Ok(()));
+        assert!(slot.is_verified(PinContext::Primary));
+        assert!(slot.is_verified(PinContext::Secondary));
+
+        // Failing Secondary clears only Secondary
+        assert_eq!(slot.verify(PinContext::Secondary, b"wrong!"), Err(2));
+        assert!(slot.is_verified(PinContext::Primary));
+        assert!(!slot.is_verified(PinContext::Secondary));
+
+        // clear_verified clears only Primary
+        slot.clear_verified(PinContext::Primary);
+        assert!(!slot.is_verified(PinContext::Primary));
+
+        // session_end clears all contexts
+        assert_eq!(slot.verify(PinContext::Primary, b"123456"), Ok(()));
+        assert_eq!(slot.verify(PinContext::Secondary, b"123456"), Ok(()));
+        slot.session_end();
+        assert!(!slot.is_verified(PinContext::Primary));
+        assert!(!slot.is_verified(PinContext::Secondary));
+    }
+
+    #[test]
+    fn pin_slot_retries_block_and_set_value_resets() {
+        let mut slot = PinSlot::new(b"123456", 6, 3);
+
+        assert_eq!(slot.verify(PinContext::Primary, b"wrong1"), Err(2));
+        assert_eq!(slot.verify(PinContext::Primary, b"wrong2"), Err(1));
+        assert_eq!(slot.verify(PinContext::Primary, b"wrong3"), Err(0));
+        assert_eq!(slot.tries(), 0);
+        // Blocked even with correct PIN
+        assert_eq!(slot.verify(PinContext::Primary, b"123456"), Err(0));
+        assert!(!slot.is_verified(PinContext::Primary));
+
+        // set_value restores tries and clears verification
+        assert_eq!(slot.verify(PinContext::Secondary, b"123456"), Err(0));
+        slot.set_value(b"654321");
+        assert_eq!(slot.tries(), 3);
+        assert_eq!(slot.verify(PinContext::Primary, b"654321"), Ok(()));
+        slot.set_value(b"abcdef");
+        assert!(!slot.is_verified(PinContext::Primary));
+    }
+
+    #[test]
+    fn pin_slot_length_validation() {
+        let slot = PinSlot::new(b"123456", 6, 3);
+        assert!(!slot.is_valid_new_pin(b"12345"));
+        assert!(slot.is_valid_new_pin(b"123456"));
+        assert!(slot.is_valid_new_pin(&[b'a'; MAX_PIN_LEN]));
+        assert!(!slot.is_valid_new_pin(&[b'a'; MAX_PIN_LEN + 1]));
+    }
+
+    #[test]
+    fn check_prefix_splits_validates_and_handles_short_input() {
+        let mut slot = PinSlot::new(b"longsecret", 6, 3);
+        assert_eq!(slot.verify(PinContext::Primary, b"longsecret"), Ok(()));
+
+        // Shorter than min_len + min_new_len -> WrongLength, no retry burned
+        assert_eq!(slot.check_prefix(b"short", 6), Err(Status::WrongLength));
+        assert_eq!(slot.tries(), 3);
+
+        // At least min_len + min_new_len, but shorter than stored secret + min_new_len
+        // (10 bytes stored, so 12 bytes total: split_at_checked(10) succeeds, prefix != stored)
+        assert_eq!(
+            slot.check_prefix(b"wrong1234567", 6),
+            Err(Status::RemainingRetries(2))
+        );
+        assert!(!slot.is_verified(PinContext::Primary));
+
+        // Valid prefix returns trailing new_secret and restores tries
+        assert_eq!(
+            slot.check_prefix(b"longsecretnewpin", 6),
+            Ok(&b"newpin"[..])
+        );
+        assert_eq!(slot.tries(), 3);
+
+        // Exhaust retries -> OperationBlocked
+        assert_eq!(
+            slot.check_prefix(b"wrong1234567", 6),
+            Err(Status::RemainingRetries(2))
+        );
+        assert_eq!(
+            slot.check_prefix(b"wrong1234567", 6),
+            Err(Status::RemainingRetries(1))
+        );
+        assert_eq!(
+            slot.check_prefix(b"wrong1234567", 6),
+            Err(Status::RemainingRetries(0))
+        );
+        assert_eq!(
+            slot.check_prefix(b"longsecretnewpin", 6),
+            Err(Status::OperationBlocked)
+        );
+    }
+
+    #[test]
+    fn pin_state_rc_validation_and_session_end() {
+        let mut state = PinState::default();
+        assert!(state.rc_mut().is_none());
+
+        assert_eq!(state.set_rc(b"short"), Err(InvalidPinLength));
+        assert_eq!(
+            state.set_rc(&[b'x'; MAX_PIN_LEN + 1]),
+            Err(InvalidPinLength)
+        );
+        assert_eq!(state.set_rc(b"resetcode"), Ok(()));
+        assert!(state.rc_mut().is_some());
+
+        assert_eq!(state.verify(PwRef::Pw1Sign, DEFAULT_PW1), Ok(()));
+        assert_eq!(state.verify(PwRef::Pw1Other, DEFAULT_PW1), Ok(()));
+        assert_eq!(state.verify(PwRef::Pw3Admin, DEFAULT_PW3), Ok(()));
+        state.session_end();
+        assert!(!state.is_verified(PwRef::Pw1Sign));
+        assert!(!state.is_verified(PwRef::Pw1Other));
+        assert!(!state.is_verified(PwRef::Pw3Admin));
     }
 }

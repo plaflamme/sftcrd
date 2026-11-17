@@ -10,7 +10,6 @@ apdu-dispatch = { workspace = true }
 hex = { workspace = true }
 iso7816 = { workspace = true }
 tracing = { workspace = true }
-zeroize = { workspace = true }
 
 [dev-dependencies]
 keyroost-openpgp = { workspace = true }

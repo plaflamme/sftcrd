@@ -1002,7 +1002,6 @@ dependencies = [
  "iso7816",
  "keyroost-openpgp",
  "tracing",
- "zeroize",
 ]
 
 [[package]]
