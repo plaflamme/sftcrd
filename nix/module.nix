@@ -66,6 +66,21 @@ in
       description = ''
         TOML configuration to initialize the card state.
       '';
+      example = lib.literalExpression ''
+        {
+          serial = 12345;
+
+          piv.slots."9a" = {
+            key = '''
+              -----BEGIN PRIVATE KEY-----
+              MIGHAgEAMBMGByqGSM49AgEGCCqGSM49AwEHBG0wawIBAQQgYMU8CVjfJeB+70ru
+              /NHmQO6CQSZFQmisQ79g//CB/4WhRANCAATHXXM5uR7Wo+zCW1bycqXoqy/9wRVQ
+              v75NJ4SWaIbfBJB1wobcA3M3qcIhRgtE3dxX3MX9yxFBcF7JQ6X/bLfI
+              -----END PRIVATE KEY-----
+            ''';
+          };
+        };
+      '';
     };
   };
 
