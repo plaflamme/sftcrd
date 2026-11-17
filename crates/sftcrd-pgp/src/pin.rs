@@ -28,10 +28,6 @@ impl PwRef {
     }
 }
 
-/// Error returned when a PIN or Resetting Code length is outside the allowed range.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub struct InvalidPinLength;
-
 /// Default user PIN (PW1): `"123456"`.
 const DEFAULT_PW1: &[u8] = b"123456";
 /// Default admin PIN (PW3): `"12345678"`.
@@ -255,9 +251,9 @@ impl PinState {
     }
 
     /// Configure or replace the optional Resetting Code (RC).
-    pub(crate) fn set_rc(&mut self, rc: &[u8]) -> Result<(), InvalidPinLength> {
+    pub(crate) fn set_rc(&mut self, rc: &[u8]) -> Result<(), Status> {
         if !(RC_MIN_LEN..=MAX_PIN_LEN).contains(&rc.len()) {
-            return Err(InvalidPinLength);
+            return Err(Status::WrongLength);
         }
         self.rc = Some(PinSlot::new(rc, RC_MIN_LEN, DEFAULT_TRIES));
         Ok(())
@@ -393,10 +389,10 @@ mod tests {
         let mut state = PinState::default();
         assert!(state.rc_mut().is_none());
 
-        assert_eq!(state.set_rc(b"short"), Err(InvalidPinLength));
+        assert_eq!(state.set_rc(b"short"), Err(Status::WrongLength));
         assert_eq!(
             state.set_rc(&[b'x'; MAX_PIN_LEN + 1]),
-            Err(InvalidPinLength)
+            Err(Status::WrongLength)
         );
         assert_eq!(state.set_rc(b"resetcode"), Ok(()));
         assert!(state.rc_mut().is_some());

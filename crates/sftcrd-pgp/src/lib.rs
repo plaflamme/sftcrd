@@ -16,7 +16,7 @@ pub use apdu::Response;
 pub use constants::{AID_PREFIX, DEFAULT_SERIAL, MANUFACTURER_ID, OPENPGP_VERSION, build_aid};
 use iso7816::{Instruction, Status};
 use pin::PinState;
-pub use pin::{InvalidPinLength, PwRef};
+pub use pin::PwRef;
 use trace::Trace;
 
 /// An `OpenPGP` Card v3.4 applet instance.
@@ -126,9 +126,9 @@ impl PgpApplet {
     ///
     /// # Errors
     ///
-    /// Returns [`InvalidPinLength`] if `rc` is shorter than 8 bytes or longer
+    /// Returns [`Status::WrongLength`] if `rc` is shorter than 8 bytes or longer
     /// than 127 bytes.
-    pub fn set_resetting_code(&mut self, rc: &[u8]) -> Result<(), InvalidPinLength> {
+    pub fn set_resetting_code(&mut self, rc: &[u8]) -> Result<(), Status> {
         self.pins.set_rc(rc)
     }
 
