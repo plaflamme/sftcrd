@@ -47,7 +47,7 @@ tlv_struct! {
 }
 
 tlv_struct! {
-    #[tag_type(u16)]
+    #[tag_type(sftcrd_tlv::U16Tag)]
     #[length(BerLength)]
     struct GenerateResponse {
         #[tag = 0x7F49]

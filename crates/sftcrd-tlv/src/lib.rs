@@ -9,7 +9,7 @@ pub use decoder::Decoder;
 pub use encoder::Encoder;
 pub use error::{DecodeError, EncodeError};
 pub use length::{BerLength, Length, U8Length};
-pub use tag::Tag;
+pub use tag::{BerTag, Tag, U8Tag, U16Tag};
 pub use value::{ConstLength, ValueDecoder, ValueEncoder};
 
 /// Declarative macro to generate a struct and a corresponding [`ValueDecoder`] and [`ValueEncoder`] implementations to decode/encode it out of/to TLV bytes.
@@ -45,7 +45,7 @@ macro_rules! tlv_struct {
         impl_lt: [ $impl_lt:lifetime ],
         struct_lt: [ $($struct_lt:lifetime)? ],
         retained: [ $($retained:tt)* ],
-        input: [ #[tag_type($new_tag_ty:ty)] $($rest:tt)* ]
+        input: [ #[tag_type($new_tag_ty:path)] $($rest:tt)* ]
     ) => {
         tlv_struct!(@parse_attrs
             tag_type: [ $new_tag_ty ],
@@ -78,7 +78,7 @@ macro_rules! tlv_struct {
 
     // Base Case for attributes: Transition to field parsing
     (@parse_attrs
-        tag_type: [ $tag_ty:ty ],
+        tag_type: [ $tag_ty:path ],
         length: [ $len_ty:ty ],
         impl_lt: [ $impl_lt:lifetime ],
         struct_lt: [ $($struct_lt:lifetime)? ],
@@ -103,7 +103,7 @@ macro_rules! tlv_struct {
 
     // Muncher Arm 1: Optional field (`Option<T>`)
     (@parse_fields
-        tag_type: [ $tag_ty:ty ],
+        tag_type: [ $tag_ty:path ],
         length: [ $len_ty:ty ],
         impl_lt: [ $impl_lt:lifetime ],
         struct_lt: [ $($struct_lt:lifetime)? ],
@@ -140,7 +140,7 @@ macro_rules! tlv_struct {
 
     // Muncher Arm 2: Required field (`T`)
     (@parse_fields
-        tag_type: [ $tag_ty:ty ],
+        tag_type: [ $tag_ty:path ],
         length: [ $len_ty:ty ],
         impl_lt: [ $impl_lt:lifetime ],
         struct_lt: [ $($struct_lt:lifetime)? ],
@@ -177,7 +177,7 @@ macro_rules! tlv_struct {
 
     // Base Case: Generate struct and `from_bytes` (Unified!)
     (@parse_fields
-        tag_type: [ $tag_ty:ty ],
+        tag_type: [ $tag_ty:path ],
         length: [ $len_ty:ty ],
         impl_lt: [ $impl_lt:lifetime ],
         struct_lt: [ $($struct_lt:lifetime)? ],
@@ -205,7 +205,7 @@ macro_rules! tlv_struct {
                     let (tag, value_bytes) = entry?;
                     match tag {
                         $(
-                            $tag => {
+                            $tag_ty($tag) => {
                                 if $field_name.is_some() {
                                     return Err($crate::DecodeError::DuplicateTag);
                                 }
@@ -226,7 +226,6 @@ macro_rules! tlv_struct {
         impl <$impl_lt> $crate::ValueEncoder for $name $(<$struct_lt>)? {
             fn length(&self) -> usize {
                 let mut length = 0;
-                let tag_length = <$tag_ty as $crate::Tag>::length();
                 $(
                     let value = &self.$field_name;
                     match tlv_struct!(@wrap_field $kind, value) {
@@ -234,6 +233,7 @@ macro_rules! tlv_struct {
                         Some(value) => {
                             let value_len = <$parse_ty as $crate::ValueEncoder>::length(value);
                             let length_len = <$len_ty as $crate::Length>::length(value_len) as usize;
+                            let tag_length = $crate::Tag::length(&$tag_ty($tag));
                             length += tag_length + length_len + value_len;
                         },
                     };
@@ -247,7 +247,7 @@ macro_rules! tlv_struct {
                     let value = &self.$field_name;
                     match tlv_struct!(@wrap_field $kind, value) {
                         None => (),
-                        Some(value) => encoder.write_tlv::<$tag_ty, $len_ty, $parse_ty>($tag, value)?,
+                        Some(value) => encoder.write_tlv::<$tag_ty, $len_ty, $parse_ty>(&$tag_ty($tag), value)?,
                     };
                 )*
                 Ok(())
@@ -281,7 +281,7 @@ macro_rules! tlv_struct {
         }
     ) => {
         tlv_struct!(@parse_attrs
-            tag_type: [ u8 ],
+            tag_type: [ $crate::U8Tag ],
             length: [ $crate::U8Length ],
             impl_lt: [ $lt ],     // Trait uses the provided lifetime
             struct_lt: [ $lt ],   // Struct uses the provided lifetime
@@ -298,7 +298,7 @@ macro_rules! tlv_struct {
         }
     ) => {
         tlv_struct!(@parse_attrs
-            tag_type: [ u8 ],
+            tag_type: [ $crate::U8Tag ],
             length: [ $crate::U8Length ],
             impl_lt: [ 'a ], // Trait uses a synthetic generated lifetime
             struct_lt: [],   // Struct has no lifetime
@@ -404,7 +404,7 @@ mod tests {
     fn test_tlv_struct_tag_type() {
         tlv_struct! {
             #[derive(Debug, PartialEq)]
-            #[tag_type(u16)]
+            #[tag_type(U16Tag)]
             pub struct Packet {
                 #[tag = 0x0101]
                 pub version: u8,
@@ -426,6 +426,82 @@ mod tests {
             }
             .encode_top_level(),
             Ok(vec![0x01, 0x01, 0x01, 0xFF, 0x01, 0x02, 0x01, 0xFE])
+        );
+    }
+
+    #[test]
+    fn test_tlv_struct_ber_tag() {
+        tlv_struct! {
+            #[derive(Debug, PartialEq)]
+            #[tag_type(BerTag)]
+            #[length(BerLength)]
+            pub struct Packet<'a> {
+                #[tag = 0x4F]
+                pub aid: &'a [u8],
+                #[tag = 0x5F52]
+                pub historical: Option<&'a [u8]>,
+                #[tag = 0x7F49]
+                pub key: Option<Vec<u8>>,
+                #[tag = 0xC5]
+                pub fingerprints: Option<&'a [u8]>,
+            }
+        }
+
+        let bytes = [
+            0x4F, 0x02, 0xD2, 0x76, // 4F
+            0x5F, 0x52, 0x01, 0x00, // 5F52
+            0x7F, 0x49, 0x81, 0x02, 0x86, 0x00, // 7F49 with BER length
+            0xC5, 0x01, 0xAA, // C5
+        ];
+        let packet = Packet {
+            aid: &[0xD2, 0x76],
+            historical: Some(&[0x00]),
+            key: Some(vec![0x86, 0x00]),
+            fingerprints: Some(&[0xAA]),
+        };
+        assert_eq!(Packet::decode(&bytes), Ok(packet));
+
+        // decoding in a different order works
+        assert_eq!(
+            Packet::decode(&[0x5F, 0x52, 0x01, 0x00, 0x4F, 0x01, 0xD2]),
+            Ok(Packet {
+                aid: &[0xD2],
+                historical: Some(&[0x00]),
+                key: None,
+                fingerprints: None,
+            })
+        );
+
+        // encode uses minimal tag width and lengths
+        let packet = Packet {
+            aid: &[0xD2, 0x76],
+            historical: Some(&[0x00]),
+            key: Some(vec![0x86, 0x00]),
+            fingerprints: Some(&[0xAA]),
+        };
+        assert_eq!(packet.length(), 16);
+        assert_eq!(
+            packet.encode_top_level(),
+            Ok(vec![
+                0x4F, 0x02, 0xD2, 0x76, 0x5F, 0x52, 0x01, 0x00, 0x7F, 0x49, 0x02, 0x86, 0x00, 0xC5,
+                0x01, 0xAA,
+            ])
+        );
+
+        // unknown 2-byte tag
+        assert_eq!(
+            Packet::decode(&[0x4F, 0x00, 0x5F, 0x2D, 0x00]),
+            Err(DecodeError::InvalidTag)
+        );
+        // duplicate 2-byte tag
+        assert_eq!(
+            Packet::decode(&[0x4F, 0x00, 0x5F, 0x52, 0x00, 0x5F, 0x52, 0x00]),
+            Err(DecodeError::DuplicateTag)
+        );
+        // truncated multi-byte tag
+        assert_eq!(
+            Packet::decode(&[0x4F, 0x00, 0x5F]),
+            Err(DecodeError::BufferUnderrun)
         );
     }
 

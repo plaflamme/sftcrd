@@ -80,19 +80,25 @@ impl<'buf, T: Tag, L: Length> Iterator for TlvIter<'buf, T, L> {
 #[cfg(test)]
 mod test {
     use super::*;
-    use crate::U8Length;
+    use crate::{U8Length, U8Tag};
 
     #[test]
     fn test_u8_is_tag() {
         let buf = [0x01, 0x00];
         let mut decoder = Decoder::new(&buf);
-        assert_eq!(decoder.read_tag_length::<u8, U8Length>(), Ok((0x01, 0x00)));
+        assert_eq!(
+            decoder.read_tag_length::<U8Tag, U8Length>(),
+            Ok((U8Tag(0x01), 0x00))
+        );
     }
 
     #[test]
     fn test_u8_length() {
         let buf = [0x01, 0xFF];
         let mut decoder = Decoder::new(&buf);
-        assert_eq!(decoder.read_tag_length::<u8, U8Length>(), Ok((0x01, 0xFF)));
+        assert_eq!(
+            decoder.read_tag_length::<U8Tag, U8Length>(),
+            Ok((U8Tag(0x01), 0xFF))
+        );
     }
 }

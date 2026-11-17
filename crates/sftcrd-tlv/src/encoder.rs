@@ -32,10 +32,10 @@ impl<'a> Encoder<'a> {
 
     fn write_tag_length<T: Tag, L: Length>(
         &mut self,
-        tag: T,
+        tag: &T,
         value_length: usize,
     ) -> Result<(), EncodeError> {
-        tag.encode(self.advance_by(T::length())?)?;
+        tag.encode(self.advance_by(tag.length())?)?;
         L::encode(
             value_length,
             self.advance_by(L::length(value_length) as usize)?,
@@ -50,7 +50,7 @@ impl<'a> Encoder<'a> {
     /// Returns an [`EncodeError`] if the buffer is not large enough or if the value's tag or length cannot be encoded.
     pub fn write_tlv<T: Tag, L: Length, V: ValueEncoder>(
         &mut self,
-        tag: T,
+        tag: &T,
         value: &V,
     ) -> Result<(), EncodeError> {
         let value_length = value.length();
@@ -63,14 +63,14 @@ impl<'a> Encoder<'a> {
 #[cfg(test)]
 mod test {
     use super::*;
-    use crate::U8Length;
+    use crate::{U8Length, U8Tag};
 
     #[test]
     fn test_encode_u8() {
         let mut buf = [0; 256];
         let mut encoder = Encoder::new(&mut buf);
         encoder
-            .write_tlv::<u8, U8Length, u8>(0x01u8, &0x02)
+            .write_tlv::<U8Tag, U8Length, u8>(&U8Tag(0x01), &0x02)
             .expect("encode");
         assert_eq!(encoder.into_inner(), [0x01, 0x01, 0x02]);
     }
