@@ -7,11 +7,19 @@ description = "Pure-Rust OpenPGP Card v3.4 applet."
 [dependencies]
 apdu-app = { workspace = true }
 apdu-dispatch = { workspace = true }
+ed25519-dalek = { workspace = true }
+elliptic-curve = { workspace = true }
 hex = { workspace = true }
 iso7816 = { workspace = true }
+p256 = { workspace = true }
+p384 = { workspace = true }
+p521 = { workspace = true }
+rand = { workspace = true }
+rsa = { workspace = true }
 sftcrd-apdu = { workspace = true }
 sftcrd-tlv = { workspace = true }
 tracing = { workspace = true }
+x25519-dalek = { workspace = true }
 
 [dev-dependencies]
 keyroost-openpgp = { workspace = true }

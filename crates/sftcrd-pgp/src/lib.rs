@@ -9,6 +9,7 @@
 mod auth;
 mod constants;
 mod data;
+mod keygen;
 mod pgp;
 mod pin;
 
@@ -186,6 +187,8 @@ impl PgpApplet {
             Instruction::Verify => self.process_verify(command),
             Instruction::ChangeReferenceData => self.process_change_reference_data(command),
             Instruction::ResetRetryCounter => self.process_reset_retry_counter(command),
+            Instruction::PutData => self.process_put_data_odd(command),
+            Instruction::GenerateAsymmetricKeyPair => self.process_generate_key_pair(command),
             Instruction::Unknown(code) => match PgpInstruction::from_u8(code) {
                 Some(PgpInstruction::GetData) => self.process_get_data(command),
                 Some(PgpInstruction::PutData) => self.process_put_data(command),

@@ -16,6 +16,7 @@ cipher = "0.5"
 clap = { version = "4", features = ["derive"] }
 des = "0.9"
 ecdsa = { version = "0.17.0", features = ["der"] }
+ed25519-dalek = { version = "3.0", features = ["rand_core"] }
 elliptic-curve = { version = "0.14", features = ["sec1", "pkcs8"] }
 figment = { version = "0.10", features = ["toml"] }
 hex = "0.4"
@@ -37,6 +38,7 @@ sha2 = "0.11"
 toml-example = "0.17"
 tracing = "0.1"
 tracing-subscriber = { version = "0.3", features = ["env-filter"] }
+x25519-dalek = { version = "3.0", features = ["static_secrets"] }
 x509-cert = { version = "0.3.0", features = ["builder"] }
 zeroize = { version = "1", default-features = false, features = ["alloc"] }
 

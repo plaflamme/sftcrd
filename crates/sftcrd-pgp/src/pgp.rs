@@ -22,6 +22,87 @@ impl PgpInstruction {
     }
 }
 
+/// Which of the three `OpenPGP` key slots a CRT tag or DO refers to.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[repr(u8)]
+pub(crate) enum KeySlotId {
+    Sig = 0xB6,
+    Dec = 0xB8,
+    Aut = 0xA4,
+}
+
+/// `P1` mode for `GENERATE ASYMMETRIC KEY PAIR` (`0x47`).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[repr(u8)]
+pub(crate) enum GenerateMode {
+    Generate = 0x80,
+    ReadPublicKey = 0x81,
+}
+
+impl GenerateMode {
+    pub(crate) const fn from_u8(value: u8) -> Option<Self> {
+        match value {
+            0x80 => Some(Self::Generate),
+            0x81 => Some(Self::ReadPublicKey),
+            _ => None,
+        }
+    }
+}
+
+/// Supported RSA modulus bit widths.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[repr(u16)]
+pub(crate) enum RsaBits {
+    Rsa2048 = 2048,
+    Rsa3072 = 3072,
+    Rsa4096 = 4096,
+}
+
+impl RsaBits {
+    pub(crate) const fn from_u16(bits: u16) -> Option<Self> {
+        match bits {
+            2048 => Some(Self::Rsa2048),
+            3072 => Some(Self::Rsa3072),
+            4096 => Some(Self::Rsa4096),
+            _ => None,
+        }
+    }
+
+    pub(crate) const fn modulus_bytes(self) -> usize {
+        (self as usize) / 8
+    }
+}
+
+/// Component tags inside `7F48` (Cardholder Private Key Template) for `PUT DATA odd` (`0xDB`).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[repr(u8)]
+pub(crate) enum KeyFieldTag {
+    RsaExponent = 0x91,
+    PrimePOrEccScalar = 0x92,
+    PrimeQ = 0x93,
+    CrtPq = 0x94,
+    CrtDp = 0x95,
+    CrtDq = 0x96,
+    Modulus = 0x97,
+    EccPublic = 0x99,
+}
+
+impl KeyFieldTag {
+    pub(crate) const fn from_u8(tag: u8) -> Option<Self> {
+        match tag {
+            0x91 => Some(Self::RsaExponent),
+            0x92 => Some(Self::PrimePOrEccScalar),
+            0x93 => Some(Self::PrimeQ),
+            0x94 => Some(Self::CrtPq),
+            0x95 => Some(Self::CrtDp),
+            0x96 => Some(Self::CrtDq),
+            0x97 => Some(Self::Modulus),
+            0x99 => Some(Self::EccPublic),
+            _ => None,
+        }
+    }
+}
+
 /// ISO/IEC 5218 gender encoding (`5F35`).
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
 #[repr(u8)]

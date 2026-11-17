@@ -8,7 +8,8 @@ use sftcrd_tlv::{
 
 use crate::{
     PgpApplet, Response,
-    pgp::{AlgoId, Gender, UifMode},
+    keygen::{SlotAlg, SlotKey},
+    pgp::{AlgoId, Gender, KeySlotId, RsaBits, UifMode},
     pin::{PinState, PwRef},
 };
 
@@ -39,23 +40,16 @@ const MAX_LANGUAGE_LEN: usize = 8;
 const MAX_URL_LEN: usize = 2048;
 const MAX_LOGIN_DATA_LEN: usize = 2048;
 
-/// Which of the three `OpenPGP` key slots a tag refers to.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub(crate) enum KeySlotId {
-    Sig,
-    Dec,
-    Aut,
-}
-
-/// Per-slot metadata stored on the card (algorithm attributes, fingerprints,
-/// generation timestamp, and User Interaction Flag).
-#[derive(Debug, Clone, PartialEq, Eq)]
+/// Per-slot metadata and key material stored on the card (algorithm attributes,
+/// fingerprints, generation timestamp, User Interaction Flag, and asymmetric key).
+#[derive(Debug)]
 pub(crate) struct KeySlotMeta {
     pub(crate) algo_attr: Vec<u8>,
     pub(crate) fingerprint: [u8; 20],
     pub(crate) ca_fingerprint: [u8; 20],
     pub(crate) generation_time: u32,
     pub(crate) uif: [u8; 2],
+    pub(crate) key: Option<SlotKey>,
 }
 
 impl Default for KeySlotMeta {
@@ -66,6 +60,7 @@ impl Default for KeySlotMeta {
             ca_fingerprint: [0u8; 20],
             generation_time: 0,
             uif: DEFAULT_UIF,
+            key: None,
         }
     }
 }
@@ -74,12 +69,20 @@ impl KeySlotMeta {
     fn wipe_key_metadata(&mut self) {
         self.fingerprint = [0u8; 20];
         self.generation_time = 0;
+        self.key = None;
+    }
+
+    pub(crate) fn slot_alg(&self) -> Result<SlotAlg, Status> {
+        let Ok(attr) = AlgoAttr::decode(&self.algo_attr) else {
+            return Err(Status::IncorrectDataParameter);
+        };
+        attr.to_slot_alg()
     }
 }
 
 /// Persistent `OpenPGP` Card data objects (cardholder metadata, slot metadata,
 /// and digital signature counter).
-#[derive(Debug, Clone, Default)]
+#[derive(Debug, Default)]
 pub(crate) struct CardData {
     pub(crate) name: Vec<u8>,
     pub(crate) language: Vec<u8>,
@@ -140,6 +143,32 @@ impl AlgoAttr<'_> {
                     Ok(())
                 } else {
                     Err(Status::IncorrectDataParameter)
+                }
+            }
+        }
+    }
+
+    fn to_slot_alg(self) -> Result<SlotAlg, Status> {
+        match self {
+            Self::Rsa { n_bits, e_bits, .. } => {
+                let bits = RsaBits::from_u16(n_bits).ok_or(Status::IncorrectDataParameter)?;
+                Ok(SlotAlg::Rsa {
+                    n_bits: bits,
+                    e_bits,
+                })
+            }
+            Self::Ecc { algo_id, oid } => {
+                let bare = match oid.split_last() {
+                    Some((&(0x00 | 0xFF), rest)) => rest,
+                    _ => oid,
+                };
+                match (algo_id, bare) {
+                    (AlgoId::Ecdsa | AlgoId::Ecdh, OID_NIST_P256) => Ok(SlotAlg::P256),
+                    (AlgoId::Ecdsa | AlgoId::Ecdh, OID_NIST_P384) => Ok(SlotAlg::P384),
+                    (AlgoId::Ecdsa | AlgoId::Ecdh, OID_NIST_P521) => Ok(SlotAlg::P521),
+                    (AlgoId::EdDsa, OID_ED25519) => Ok(SlotAlg::Ed25519),
+                    (AlgoId::Ecdh, OID_X25519) => Ok(SlotAlg::X25519),
+                    _ => Err(Status::IncorrectDataParameter),
                 }
             }
         }
@@ -271,7 +300,7 @@ tlv_struct! {
 }
 
 impl CardData {
-    fn slot(&self, id: KeySlotId) -> &KeySlotMeta {
+    pub(crate) fn slot(&self, id: KeySlotId) -> &KeySlotMeta {
         match id {
             KeySlotId::Sig => &self.sig,
             KeySlotId::Dec => &self.dec,
@@ -279,7 +308,7 @@ impl CardData {
         }
     }
 
-    fn slot_mut(&mut self, id: KeySlotId) -> &mut KeySlotMeta {
+    pub(crate) fn slot_mut(&mut self, id: KeySlotId) -> &mut KeySlotMeta {
         match id {
             KeySlotId::Sig => &mut self.sig,
             KeySlotId::Dec => &mut self.dec,
