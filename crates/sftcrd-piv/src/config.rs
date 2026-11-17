@@ -12,6 +12,7 @@ use std::str::FromStr;
 use figment::Figment;
 use figment::providers::{Format, Toml};
 use serde::Deserialize;
+use sftcrd_tlv::{BerLength, EncodeError, ValueDecoder, ValueEncoder, tlv_struct};
 
 use crate::PivApplet;
 use crate::piv::{MgmtAlg, PinPolicy, RsaBits, Slot, TouchPolicy};
@@ -70,6 +71,7 @@ impl From<figment::Error> for ConfigError {
 
 /// Top-level card configuration holding applet namespaces.
 #[derive(Debug, Deserialize, Default, Clone)]
+#[serde(deny_unknown_fields)]
 pub struct CardConfig {
     /// Card serial number.
     pub serial: Option<u32>,
@@ -79,6 +81,7 @@ pub struct CardConfig {
 
 /// Configuration for the PIV applet.
 #[derive(Debug, Deserialize, Default, Clone)]
+#[serde(deny_unknown_fields)]
 pub struct PivConfig {
     /// Overrides card serial if specified under `[piv]`.
     pub serial: Option<u32>,
@@ -95,6 +98,7 @@ pub struct PivConfig {
 
 /// Configuration for a PIN or PUK.
 #[derive(Debug, Deserialize, Clone)]
+#[serde(deny_unknown_fields)]
 pub struct PinConfig {
     /// PIN or PUK value as a string (6-8 ASCII digits).
     pub value: String,
@@ -104,6 +108,7 @@ pub struct PinConfig {
 
 /// Configuration for the 9B management key.
 #[derive(Debug, Deserialize, Clone)]
+#[serde(deny_unknown_fields)]
 pub struct MgmtKeyConfig {
     /// Hex-encoded management key bytes.
     pub key: String,
@@ -114,6 +119,7 @@ pub struct MgmtKeyConfig {
 
 /// Configuration for an asymmetric key slot.
 #[derive(Debug, Deserialize, Default, Clone)]
+#[serde(deny_unknown_fields)]
 pub struct SlotConfig {
     /// PEM-encoded private key (PKCS#8 `BEGIN PRIVATE KEY`, PKCS#1 `BEGIN RSA PRIVATE KEY`, or SEC1 `BEGIN EC PRIVATE KEY`).
     pub key: Option<String>,
@@ -123,6 +129,21 @@ pub struct SlotConfig {
     pub pin_policy: Option<String>,
     /// Touch policy: `"never"`, `"always"`, or `"cached"`.
     pub touch_policy: Option<String>,
+}
+
+impl FromStr for PinPolicy {
+    type Err = ConfigError;
+
+    fn from_str(s: &str) -> Result<Self, Self::Err> {
+        match s.trim().to_ascii_lowercase().as_str() {
+            "never" => Ok(PinPolicy::Never),
+            "once" => Ok(PinPolicy::Once),
+            "always" => Ok(PinPolicy::Always),
+            other => Err(ConfigError::InvalidPolicy(format!(
+                "invalid pin policy: {other}"
+            ))),
+        }
+    }
 }
 
 impl FromStr for Slot {
@@ -295,11 +316,6 @@ fn parse_sec1_der(der: &[u8]) -> Result<SlotKey, ConfigError> {
 }
 
 /// Parse a PEM-encoded X.509 certificate and encode it into a PIV certificate data object.
-///
-/// A PIV certificate data object is formatted as:
-/// - Tag `0x70`: Certificate bytes (DER or gzipped DER)
-/// - Tag `0x71`: `CertInfo` byte (0x00 for uncompressed)
-/// - Tag `0xFE`: LRC byte (empty)
 pub(crate) fn parse_pem_cert_object(pem_str: &str) -> Result<Vec<u8>, ConfigError> {
     use pem_rfc7468::decode_vec;
 
@@ -312,40 +328,62 @@ pub(crate) fn parse_pem_cert_object(pem_str: &str) -> Result<Vec<u8>, ConfigErro
         )));
     }
 
-    Ok(encode_piv_certificate(&der))
+    let cert_data = CertificateData {
+        cert: &der,
+        cert_info: CertInfo::Uncompressed,
+        lrc: &[],
+    };
+
+    cert_data
+        .encode_top_level()
+        .map_err(|e| ConfigError::CertError(format!("cannot encode certificate: {e:?}")))
 }
 
-/// Encode raw DER certificate bytes into the PIV data object inner value.
-fn encode_piv_certificate(der: &[u8]) -> Vec<u8> {
-    let mut out = Vec::with_capacity(der.len() + 16);
-    push_tlv(&mut out, 0x70, der);
-    push_tlv(&mut out, 0x71, &[0x00]); // CertInfo: 0x00 uncompressed
-    push_tlv(&mut out, 0xFE, &[]); // LRC: empty
-    out
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum CertInfo {
+    Uncompressed = 0x00,
+    Gzip = 0x01,
 }
 
-fn push_tlv(buf: &mut Vec<u8>, tag: u8, val: &[u8]) {
-    buf.push(tag);
-    encode_der_length(buf, val.len());
-    buf.extend_from_slice(val);
+impl ValueDecoder<'_> for CertInfo {
+    fn decode(bytes: &'_ [u8]) -> Result<Self, sftcrd_tlv::DecodeError> {
+        let [byte] = bytes else {
+            return Err(sftcrd_tlv::DecodeError::InvalidValue);
+        };
+
+        match *byte {
+            0x00 => Ok(Self::Uncompressed),
+            0x01 => Ok(Self::Gzip),
+            _ => Err(sftcrd_tlv::DecodeError::InvalidValue),
+        }
+    }
 }
 
-#[allow(clippy::cast_possible_truncation)]
-fn encode_der_length(buf: &mut Vec<u8>, len: usize) {
-    if len < 0x80 {
-        buf.push(len as u8);
-    } else if len <= 0xFF {
-        buf.push(0x81);
-        buf.push(len as u8);
-    } else if len <= 0xFFFF {
-        buf.push(0x82);
-        buf.push((len >> 8) as u8);
-        buf.push(len as u8);
-    } else {
-        buf.push(0x83);
-        buf.push((len >> 16) as u8);
-        buf.push((len >> 8) as u8);
-        buf.push(len as u8);
+impl ValueEncoder for CertInfo {
+    fn length(&self) -> usize {
+        1
+    }
+
+    fn encode(&self, buf: &mut [u8]) -> Result<(), EncodeError> {
+        buf[0] = *self as u8;
+        Ok(())
+    }
+}
+
+tlv_struct! {
+
+    /// A PIV certificate data object is formatted as:
+    /// - Tag `0x70`: Certificate bytes (DER or gzipped DER)
+    /// - Tag `0x71`: `CertInfo` byte (0x00 for uncompressed)
+    /// - Tag `0xFE`: LRC byte (empty)
+    #[length(BerLength)]
+    struct CertificateData<'a> {
+        #[tag=0x70]
+        cert: &'a [u8],
+        #[tag=0x71]
+        cert_info: CertInfo,
+        #[tag=0xFE]
+        lrc: &'a [u8]
     }
 }
 
@@ -609,13 +647,7 @@ EwEB/wQFMAMBAf8wCgYIKoZIzj0EAwIDRwAwRAIgbr2Vrt04qfVTfniWYaVIZHUT
     #[test]
     fn parse_cert_object() {
         let obj = parse_pem_cert_object(TEST_CERT).expect("valid cert");
-        // Tag 0x70 must be the first byte
-        assert_eq!(obj[0], 0x70);
-        // Find 0x71 CertInfo tag
-        assert!(
-            obj.windows(3)
-                .any(|w| w[0] == 0x71 && w[1] == 0x01 && w[2] == 0x00)
-        );
+        assert!(CertificateData::decode(&obj).is_ok());
     }
 
     #[test]

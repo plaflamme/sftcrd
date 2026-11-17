@@ -68,6 +68,8 @@ pub struct Slot {
     /// The slot's certificate as stored under its data object (the `53`-
     /// wrapped value GET DATA returns verbatim), or `None` when the slot
     /// holds no certificate.
+    ///
+    /// This is not validated by the card, so technically, it may not be a valid X509 certificate.
     pub(crate) cert: Option<Vec<u8>>,
 }
 
@@ -86,8 +88,6 @@ pub(crate) enum PublicKey {
     Point(Vec<u8>),
     Rsa { n: Vec<u8>, e: Vec<u8> },
 }
-
-
 
 /// A key held in a slot.
 ///
