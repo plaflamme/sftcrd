@@ -2,6 +2,7 @@
 
 use iso7816::Status;
 use sftcrd_apdu::CommandView;
+use sftcrd_tlv::{BerLength, BerTag, Encoder, Length as _, Tag as _};
 
 use crate::{
     PgpApplet, Response,
@@ -88,11 +89,12 @@ impl CardData {
 
     /// Encode Cardholder Related Data (`0065` value: `5B`, `5F2D`, `5F35`).
     pub(crate) fn encode_cardholder_related_data(&self) -> Vec<u8> {
-        let mut out = Vec::new();
-        push_tlv(&mut out, TAG_NAME, &self.name);
-        push_tlv(&mut out, TAG_LANGUAGE, &self.language);
-        push_tlv(&mut out, TAG_SEX, &[self.sex as u8]);
-        out
+        let sex = [self.sex as u8];
+        encode_tlvs(&[
+            (TAG_NAME, &self.name),
+            (TAG_LANGUAGE, &self.language),
+            (TAG_SEX, &sex),
+        ])
     }
 
     /// Encode Application Related Data (`006E` value: `4F`, `5F52`, `73`).
@@ -101,57 +103,53 @@ impl CardData {
         aid: &[u8; 16],
         pins: &PinState,
     ) -> Vec<u8> {
-        let mut discretionary = Vec::new();
-        push_tlv(
-            &mut discretionary,
-            TAG_EXTENDED_CAPABILITIES,
-            &EXTENDED_CAPABILITIES,
-        );
-        push_tlv(&mut discretionary, TAG_ALGO_ATTR_SIG, &self.sig.algo_attr);
-        push_tlv(&mut discretionary, TAG_ALGO_ATTR_DEC, &self.dec.algo_attr);
-        push_tlv(&mut discretionary, TAG_ALGO_ATTR_AUT, &self.aut.algo_attr);
-        push_tlv(&mut discretionary, TAG_PW_STATUS, &pins.pw_status_bytes());
+        let pw_status = pins.pw_status_bytes();
 
         let mut fingerprints = [0u8; 60];
         fingerprints[0..20].copy_from_slice(&self.sig.fingerprint);
         fingerprints[20..40].copy_from_slice(&self.dec.fingerprint);
         fingerprints[40..60].copy_from_slice(&self.aut.fingerprint);
-        push_tlv(&mut discretionary, TAG_FINGERPRINTS, &fingerprints);
 
         let mut ca_fingerprints = [0u8; 60];
         ca_fingerprints[0..20].copy_from_slice(&self.sig.ca_fingerprint);
         ca_fingerprints[20..40].copy_from_slice(&self.dec.ca_fingerprint);
         ca_fingerprints[40..60].copy_from_slice(&self.aut.ca_fingerprint);
-        push_tlv(&mut discretionary, TAG_CA_FINGERPRINTS, &ca_fingerprints);
 
         let mut timestamps = [0u8; 12];
         timestamps[0..4].copy_from_slice(&self.sig.generation_time.to_be_bytes());
         timestamps[4..8].copy_from_slice(&self.dec.generation_time.to_be_bytes());
         timestamps[8..12].copy_from_slice(&self.aut.generation_time.to_be_bytes());
-        push_tlv(&mut discretionary, TAG_GENERATION_TIMES, &timestamps);
 
-        push_tlv(&mut discretionary, TAG_UIF_SIG, &self.sig.uif);
-        push_tlv(&mut discretionary, TAG_UIF_DEC, &self.dec.uif);
-        push_tlv(&mut discretionary, TAG_UIF_AUT, &self.aut.uif);
+        let discretionary = encode_tlvs(&[
+            (TAG_EXTENDED_CAPABILITIES, &EXTENDED_CAPABILITIES),
+            (TAG_ALGO_ATTR_SIG, &self.sig.algo_attr),
+            (TAG_ALGO_ATTR_DEC, &self.dec.algo_attr),
+            (TAG_ALGO_ATTR_AUT, &self.aut.algo_attr),
+            (TAG_PW_STATUS, &pw_status),
+            (TAG_FINGERPRINTS, &fingerprints),
+            (TAG_CA_FINGERPRINTS, &ca_fingerprints),
+            (TAG_GENERATION_TIMES, &timestamps),
+            (TAG_UIF_SIG, &self.sig.uif),
+            (TAG_UIF_DEC, &self.dec.uif),
+            (TAG_UIF_AUT, &self.aut.uif),
+        ]);
 
-        let mut out = Vec::new();
-        push_tlv(&mut out, TAG_AID, aid);
-        push_tlv(&mut out, TAG_HISTORICAL_BYTES, &HISTORICAL_BYTES);
-        push_tlv(&mut out, TAG_DISCRETIONARY, &discretionary);
-        out
+        encode_tlvs(&[
+            (TAG_AID, aid),
+            (TAG_HISTORICAL_BYTES, &HISTORICAL_BYTES),
+            (TAG_DISCRETIONARY, &discretionary),
+        ])
     }
 
     /// Encode Security Support Template (`007A` value: `93`).
     pub(crate) fn encode_security_support(&self) -> Vec<u8> {
         let be = self.ds_counter.to_be_bytes();
-        let mut out = Vec::with_capacity(5);
-        push_tlv(&mut out, TAG_DS_COUNTER, &be[1..4]);
-        out
+        encode_tlvs(&[(TAG_DS_COUNTER, &be[1..4])])
     }
 
     /// Encode Algorithm Information (`00FA` value): supported algorithms per slot.
     pub(crate) fn encode_algorithm_information() -> Vec<u8> {
-        let mut out = Vec::new();
+        let mut entries: Vec<(u16, Vec<u8>)> = Vec::new();
         for (tag, slot) in [
             (TAG_ALGO_ATTR_SIG, KeySlotId::Sig),
             (TAG_ALGO_ATTR_DEC, KeySlotId::Dec),
@@ -159,62 +157,50 @@ impl CardData {
         ] {
             for bits in [2048u16, 3072, 4096] {
                 let [hi, lo] = bits.to_be_bytes();
-                push_tlv(
-                    &mut out,
-                    tag,
-                    &[AlgoId::Rsa as u8, hi, lo, 0x00, 0x20, 0x00],
-                );
+                entries.push((tag, vec![AlgoId::Rsa as u8, hi, lo, 0x00, 0x20, 0x00]));
             }
             match slot {
                 KeySlotId::Sig | KeySlotId::Aut => {
                     for oid in [OID_NIST_P256, OID_NIST_P384, OID_NIST_P521] {
-                        push_ecc_attr(&mut out, tag, AlgoId::Ecdsa, oid);
+                        entries.push((tag, ecc_attr(AlgoId::Ecdsa, oid)));
                     }
-                    push_ecc_attr(&mut out, tag, AlgoId::EdDsa, OID_ED25519);
+                    entries.push((tag, ecc_attr(AlgoId::EdDsa, OID_ED25519)));
                 }
                 KeySlotId::Dec => {
                     for oid in [OID_NIST_P256, OID_NIST_P384, OID_NIST_P521, OID_X25519] {
-                        push_ecc_attr(&mut out, tag, AlgoId::Ecdh, oid);
+                        entries.push((tag, ecc_attr(AlgoId::Ecdh, oid)));
                     }
                 }
             }
         }
-        out
+
+        let borrowed: Vec<(u16, &[u8])> = entries.iter().map(|(t, v)| (*t, v.as_slice())).collect();
+        encode_tlvs(&borrowed)
     }
 }
 
-fn push_ecc_attr(out: &mut Vec<u8>, tag: u16, algo_id: AlgoId, oid: &[u8]) {
+fn encode_tlvs(entries: &[(u16, &[u8])]) -> Vec<u8> {
+    let total_len: usize = entries
+        .iter()
+        .map(|(tag, val)| {
+            BerTag(u32::from(*tag)).length() + BerLength::length(val.len()) as usize + val.len()
+        })
+        .sum();
+    let mut buf = vec![0u8; total_len];
+    let mut encoder = Encoder::new(&mut buf);
+    for (tag, val) in entries {
+        encoder
+            .write_tlv::<BerTag, BerLength, _>(&BerTag(u32::from(*tag)), val)
+            .expect("exact pre-sized buffer cannot overflow");
+    }
+    buf
+}
+
+fn ecc_attr(algo_id: AlgoId, oid: &[u8]) -> Vec<u8> {
     let mut attr = Vec::with_capacity(1 + oid.len());
     attr.push(algo_id as u8);
     attr.extend_from_slice(oid);
-    push_tlv(out, tag, &attr);
-}
-
-/// Append a BER-TLV encoded `(tag, value)` to `out`.
-pub(crate) fn push_tlv(out: &mut Vec<u8>, tag: u16, value: &[u8]) {
-    if tag <= 0xFF {
-        #[allow(clippy::cast_possible_truncation)]
-        out.push(tag as u8);
-    } else {
-        out.extend_from_slice(&tag.to_be_bytes());
-    }
-
-    let len = value.len();
-    if len < 0x80 {
-        #[allow(clippy::cast_possible_truncation)]
-        out.push(len as u8);
-    } else if len <= 0xFF {
-        out.push(0x81);
-        #[allow(clippy::cast_possible_truncation)]
-        out.push(len as u8);
-    } else {
-        out.push(0x82);
-        #[allow(clippy::cast_possible_truncation)]
-        let len_u16 = len as u16;
-        out.extend_from_slice(&len_u16.to_be_bytes());
-    }
-
-    out.extend_from_slice(value);
+    attr
 }
 
 fn validate_algo_attr(slot: KeySlotId, attr: &[u8]) -> Result<(), Status> {
