@@ -47,7 +47,7 @@ impl PivApplet {
     /// The value is served verbatim, however it was written. A case-4 `Le`
     /// smaller than the wrapped value re-enters the usual `61xx` / GET
     /// RESPONSE continuation; a tag no object exists under answers `6A82`.
-    pub(crate) fn process_get_data(&mut self, command: &crate::apdu::CommandView<'_>) -> Response {
+    pub(crate) fn process_get_data(&mut self, command: &sftcrd_apdu::CommandView<'_>) -> Response {
         if command.p1 != 0x3F || command.p2 != 0xFF {
             return iso7816::Status::IncorrectP1OrP2Parameter.into();
         }
@@ -73,7 +73,7 @@ impl PivApplet {
     /// session unlocked, else `6982`). The value is the `53` template's
     /// content, stored verbatim: writing the empty value is how the host
     /// clears a slot certificate.
-    pub(crate) fn process_put_data(&mut self, command: &crate::apdu::CommandView<'_>) -> Response {
+    pub(crate) fn process_put_data(&mut self, command: &sftcrd_apdu::CommandView<'_>) -> Response {
         if command.p1 != 0x3F || command.p2 != 0xFF {
             return iso7816::Status::IncorrectP1OrP2Parameter.into();
         }

@@ -6,18 +6,17 @@
 
 #![forbid(unsafe_code)]
 
-mod apdu;
 mod auth;
 mod constants;
 mod pin;
-mod trace;
 
-pub use apdu::Response;
-pub use constants::{AID_PREFIX, DEFAULT_SERIAL, MANUFACTURER_ID, OPENPGP_VERSION, build_aid};
 use iso7816::{Instruction, Status};
 use pin::PinState;
 pub use pin::PwRef;
-use trace::Trace;
+pub use sftcrd_apdu::Response;
+use sftcrd_apdu::{CommandView, Trace};
+
+pub use constants::{AID_PREFIX, DEFAULT_SERIAL, MANUFACTURER_ID, OPENPGP_VERSION, build_aid};
 
 /// An `OpenPGP` Card v3.4 applet instance.
 pub struct PgpApplet {
@@ -134,7 +133,7 @@ impl PgpApplet {
 
     /// Parse and process a raw APDU byte slice.
     pub fn process(&mut self, apdu: &[u8]) -> Response {
-        let command = match apdu::CommandView::try_from(apdu) {
+        let command = match CommandView::try_from(apdu) {
             Ok(command) => command,
             Err(
                 iso7816::command::FromSliceError::TooLong
@@ -149,8 +148,8 @@ impl PgpApplet {
         self.process_command(&command)
     }
 
-    /// Process a parsed [`apdu::CommandView`].
-    pub fn process_command(&mut self, command: &apdu::CommandView<'_>) -> Response {
+    /// Process a parsed [`CommandView`].
+    pub fn process_command(&mut self, command: &CommandView<'_>) -> Response {
         if command.class().chain().not_the_last() {
             return Status::ClaNotSupported.into();
         }

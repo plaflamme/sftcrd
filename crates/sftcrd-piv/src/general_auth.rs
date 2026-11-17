@@ -59,7 +59,7 @@ impl PivApplet {
     /// references, … — answers `6B00` outright.
     pub(crate) fn process_general_authenticate(
         &mut self,
-        command: &crate::apdu::CommandView<'_>,
+        command: &sftcrd_apdu::CommandView<'_>,
     ) -> Response {
         // P2 is the key reference: a slot reference goes to the slot path,
         // `9B` is the management key, everything else is refused.

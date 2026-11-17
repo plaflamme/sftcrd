@@ -189,7 +189,7 @@ impl PivApplet {
     /// is answered.
     pub(crate) fn process_set_management_key(
         &mut self,
-        command: &crate::apdu::CommandView<'_>,
+        command: &sftcrd_apdu::CommandView<'_>,
     ) -> Response {
         if command.p1 != 0xFF || command.p2 != 0xFF {
             return iso7816::Status::IncorrectP1OrP2Parameter.into();
@@ -231,7 +231,7 @@ impl PivApplet {
     /// verified in this session; `6400` on a non-standard CLA.
     pub(crate) fn process_set_pin_retries(
         &mut self,
-        command: &crate::apdu::CommandView<'_>,
+        command: &sftcrd_apdu::CommandView<'_>,
     ) -> Response {
         if !self.mgmt.unlocked() {
             return iso7816::Status::SecurityStatusNotSatisfied.into();
@@ -246,7 +246,7 @@ impl PivApplet {
 
     /// RESET (0xFB, Yubico extension): factory-reset the applet; allowed
     /// only when PIN and PUK are both blocked.
-    pub(crate) fn process_reset(&mut self, _command: &crate::apdu::CommandView<'_>) -> Response {
+    pub(crate) fn process_reset(&mut self, _command: &sftcrd_apdu::CommandView<'_>) -> Response {
         if self.pin.tries() != 0 || self.puk.tries() != 0 {
             // Yubico's documented answer for this precondition is 6985
             // (conditions of use not satisfied); the host only recognises

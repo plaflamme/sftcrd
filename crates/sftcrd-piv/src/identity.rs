@@ -22,7 +22,7 @@ impl PivApplet {
     #[allow(clippy::unused_self)]
     pub(crate) fn process_get_version(
         &mut self,
-        _command: &crate::apdu::CommandView<'_>,
+        _command: &sftcrd_apdu::CommandView<'_>,
     ) -> Response {
         VERSION.into()
     }
@@ -31,7 +31,7 @@ impl PivApplet {
     /// big-endian bytes under `9000`.
     pub(crate) fn process_get_serial(
         &mut self,
-        _command: &crate::apdu::CommandView<'_>,
+        _command: &sftcrd_apdu::CommandView<'_>,
     ) -> Response {
         self.serial.to_be_bytes().into()
     }
@@ -40,7 +40,7 @@ impl PivApplet {
     /// (algorithm, origin, policy, retries) for the P2 reference.
     pub(crate) fn process_get_metadata(
         &mut self,
-        command: &crate::apdu::CommandView<'_>,
+        command: &sftcrd_apdu::CommandView<'_>,
     ) -> Response {
         if command.p1 != 0x00 {
             return iso7816::Status::IncorrectP1OrP2Parameter.into();

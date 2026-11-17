@@ -78,7 +78,7 @@ impl PivApplet {
     /// non-slot references refuse with `6B00`. A target without a key
     /// refuses with the metadata's empty-slot word; the reference applet
     /// has no such check and would mint a keyless certificate.
-    pub(crate) fn process_attest(&mut self, command: &crate::apdu::CommandView<'_>) -> Response {
+    pub(crate) fn process_attest(&mut self, command: &sftcrd_apdu::CommandView<'_>) -> Response {
         if command.p2 != 0x00 {
             return iso7816::Status::IncorrectP1OrP2Parameter.into();
         }

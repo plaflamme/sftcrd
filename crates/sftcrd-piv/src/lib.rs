@@ -12,7 +12,6 @@
 
 #![forbid(unsafe_code)]
 
-mod apdu;
 mod attest;
 mod auth;
 pub mod config;
@@ -26,7 +25,6 @@ mod pin;
 mod piv;
 mod slot;
 mod tlv;
-mod trace;
 mod yubico;
 
 pub use attest::Attestation;
@@ -35,11 +33,17 @@ pub use data::PivData;
 use iso7816::{Instruction, response::Status};
 use management::MgmtKeySlot;
 use pin::Pin;
+use sftcrd_apdu::CommandView;
 
 pub use crate::{slot::Slots, yubico::YubicoInstruction};
-pub use apdu::Response;
 pub use config::{CardConfig, ConfigError, MgmtKeyConfig, PinConfig, PivConfig, SlotConfig};
-pub use trace::Trace;
+pub use sftcrd_apdu::{Response, Trace};
+
+fn trace_ins(ins: Instruction) -> Trace<'static> {
+    Trace::InsWith(ins, |code, f| {
+        YubicoInstruction::from_code(code).map(|yubico| write!(f, "{yubico:?}"))
+    })
+}
 
 /// A PIV applet instance: the card side of NIST SP 800-73-4.
 ///
@@ -98,7 +102,7 @@ impl apdu_app::App for PivApplet {
         apdu: apdu_app::CommandView<'_>,
         _reply: &mut apdu_app::VecView<u8>,
     ) -> apdu_app::Result {
-        tracing::debug!(class = %Trace::Byte(apdu.class().into_inner()), ins = %Trace::Ins(apdu.instruction()), p1 = %Trace::Byte(apdu.p1), p2 = %Trace::Byte(apdu.p2), "select");
+        tracing::debug!(class = %Trace::Byte(apdu.class().into_inner()), ins = %trace_ins(apdu.instruction()), p1 = %Trace::Byte(apdu.p1), p2 = %Trace::Byte(apdu.p2), "select");
 
         // Selecting the applet clears in-memory state
         self.pin.session_end();
@@ -117,7 +121,7 @@ impl apdu_app::App for PivApplet {
         apdu: apdu_app::CommandView<'_>,
         reply: &mut apdu_app::VecView<u8>,
     ) -> apdu_app::Result {
-        tracing::debug!(class = %Trace::Byte(apdu.class().into_inner()), ins = %Trace::Ins(apdu.instruction()), p1 = %Trace::Byte(apdu.p1), p2 = %Trace::Byte(apdu.p2), le = apdu.expected(), data = %Trace::Slice(apdu.data()), "call");
+        tracing::debug!(class = %Trace::Byte(apdu.class().into_inner()), ins = %trace_ins(apdu.instruction()), p1 = %Trace::Byte(apdu.p1), p2 = %Trace::Byte(apdu.p2), le = apdu.expected(), data = %Trace::Slice(apdu.data()), "call");
 
         match self.process_command(&apdu).into_inner() {
             apdu_dispatch::Response::Data(d) => {
@@ -165,7 +169,7 @@ impl PivApplet {
     /// The applet's entry point: dispatch a received host APDU to its
     /// instruction handler.
     pub fn process(&mut self, apdu: &[u8]) -> Response {
-        let command = match apdu::CommandView::try_from(apdu) {
+        let command = match CommandView::try_from(apdu) {
             Ok(command) => command,
             Err(
                 iso7816::command::FromSliceError::TooLong
@@ -182,7 +186,7 @@ impl PivApplet {
         self.process_command(&command)
     }
 
-    pub fn process_command(&mut self, command: &apdu::CommandView<'_>) -> Response {
+    pub fn process_command(&mut self, command: &CommandView<'_>) -> Response {
         if command.class().chain().not_the_last() {
             return iso7816::Status::ClaNotSupported.into();
         }

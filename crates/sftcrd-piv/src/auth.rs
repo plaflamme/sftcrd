@@ -28,7 +28,7 @@ impl PivApplet {
     ///
     /// The card also syncs the key slots' security status from the verified
     /// state on every VERIFY; this applet has no key slots yet.
-    pub(crate) fn process_verify(&mut self, command: &crate::apdu::CommandView<'_>) -> Response {
+    pub(crate) fn process_verify(&mut self, command: &sftcrd_apdu::CommandView<'_>) -> Response {
         if command.p1 != 0x00 && command.p1 != 0xFF {
             return iso7816::Status::IncorrectP1OrP2Parameter.into();
         }
@@ -81,7 +81,7 @@ impl PivApplet {
     /// it).
     pub(crate) fn process_change_reference(
         &mut self,
-        command: &crate::apdu::CommandView<'_>,
+        command: &sftcrd_apdu::CommandView<'_>,
     ) -> Response {
         if command.p1 != 0x00 {
             return iso7816::Status::IncorrectP1OrP2Parameter.into();
@@ -114,7 +114,7 @@ impl PivApplet {
     /// METADATA ever reports it.)
     pub(crate) fn process_reset_retry_counter(
         &mut self,
-        command: &crate::apdu::CommandView<'_>,
+        command: &sftcrd_apdu::CommandView<'_>,
     ) -> Response {
         if command.p1 != 0x00 {
             return iso7816::Status::IncorrectP1OrP2Parameter.into();

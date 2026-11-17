@@ -1,0 +1,15 @@
+[package]
+name = "sftcrd-apdu"
+version = "0.1.0"
+edition = "2024"
+description = "Shared APDU command, response, and tracing utilities for sftcrd applets."
+
+[dependencies]
+apdu-dispatch = { workspace = true }
+hex = { workspace = true }
+iso7816 = { workspace = true }
+
+[dev-dependencies]
+
+[lints]
+workspace = true

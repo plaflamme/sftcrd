@@ -9,6 +9,7 @@ apdu-app = { workspace = true }
 apdu-dispatch = { workspace = true }
 hex = { workspace = true }
 iso7816 = { workspace = true }
+sftcrd-apdu = { workspace = true }
 tracing = { workspace = true }
 
 [dev-dependencies]

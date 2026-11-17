@@ -83,7 +83,7 @@ impl PivApplet {
     /// and an absent policy request keeps the slot's current policy.
     pub(crate) fn process_generate_key_pair(
         &mut self,
-        command: &crate::apdu::CommandView<'_>,
+        command: &sftcrd_apdu::CommandView<'_>,
     ) -> Response {
         if let Err(sw) = self.management_unlocked() {
             return sw.into();
@@ -169,7 +169,7 @@ impl PivApplet {
     /// slot.
     pub(crate) fn process_import_key(
         &mut self,
-        command: &crate::apdu::CommandView<'_>,
+        command: &sftcrd_apdu::CommandView<'_>,
     ) -> Response {
         if let Err(sw) = self.management_unlocked() {
             return sw.into();
@@ -217,7 +217,7 @@ impl PivApplet {
     /// a move into an occupied destination — the source itself included —
     /// `6A86` (R1: no silent key loss; the host pre-checks occupancy, so
     /// only an out-of-band tool can reach this answer).
-    pub(crate) fn process_move_key(&mut self, command: &crate::apdu::CommandView<'_>) -> Response {
+    pub(crate) fn process_move_key(&mut self, command: &sftcrd_apdu::CommandView<'_>) -> Response {
         if let Err(sw) = self.management_unlocked() {
             return sw.into();
         }

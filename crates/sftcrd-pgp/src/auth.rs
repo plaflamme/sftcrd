@@ -1,10 +1,10 @@
 //! VERIFY (0x20), CHANGE REFERENCE DATA (0x24), and RESET RETRY COUNTER (0x2C).
 
 use iso7816::Status;
+use sftcrd_apdu::CommandView;
 
 use crate::{
     PgpApplet, Response,
-    apdu::CommandView,
     pin::{MAX_PIN_LEN, PW1_MIN_LEN, PwRef},
 };
 
@@ -134,7 +134,7 @@ mod tests {
 
     fn select_applet(applet: &mut PgpApplet) {
         let select_apdu = keyroost_openpgp::select();
-        let cmd = crate::apdu::CommandView::try_from(select_apdu.as_slice()).unwrap();
+        let cmd = CommandView::try_from(select_apdu.as_slice()).unwrap();
         let mut reply = apdu_dispatch::response::Data::new();
         applet
             .select(iso7816::Interface::Contactless, cmd, &mut reply)

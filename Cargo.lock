@@ -993,6 +993,15 @@ dependencies = [
 ]
 
 [[package]]
+name = "sftcrd-apdu"
+version = "0.1.0"
+dependencies = [
+ "apdu-dispatch",
+ "hex",
+ "iso7816",
+]
+
+[[package]]
 name = "sftcrd-pgp"
 version = "0.1.0"
 dependencies = [
@@ -1001,6 +1010,7 @@ dependencies = [
  "hex",
  "iso7816",
  "keyroost-openpgp",
+ "sftcrd-apdu",
  "tracing",
 ]
 
@@ -1027,6 +1037,7 @@ dependencies = [
  "rand",
  "rsa",
  "serde",
+ "sftcrd-apdu",
  "sftcrd-tlv",
  "sha2",
  "toml-example",
