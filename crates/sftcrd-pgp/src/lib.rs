@@ -11,7 +11,7 @@ mod constants;
 mod data;
 mod pin;
 
-use constants::{INS_ACTIVATE_FILE, INS_GET_DATA, INS_PUT_DATA, INS_TERMINATE_DF};
+use constants::PgpInstruction;
 use data::CardData;
 use iso7816::{Instruction, Status};
 use pin::PinState;
@@ -172,7 +172,11 @@ impl PgpApplet {
 
         if self.terminated {
             return match command.instruction() {
-                Instruction::Unknown(INS_ACTIVATE_FILE) => self.process_activate_file(command),
+                Instruction::Unknown(code)
+                    if PgpInstruction::from_u8(code) == Some(PgpInstruction::ActivateFile) =>
+                {
+                    self.process_activate_file(command)
+                }
                 _ => Status::ConditionsOfUseNotSatisfied.into(),
             };
         }
@@ -181,10 +185,13 @@ impl PgpApplet {
             Instruction::Verify => self.process_verify(command),
             Instruction::ChangeReferenceData => self.process_change_reference_data(command),
             Instruction::ResetRetryCounter => self.process_reset_retry_counter(command),
-            Instruction::Unknown(INS_GET_DATA) => self.process_get_data(command),
-            Instruction::Unknown(INS_PUT_DATA) => self.process_put_data(command),
-            Instruction::Unknown(INS_TERMINATE_DF) => self.process_terminate_df(command),
-            Instruction::Unknown(INS_ACTIVATE_FILE) => self.process_activate_file(command),
+            Instruction::Unknown(code) => match PgpInstruction::from_u8(code) {
+                Some(PgpInstruction::GetData) => self.process_get_data(command),
+                Some(PgpInstruction::PutData) => self.process_put_data(command),
+                Some(PgpInstruction::TerminateDf) => self.process_terminate_df(command),
+                Some(PgpInstruction::ActivateFile) => self.process_activate_file(command),
+                None => Status::InstructionNotSupportedOrInvalid.into(),
+            },
             _ => Status::InstructionNotSupportedOrInvalid.into(),
         }
     }

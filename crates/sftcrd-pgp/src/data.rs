@@ -6,15 +6,15 @@ use sftcrd_apdu::CommandView;
 use crate::{
     PgpApplet, Response,
     constants::{
-        ALGO_ECDH, ALGO_ECDSA, ALGO_EDDSA, ALGO_RSA, DEFAULT_ALGO_ATTR, DEFAULT_SEX, DEFAULT_UIF,
-        EXTENDED_CAPABILITIES, HISTORICAL_BYTES, OID_ED25519, OID_NIST_P256, OID_NIST_P384,
-        OID_NIST_P521, OID_X25519, TAG_AID, TAG_ALGO_ATTR_AUT, TAG_ALGO_ATTR_DEC,
-        TAG_ALGO_ATTR_SIG, TAG_ALGORITHM_INFORMATION, TAG_APPLICATION_RELATED_DATA,
-        TAG_CA_FINGERPRINTS, TAG_CARDHOLDER_RELATED_DATA, TAG_DISCRETIONARY, TAG_DS_COUNTER,
-        TAG_EXTENDED_CAPABILITIES, TAG_FINGERPRINTS, TAG_FPR_AUTH, TAG_FPR_DEC, TAG_FPR_SIGN,
-        TAG_GENERATION_TIMES, TAG_HISTORICAL_BYTES, TAG_LANGUAGE, TAG_LOGIN_DATA, TAG_NAME,
-        TAG_PW_STATUS, TAG_RESETTING_CODE, TAG_SECURITY_SUPPORT, TAG_SEX, TAG_TIME_AUTH,
-        TAG_TIME_DEC, TAG_TIME_SIGN, TAG_UIF_AUT, TAG_UIF_DEC, TAG_UIF_SIG, TAG_URL,
+        AlgoId, DEFAULT_ALGO_ATTR, DEFAULT_UIF, EXTENDED_CAPABILITIES, HISTORICAL_BYTES,
+        OID_ED25519, OID_NIST_P256, OID_NIST_P384, OID_NIST_P521, OID_X25519, Sex, TAG_AID,
+        TAG_ALGO_ATTR_AUT, TAG_ALGO_ATTR_DEC, TAG_ALGO_ATTR_SIG, TAG_ALGORITHM_INFORMATION,
+        TAG_APPLICATION_RELATED_DATA, TAG_CA_FINGERPRINTS, TAG_CARDHOLDER_RELATED_DATA,
+        TAG_DISCRETIONARY, TAG_DS_COUNTER, TAG_EXTENDED_CAPABILITIES, TAG_FINGERPRINTS,
+        TAG_FPR_AUTH, TAG_FPR_DEC, TAG_FPR_SIGN, TAG_GENERATION_TIMES, TAG_HISTORICAL_BYTES,
+        TAG_LANGUAGE, TAG_LOGIN_DATA, TAG_NAME, TAG_PW_STATUS, TAG_RESETTING_CODE,
+        TAG_SECURITY_SUPPORT, TAG_SEX, TAG_TIME_AUTH, TAG_TIME_DEC, TAG_TIME_SIGN, TAG_UIF_AUT,
+        TAG_UIF_DEC, TAG_UIF_SIG, TAG_URL, UifMode,
     },
     pin::{PinState, PwRef},
 };
@@ -64,33 +64,17 @@ impl KeySlotMeta {
 
 /// Persistent `OpenPGP` Card data objects (cardholder metadata, slot metadata,
 /// and digital signature counter).
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Default)]
 pub(crate) struct CardData {
     pub(crate) name: Vec<u8>,
     pub(crate) language: Vec<u8>,
-    pub(crate) sex: u8,
+    pub(crate) sex: Sex,
     pub(crate) url: Vec<u8>,
     pub(crate) login_data: Vec<u8>,
     pub(crate) ds_counter: u32,
     pub(crate) sig: KeySlotMeta,
     pub(crate) dec: KeySlotMeta,
     pub(crate) aut: KeySlotMeta,
-}
-
-impl Default for CardData {
-    fn default() -> Self {
-        Self {
-            name: Vec::new(),
-            language: Vec::new(),
-            sex: DEFAULT_SEX,
-            url: Vec::new(),
-            login_data: Vec::new(),
-            ds_counter: 0,
-            sig: KeySlotMeta::default(),
-            dec: KeySlotMeta::default(),
-            aut: KeySlotMeta::default(),
-        }
-    }
 }
 
 impl CardData {
@@ -107,7 +91,7 @@ impl CardData {
         let mut out = Vec::new();
         push_tlv(&mut out, TAG_NAME, &self.name);
         push_tlv(&mut out, TAG_LANGUAGE, &self.language);
-        push_tlv(&mut out, TAG_SEX, &[self.sex]);
+        push_tlv(&mut out, TAG_SEX, &[self.sex as u8]);
         out
     }
 
@@ -175,18 +159,22 @@ impl CardData {
         ] {
             for bits in [2048u16, 3072, 4096] {
                 let [hi, lo] = bits.to_be_bytes();
-                push_tlv(&mut out, tag, &[ALGO_RSA, hi, lo, 0x00, 0x20, 0x00]);
+                push_tlv(
+                    &mut out,
+                    tag,
+                    &[AlgoId::Rsa as u8, hi, lo, 0x00, 0x20, 0x00],
+                );
             }
             match slot {
                 KeySlotId::Sig | KeySlotId::Aut => {
                     for oid in [OID_NIST_P256, OID_NIST_P384, OID_NIST_P521] {
-                        push_ecc_attr(&mut out, tag, ALGO_ECDSA, oid);
+                        push_ecc_attr(&mut out, tag, AlgoId::Ecdsa, oid);
                     }
-                    push_ecc_attr(&mut out, tag, ALGO_EDDSA, OID_ED25519);
+                    push_ecc_attr(&mut out, tag, AlgoId::EdDsa, OID_ED25519);
                 }
                 KeySlotId::Dec => {
                     for oid in [OID_NIST_P256, OID_NIST_P384, OID_NIST_P521, OID_X25519] {
-                        push_ecc_attr(&mut out, tag, ALGO_ECDH, oid);
+                        push_ecc_attr(&mut out, tag, AlgoId::Ecdh, oid);
                     }
                 }
             }
@@ -195,9 +183,9 @@ impl CardData {
     }
 }
 
-fn push_ecc_attr(out: &mut Vec<u8>, tag: u16, algo_id: u8, oid: &[u8]) {
+fn push_ecc_attr(out: &mut Vec<u8>, tag: u16, algo_id: AlgoId, oid: &[u8]) {
     let mut attr = Vec::with_capacity(1 + oid.len());
-    attr.push(algo_id);
+    attr.push(algo_id as u8);
     attr.extend_from_slice(oid);
     push_tlv(out, tag, &attr);
 }
@@ -230,10 +218,11 @@ pub(crate) fn push_tlv(out: &mut Vec<u8>, tag: u16, value: &[u8]) {
 }
 
 fn validate_algo_attr(slot: KeySlotId, attr: &[u8]) -> Result<(), Status> {
-    let Some(&algo_id) = attr.first() else {
+    let Some(&raw_algo_id) = attr.first() else {
         return Err(Status::WrongLength);
     };
-    if algo_id == ALGO_RSA {
+    let algo_id = AlgoId::from_u8(raw_algo_id).ok_or(Status::IncorrectDataParameter)?;
+    if algo_id == AlgoId::Rsa {
         if !(5..=6).contains(&attr.len()) {
             return Err(Status::IncorrectDataParameter);
         }
@@ -265,14 +254,15 @@ fn validate_algo_attr(slot: KeySlotId, attr: &[u8]) -> Result<(), Status> {
     Ok(())
 }
 
-fn is_supported_ecc(slot: KeySlotId, algo_id: u8, oid: &[u8]) -> bool {
+fn is_supported_ecc(slot: KeySlotId, algo_id: AlgoId, oid: &[u8]) -> bool {
     match slot {
         KeySlotId::Sig | KeySlotId::Aut => {
-            (algo_id == ALGO_ECDSA && matches!(oid, OID_NIST_P256 | OID_NIST_P384 | OID_NIST_P521))
-                || (algo_id == ALGO_EDDSA && oid == OID_ED25519)
+            (algo_id == AlgoId::Ecdsa
+                && matches!(oid, OID_NIST_P256 | OID_NIST_P384 | OID_NIST_P521))
+                || (algo_id == AlgoId::EdDsa && oid == OID_ED25519)
         }
         KeySlotId::Dec => {
-            algo_id == ALGO_ECDH
+            algo_id == AlgoId::Ecdh
                 && matches!(
                     oid,
                     OID_NIST_P256 | OID_NIST_P384 | OID_NIST_P521 | OID_X25519
@@ -336,10 +326,10 @@ impl PgpApplet {
                 if data.len() != 1 {
                     return Status::WrongLength.into();
                 }
-                if !matches!(data[0], b'0' | b'1' | b'2' | b'9') {
+                let Some(sex) = Sex::from_u8(data[0]) else {
                     return Status::IncorrectDataParameter.into();
-                }
-                self.data.sex = data[0];
+                };
+                self.data.sex = sex;
             }
             TAG_URL => {
                 if data.len() > MAX_URL_LEN {
@@ -419,11 +409,11 @@ impl PgpApplet {
         let Ok(uif): Result<[u8; 2], _> = data.try_into() else {
             return Status::WrongLength.into();
         };
-        if uif[0] > 0x02 {
+        if UifMode::from_u8(uif[0]).is_none() {
             return Status::IncorrectDataParameter.into();
         }
         let meta = self.data.slot_mut(slot);
-        if meta.uif[0] == 0x02 {
+        if UifMode::from_u8(meta.uif[0]) == Some(UifMode::Permanent) {
             return Status::ConditionsOfUseNotSatisfied.into();
         }
         meta.uif = uif;
