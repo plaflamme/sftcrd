@@ -76,6 +76,28 @@ pub(crate) struct CardData {
 tlv_struct! {
     #[tag_type(BerTag)]
     #[length(BerLength)]
+    struct CardholderRelatedData<'a> {
+        #[tag = 0x5B]
+        name: &'a [u8],
+        #[tag = 0x5F2D]
+        language: &'a [u8],
+        #[tag = 0x5F35]
+        sex: u8,
+    }
+}
+
+tlv_struct! {
+    #[tag_type(BerTag)]
+    #[length(BerLength)]
+    struct SecuritySupportTemplate {
+        #[tag = 0x93]
+        ds_counter: [u8; 3],
+    }
+}
+
+tlv_struct! {
+    #[tag_type(BerTag)]
+    #[length(BerLength)]
     struct DiscretionaryData<'a> {
         #[tag = 0xC0]
         extended_capabilities: [u8; 10],
@@ -132,14 +154,13 @@ impl CardData {
         }
     }
 
-    /// Encode Cardholder Related Data (`0065` value: `5B`, `5F2D`, `5F35`).
-    pub(crate) fn encode_cardholder_related_data(&self) -> Vec<u8> {
-        let sex = [self.sex as u8];
-        encode_tlvs(&[
-            (0x005B, &self.name),
-            (0x5F2D, &self.language),
-            (0x5F35, &sex),
-        ])
+    /// Build Cardholder Related Data (`0065` value: `5B`, `5F2D`, `5F35`).
+    fn cardholder_related_data(&self) -> CardholderRelatedData<'_> {
+        CardholderRelatedData {
+            name: &self.name,
+            language: &self.language,
+            sex: self.sex as u8,
+        }
     }
 
     /// Build Application Related Data (`006E` value: `4F`, `5F52`, `73`).
@@ -179,15 +200,17 @@ impl CardData {
         }
     }
 
-    /// Encode Security Support Template (`007A` value: `93`).
-    pub(crate) fn encode_security_support(&self) -> Vec<u8> {
-        let be = self.ds_counter.to_be_bytes();
-        encode_tlvs(&[(0x0093, &be[1..4])])
+    /// Build Security Support Template (`007A` value: `93`).
+    fn security_support(&self) -> SecuritySupportTemplate {
+        let [_, b1, b2, b3] = self.ds_counter.to_be_bytes();
+        SecuritySupportTemplate {
+            ds_counter: [b1, b2, b3],
+        }
     }
 
     /// Encode Algorithm Information (`00FA` value): supported algorithms per slot.
     pub(crate) fn encode_algorithm_information() -> Vec<u8> {
-        let mut entries: Vec<(u16, Vec<u8>)> = Vec::new();
+        let mut entries: Vec<(u32, Vec<u8>)> = Vec::new();
         for (tag, slot) in [
             (0x00C1, KeySlotId::Sig),
             (0x00C2, KeySlotId::Dec),
@@ -212,26 +235,21 @@ impl CardData {
             }
         }
 
-        let borrowed: Vec<(u16, &[u8])> = entries.iter().map(|(t, v)| (*t, v.as_slice())).collect();
-        encode_tlvs(&borrowed)
+        let total_len: usize = entries
+            .iter()
+            .map(|(tag, val)| {
+                BerTag(*tag).length() + BerLength::length(val.len()) as usize + val.len()
+            })
+            .sum();
+        let mut buf = vec![0u8; total_len];
+        let mut encoder = Encoder::new(&mut buf);
+        for (tag, val) in &entries {
+            encoder
+                .write_tlv::<BerTag, BerLength, _>(&BerTag(*tag), val)
+                .expect("exact pre-sized buffer cannot overflow");
+        }
+        buf
     }
-}
-
-fn encode_tlvs(entries: &[(u16, &[u8])]) -> Vec<u8> {
-    let total_len: usize = entries
-        .iter()
-        .map(|(tag, val)| {
-            BerTag(u32::from(*tag)).length() + BerLength::length(val.len()) as usize + val.len()
-        })
-        .sum();
-    let mut buf = vec![0u8; total_len];
-    let mut encoder = Encoder::new(&mut buf);
-    for (tag, val) in entries {
-        encoder
-            .write_tlv::<BerTag, BerLength, _>(&BerTag(u32::from(*tag)), val)
-            .expect("exact pre-sized buffer cannot overflow");
-    }
-    buf
 }
 
 fn ecc_attr(algo_id: AlgoId, oid: &[u8]) -> Vec<u8> {
@@ -385,15 +403,21 @@ impl PgpApplet {
             GetDataSelector::LoginData => self.data.login_data.as_slice().into(),
             GetDataSelector::Url => self.data.url.as_slice().into(),
             GetDataSelector::HistoricalBytes => HISTORICAL_BYTES.as_slice().into(),
-            GetDataSelector::CardholderRelatedData => {
-                self.data.encode_cardholder_related_data().into()
-            }
+            GetDataSelector::CardholderRelatedData => self
+                .data
+                .cardholder_related_data()
+                .encode_top_level()
+                .map_or_else(|_| Status::MemoryFailure.into(), Response::from),
             GetDataSelector::ApplicationRelatedData => self
                 .data
                 .application_related_data(&self.aid, &self.pins)
                 .encode_top_level()
                 .map_or_else(|_| Status::MemoryFailure.into(), Response::from),
-            GetDataSelector::SecuritySupport => self.data.encode_security_support().into(),
+            GetDataSelector::SecuritySupport => self
+                .data
+                .security_support()
+                .encode_top_level()
+                .map_or_else(|_| Status::MemoryFailure.into(), Response::from),
             GetDataSelector::PwStatus => self.pins.pw_status_bytes().into(),
             GetDataSelector::AlgorithmInformation => {
                 CardData::encode_algorithm_information().into()
