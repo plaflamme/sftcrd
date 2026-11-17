@@ -66,11 +66,11 @@ impl PgpApplet {
             return Status::IncorrectP1OrP2Parameter.into();
         }
 
-        let slot = match PwRef::from_u8(cmd.p2) {
-            Some(PwRef::Pw1Sign) => &mut self.pins.pw1,
-            Some(PwRef::Pw3Admin) => &mut self.pins.pw3,
+        let pw_ref = match PwRef::from_u8(cmd.p2) {
+            Some(r @ (PwRef::Pw1Sign | PwRef::Pw3Admin)) => r,
             Some(PwRef::Pw1Other) | None => return Status::KeyReferenceNotFound.into(),
         };
+        let slot = self.pins.slot_mut(pw_ref);
 
         if slot.tries() == 0 {
             return Status::OperationBlocked.into();
@@ -118,7 +118,7 @@ impl PgpApplet {
     }
 
     fn reset_pw1_by_rc(&mut self, data: &[u8]) -> Response {
-        let Some(rc) = self.pins.rc.as_mut() else {
+        let Some(rc) = self.pins.rc_mut() else {
             return Status::OperationBlocked.into();
         };
         if rc.tries() == 0 {
@@ -140,10 +140,11 @@ impl PgpApplet {
         if let Err(tries) = rc.check(rc_presented) {
             return Status::RemainingRetries(tries).into();
         }
-        if !self.pins.pw1.is_valid_new_pin(new_pw1) {
+        let pw1 = self.pins.slot_mut(PwRef::Pw1Sign);
+        if !pw1.is_valid_new_pin(new_pw1) {
             return Status::WrongLength.into();
         }
-        self.pins.pw1.set_value(new_pw1);
+        pw1.set_value(new_pw1);
         Status::Success.into()
     }
 
@@ -151,10 +152,11 @@ impl PgpApplet {
         if !self.pins.is_verified(PwRef::Pw3Admin) {
             return Status::SecurityStatusNotSatisfied.into();
         }
-        if !self.pins.pw1.is_valid_new_pin(new_pw1) {
+        let pw1 = self.pins.slot_mut(PwRef::Pw1Sign);
+        if !pw1.is_valid_new_pin(new_pw1) {
             return Status::WrongLength.into();
         }
-        self.pins.pw1.set_value(new_pw1);
+        pw1.set_value(new_pw1);
         Status::Success.into()
     }
 }

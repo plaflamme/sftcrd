@@ -176,11 +176,11 @@ pub(crate) enum Pw1Validity {
 
 /// All `OpenPGP` Card PINs.
 pub(crate) struct PinState {
-    pub(crate) pw1: PinSlot,
-    pub(crate) rc: Option<PinSlot>,
-    pub(crate) pw3: PinSlot,
+    pw1: PinSlot,
+    rc: Option<PinSlot>,
+    pw3: PinSlot,
     /// PW1 (`0x81`) validity mode: single `PSO:CDS` vs multiple.
-    pub(crate) pw1_validity: Pw1Validity,
+    pw1_validity: Pw1Validity,
 }
 
 impl Default for PinState {
@@ -213,6 +213,18 @@ impl PinState {
 
     pub(crate) fn slot(&self, pw_ref: PwRef) -> &PinSlot {
         self.slot_and_context(pw_ref).0
+    }
+
+    pub(crate) fn slot_mut(&mut self, pw_ref: PwRef) -> &mut PinSlot {
+        self.slot_and_context_mut(pw_ref).0
+    }
+
+    pub(crate) fn rc_mut(&mut self) -> Option<&mut PinSlot> {
+        self.rc.as_mut()
+    }
+
+    pub(crate) fn pw1_valid_multiple(&self) -> bool {
+        self.pw1_validity == Pw1Validity::Multiple
     }
 
     pub(crate) fn is_verified(&self, pw_ref: PwRef) -> bool {

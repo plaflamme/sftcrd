@@ -15,8 +15,8 @@ mod trace;
 pub use apdu::Response;
 pub use constants::{AID_PREFIX, DEFAULT_SERIAL, MANUFACTURER_ID, OPENPGP_VERSION, build_aid};
 use iso7816::{Instruction, Status};
+use pin::PinState;
 pub use pin::{InvalidPinLength, PwRef};
-use pin::{PinState, Pw1Validity};
 use trace::Trace;
 
 /// An `OpenPGP` Card v3.4 applet instance.
@@ -119,7 +119,7 @@ impl PgpApplet {
     /// Returns whether PW1 (`0x81`) remains valid for multiple `PSO:CDS` commands.
     #[must_use]
     pub fn pw1_valid_multiple(&self) -> bool {
-        self.pins.pw1_validity == Pw1Validity::Multiple
+        self.pins.pw1_valid_multiple()
     }
 
     /// Configure the optional Resetting Code (RC, min 8 bytes).
