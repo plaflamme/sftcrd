@@ -33,18 +33,18 @@ impl PwRef {
 pub struct InvalidPinLength;
 
 /// Default user PIN (PW1): `"123456"`.
-pub(crate) const DEFAULT_PW1: &[u8] = b"123456";
+const DEFAULT_PW1: &[u8] = b"123456";
 /// Default admin PIN (PW3): `"12345678"`.
-pub(crate) const DEFAULT_PW3: &[u8] = b"12345678";
+const DEFAULT_PW3: &[u8] = b"12345678";
 /// Default retry limit for PW1, RC, and PW3.
-pub(crate) const DEFAULT_TRIES: u8 = 3;
+const DEFAULT_TRIES: u8 = 3;
 
 /// Minimum length of PW1 in bytes (`OpenPGP` Card v3.4 §4.3.2).
 pub(crate) const PW1_MIN_LEN: usize = 6;
 /// Minimum length of Resetting Code in bytes (`OpenPGP` Card v3.4 §4.3.2).
-pub(crate) const RC_MIN_LEN: usize = 8;
+const RC_MIN_LEN: usize = 8;
 /// Minimum length of PW3 in bytes (`OpenPGP` Card v3.4 §4.3.2).
-pub(crate) const PW3_MIN_LEN: usize = 8;
+const PW3_MIN_LEN: usize = 8;
 /// Maximum length of any `OpenPGP` PIN/RC in bytes (`OpenPGP` Card v3.4 §4.3.2).
 pub(crate) const MAX_PIN_LEN: usize = 127;
 
