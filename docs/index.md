@@ -46,7 +46,7 @@ Use the nixos module:
 }
 ```
 
-Refer to the [module's options](options.html) to see how to configure the module.
+Refer to the [module's options](options.html) to see how to configure the module and the service's [configuration reference documentation](config.md) to configure the service.
 
 Once the `sftcrd` service is running, you should be able to interact with it through PC/SC and `vpcd` ([vsmartcard](https://github.com/frankmorgner/vsmartcard) daemon):
 

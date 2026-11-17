@@ -1,4 +1,9 @@
-{ pkgs, optionsDoc, ... }:
+{
+  pkgs,
+  optionsDoc,
+  sftcrd-piv,
+  ...
+}:
 let
   ndgToml = pkgs.writeText "ndg.toml" ''
     title = "sftcrd Documentation"
@@ -13,13 +18,19 @@ pkgs.stdenv.mkDerivation {
   nativeBuildInputs = [ pkgs.ndg ];
 
   buildPhase = ''
+
+    mkdir -p input
+    cp -r ./docs/* input
+
+    ${sftcrd-piv}/bin/sftcrd-config-reference > input/config-reference.md
+
     # Run NDG directly on the generated options.json
     # This will output a structured, complete HTML document set
     ndg --config-file ${ndgToml} \
       html \
       --module-options ${optionsDoc.optionsJSON}/share/doc/nixos/options.json \
       --options-filter-prefix services.sftcrd \
-      --input-dir ./docs \
+      --input-dir ./input \
       --output-dir ./dist
   '';
 

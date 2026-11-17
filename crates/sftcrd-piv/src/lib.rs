@@ -135,6 +135,10 @@ impl apdu_app::App for PivApplet {
 }
 
 impl PivApplet {
+    pub fn print() {
+        use toml_example::TomlExample;
+        println!("{}", CardConfig::toml_example());
+    }
     /// A factory-fresh applet: the default PIN/PUK with full retry counters,
     /// nothing verified, the [`DEFAULT_SERIAL`] serial.
     #[must_use]

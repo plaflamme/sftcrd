@@ -13,6 +13,7 @@ use figment::Figment;
 use figment::providers::{Format, Toml};
 use serde::Deserialize;
 use sftcrd_tlv::{BerLength, EncodeError, ValueDecoder, ValueEncoder, tlv_struct};
+use toml_example::TomlExample;
 
 use crate::PivApplet;
 use crate::piv::{MgmtAlg, PinPolicy, RsaBits, Slot, TouchPolicy};
@@ -70,64 +71,90 @@ impl From<figment::Error> for ConfigError {
 }
 
 /// Top-level card configuration holding applet namespaces.
-#[derive(Debug, Deserialize, Default, Clone)]
+#[derive(TomlExample, Debug, Deserialize, Default, Clone)]
 #[serde(deny_unknown_fields)]
 pub struct CardConfig {
     /// Card serial number.
+    #[toml_example(default = 87654321, require)]
     pub serial: Option<u32>,
     /// PIV applet configuration.
+    #[toml_example(nesting, require)]
     pub piv: Option<PivConfig>,
 }
 
 /// Configuration for the PIV applet.
-#[derive(Debug, Deserialize, Default, Clone)]
+#[derive(TomlExample, Debug, Deserialize, Default, Clone)]
 #[serde(deny_unknown_fields)]
 pub struct PivConfig {
-    /// Overrides card serial if specified under `[piv]`.
-    pub serial: Option<u32>,
     /// Application PIN configuration.
+    #[toml_example(nesting, require)]
     pub pin: Option<PinConfig>,
     /// PUK configuration.
+    #[toml_example(nesting, require)]
     pub puk: Option<PinConfig>,
     /// Management key configuration.
+    #[toml_example(nesting, require)]
     pub management_key: Option<MgmtKeyConfig>,
     /// Slot configurations mapped by slot identifier (e.g. `"9a"`, `"9c"`, `"82"`).
     #[serde(default)]
+    #[toml_example(default = "9a", nesting)]
     pub slots: BTreeMap<String, SlotConfig>,
 }
 
 /// Configuration for a PIN or PUK.
-#[derive(Debug, Deserialize, Clone)]
+#[derive(TomlExample, Debug, Deserialize, Clone)]
 #[serde(deny_unknown_fields)]
 pub struct PinConfig {
     /// PIN or PUK value as a string (6-8 ASCII digits).
+    #[toml_example(default = 123456, require)]
     pub value: String,
     /// Maximum number of tries.
+    #[toml_example(default = 3, require)]
     pub max_tries: Option<u8>,
 }
 
 /// Configuration for the 9B management key.
-#[derive(Debug, Deserialize, Clone)]
+#[derive(TomlExample, Debug, Deserialize, Clone)]
 #[serde(deny_unknown_fields)]
 pub struct MgmtKeyConfig {
     /// Hex-encoded management key bytes.
+    #[toml_example(default = "010203040506070801020304050607080102030405060708", require)]
     pub key: String,
     /// Management key algorithm: `"3des"`, `"aes128"`, `"aes192"`, or `"aes256"`.
     /// If omitted, the algorithm is inferred from the key length (24 bytes -> 3DES, 16 -> AES-128, etc.).
+    #[toml_example(default = "3des", require)]
     pub algorithm: Option<String>,
 }
 
 /// Configuration for an asymmetric key slot.
-#[derive(Debug, Deserialize, Default, Clone)]
+#[derive(TomlExample, Debug, Deserialize, Default, Clone)]
 #[serde(deny_unknown_fields)]
 pub struct SlotConfig {
     /// PEM-encoded private key (PKCS#8 `BEGIN PRIVATE KEY`, PKCS#1 `BEGIN RSA PRIVATE KEY`, or SEC1 `BEGIN EC PRIVATE KEY`).
+    #[toml_example(
+        default = """
+-----BEGIN PRIVATE KEY-----
+...
+-----END PRIVATE KEY-----
+""",
+        require
+    )]
     pub key: Option<String>,
     /// PEM-encoded X.509 certificate (`BEGIN CERTIFICATE`).
+    #[toml_example(
+        default = """
+-----BEGIN CERTIFICATE-----
+...
+-----END CERTIFICATE-----
+""",
+        require
+    )]
     pub cert: Option<String>,
     /// PIN policy: `"never"`, `"once"`, or `"always"`.
+    #[toml_example(default = "never", require)]
     pub pin_policy: Option<String>,
     /// Touch policy: `"never"`, `"always"`, or `"cached"`.
+    #[toml_example(default = "never", require)]
     pub touch_policy: Option<String>,
 }
 
@@ -451,12 +478,8 @@ impl PivApplet {
             figment.extract()?
         };
 
-        // If top-level has a serial, use it as fallback
         let root_serial: Option<u32> = figment.extract_inner("serial").ok();
-        let serial = piv_config
-            .serial
-            .or(root_serial)
-            .unwrap_or(crate::DEFAULT_SERIAL);
+        let serial = root_serial.unwrap_or(crate::DEFAULT_SERIAL);
 
         Self::from_config(&piv_config, serial)
     }
