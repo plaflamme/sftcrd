@@ -287,7 +287,7 @@ mod tests {
         assert_eq!(
             applet
                 .process(&keyroost_openpgp::put_data(
-                    constants::TAG_UIF_SIG,
+                    keyroost_openpgp::TAG_UIF_SIG,
                     &[0x02, 0x20]
                 ))
                 .status(),
@@ -373,16 +373,16 @@ mod tests {
         assert_eq!(app.algo_attr_sig, constants::DEFAULT_ALGO_ATTR);
         assert_eq!(
             applet
-                .process(&keyroost_openpgp::get_data(constants::TAG_UIF_SIG))
+                .process(&keyroost_openpgp::get_data(keyroost_openpgp::TAG_UIF_SIG))
                 .data(),
             &constants::DEFAULT_UIF
         );
         let ch_resp = applet.process(&keyroost_openpgp::get_data(
-            constants::TAG_CARDHOLDER_RELATED_DATA,
+            keyroost_openpgp::TAG_CARDHOLDER_RELATED_DATA,
         ));
         let ch = keyroost_openpgp::parse_tlvs(ch_resp.data()).unwrap();
         assert_eq!(
-            keyroost_openpgp::find_tag(&ch, constants::TAG_NAME),
+            keyroost_openpgp::find_tag(&ch, keyroost_openpgp::TAG_NAME),
             Some(&[][..])
         );
     }

@@ -8,14 +8,7 @@ use crate::{
     PgpApplet, Response,
     constants::{
         AlgoId, DEFAULT_ALGO_ATTR, DEFAULT_UIF, EXTENDED_CAPABILITIES, Gender, HISTORICAL_BYTES,
-        OID_ED25519, OID_NIST_P256, OID_NIST_P384, OID_NIST_P521, OID_X25519, TAG_AID,
-        TAG_ALGO_ATTR_AUT, TAG_ALGO_ATTR_DEC, TAG_ALGO_ATTR_SIG, TAG_ALGORITHM_INFORMATION,
-        TAG_APPLICATION_RELATED_DATA, TAG_CA_FINGERPRINTS, TAG_CARDHOLDER_RELATED_DATA,
-        TAG_DISCRETIONARY, TAG_DS_COUNTER, TAG_EXTENDED_CAPABILITIES, TAG_FINGERPRINTS,
-        TAG_FPR_AUTH, TAG_FPR_DEC, TAG_FPR_SIGN, TAG_GENERATION_TIMES, TAG_HISTORICAL_BYTES,
-        TAG_LANGUAGE, TAG_LOGIN_DATA, TAG_NAME, TAG_PW_STATUS, TAG_RESETTING_CODE,
-        TAG_SECURITY_SUPPORT, TAG_SEX, TAG_TIME_AUTH, TAG_TIME_DEC, TAG_TIME_SIGN, TAG_UIF_AUT,
-        TAG_UIF_DEC, TAG_UIF_SIG, TAG_URL, UifMode,
+        OID_ED25519, OID_NIST_P256, OID_NIST_P384, OID_NIST_P521, OID_X25519, UifMode,
     },
     pin::{PinState, PwRef},
 };
@@ -91,9 +84,9 @@ impl CardData {
     pub(crate) fn encode_cardholder_related_data(&self) -> Vec<u8> {
         let sex = [self.sex as u8];
         encode_tlvs(&[
-            (TAG_NAME, &self.name),
-            (TAG_LANGUAGE, &self.language),
-            (TAG_SEX, &sex),
+            (0x005B, &self.name),
+            (0x5F2D, &self.language),
+            (0x5F35, &sex),
         ])
     }
 
@@ -121,39 +114,39 @@ impl CardData {
         timestamps[8..12].copy_from_slice(&self.aut.generation_time.to_be_bytes());
 
         let discretionary = encode_tlvs(&[
-            (TAG_EXTENDED_CAPABILITIES, &EXTENDED_CAPABILITIES),
-            (TAG_ALGO_ATTR_SIG, &self.sig.algo_attr),
-            (TAG_ALGO_ATTR_DEC, &self.dec.algo_attr),
-            (TAG_ALGO_ATTR_AUT, &self.aut.algo_attr),
-            (TAG_PW_STATUS, &pw_status),
-            (TAG_FINGERPRINTS, &fingerprints),
-            (TAG_CA_FINGERPRINTS, &ca_fingerprints),
-            (TAG_GENERATION_TIMES, &timestamps),
-            (TAG_UIF_SIG, &self.sig.uif),
-            (TAG_UIF_DEC, &self.dec.uif),
-            (TAG_UIF_AUT, &self.aut.uif),
+            (0x00C0, &EXTENDED_CAPABILITIES),
+            (0x00C1, &self.sig.algo_attr),
+            (0x00C2, &self.dec.algo_attr),
+            (0x00C3, &self.aut.algo_attr),
+            (0x00C4, &pw_status),
+            (0x00C5, &fingerprints),
+            (0x00C6, &ca_fingerprints),
+            (0x00CD, &timestamps),
+            (0x00D6, &self.sig.uif),
+            (0x00D7, &self.dec.uif),
+            (0x00D8, &self.aut.uif),
         ]);
 
         encode_tlvs(&[
-            (TAG_AID, aid),
-            (TAG_HISTORICAL_BYTES, &HISTORICAL_BYTES),
-            (TAG_DISCRETIONARY, &discretionary),
+            (0x004F, aid),
+            (0x5F52, &HISTORICAL_BYTES),
+            (0x0073, &discretionary),
         ])
     }
 
     /// Encode Security Support Template (`007A` value: `93`).
     pub(crate) fn encode_security_support(&self) -> Vec<u8> {
         let be = self.ds_counter.to_be_bytes();
-        encode_tlvs(&[(TAG_DS_COUNTER, &be[1..4])])
+        encode_tlvs(&[(0x0093, &be[1..4])])
     }
 
     /// Encode Algorithm Information (`00FA` value): supported algorithms per slot.
     pub(crate) fn encode_algorithm_information() -> Vec<u8> {
         let mut entries: Vec<(u16, Vec<u8>)> = Vec::new();
         for (tag, slot) in [
-            (TAG_ALGO_ATTR_SIG, KeySlotId::Sig),
-            (TAG_ALGO_ATTR_DEC, KeySlotId::Dec),
-            (TAG_ALGO_ATTR_AUT, KeySlotId::Aut),
+            (0x00C1, KeySlotId::Sig),
+            (0x00C2, KeySlotId::Dec),
+            (0x00C3, KeySlotId::Aut),
         ] {
             for bits in [2048u16, 3072, 4096] {
                 let [hi, lo] = bits.to_be_bytes();
@@ -265,21 +258,21 @@ impl PgpApplet {
         }
         let tag = u16::from_be_bytes([cmd.p1, cmd.p2]);
         match tag {
-            TAG_AID => self.aid.as_slice().into(),
-            TAG_LOGIN_DATA => self.data.login_data.as_slice().into(),
-            TAG_URL => self.data.url.as_slice().into(),
-            TAG_HISTORICAL_BYTES => HISTORICAL_BYTES.as_slice().into(),
-            TAG_CARDHOLDER_RELATED_DATA => self.data.encode_cardholder_related_data().into(),
-            TAG_APPLICATION_RELATED_DATA => self
+            0x004F => self.aid.as_slice().into(),
+            0x005E => self.data.login_data.as_slice().into(),
+            0x5F50 => self.data.url.as_slice().into(),
+            0x5F52 => HISTORICAL_BYTES.as_slice().into(),
+            0x0065 => self.data.encode_cardholder_related_data().into(),
+            0x006E => self
                 .data
                 .encode_application_related_data(&self.aid, &self.pins)
                 .into(),
-            TAG_SECURITY_SUPPORT => self.data.encode_security_support().into(),
-            TAG_PW_STATUS => self.pins.pw_status_bytes().into(),
-            TAG_ALGORITHM_INFORMATION => CardData::encode_algorithm_information().into(),
-            TAG_UIF_SIG => self.data.sig.uif.into(),
-            TAG_UIF_DEC => self.data.dec.uif.into(),
-            TAG_UIF_AUT => self.data.aut.uif.into(),
+            0x007A => self.data.encode_security_support().into(),
+            0x00C4 => self.pins.pw_status_bytes().into(),
+            0x00FA => CardData::encode_algorithm_information().into(),
+            0x00D6 => self.data.sig.uif.into(),
+            0x00D7 => self.data.dec.uif.into(),
+            0x00D8 => self.data.aut.uif.into(),
             _ => Status::KeyReferenceNotFound.into(),
         }
     }
@@ -296,19 +289,19 @@ impl PgpApplet {
 
         let data = cmd.data();
         match tag {
-            TAG_NAME => {
+            0x005B => {
                 if data.len() > MAX_NAME_LEN {
                     return Status::WrongLength.into();
                 }
                 self.data.name = data.to_vec();
             }
-            TAG_LANGUAGE => {
+            0x5F2D => {
                 if data.len() > MAX_LANGUAGE_LEN {
                     return Status::WrongLength.into();
                 }
                 self.data.language = data.to_vec();
             }
-            TAG_SEX => {
+            0x5F35 => {
                 if data.len() != 1 {
                     return Status::WrongLength.into();
                 }
@@ -317,22 +310,22 @@ impl PgpApplet {
                 };
                 self.data.sex = gender;
             }
-            TAG_URL => {
+            0x5F50 => {
                 if data.len() > MAX_URL_LEN {
                     return Status::WrongLength.into();
                 }
                 self.data.url = data.to_vec();
             }
-            TAG_LOGIN_DATA => {
+            0x005E => {
                 if data.len() > MAX_LOGIN_DATA_LEN {
                     return Status::WrongLength.into();
                 }
                 self.data.login_data = data.to_vec();
             }
-            TAG_ALGO_ATTR_SIG => return self.put_algo_attr(KeySlotId::Sig, data),
-            TAG_ALGO_ATTR_DEC => return self.put_algo_attr(KeySlotId::Dec, data),
-            TAG_ALGO_ATTR_AUT => return self.put_algo_attr(KeySlotId::Aut, data),
-            TAG_PW_STATUS => {
+            0x00C1 => return self.put_algo_attr(KeySlotId::Sig, data),
+            0x00C2 => return self.put_algo_attr(KeySlotId::Dec, data),
+            0x00C3 => return self.put_algo_attr(KeySlotId::Aut, data),
+            0x00C4 => {
                 if data.len() != 1 {
                     return Status::WrongLength.into();
                 }
@@ -342,22 +335,22 @@ impl PgpApplet {
                     _ => return Status::IncorrectDataParameter.into(),
                 }
             }
-            TAG_FPR_SIGN => return self.put_fingerprint(KeySlotId::Sig, data),
-            TAG_FPR_DEC => return self.put_fingerprint(KeySlotId::Dec, data),
-            TAG_FPR_AUTH => return self.put_fingerprint(KeySlotId::Aut, data),
-            TAG_TIME_SIGN => return self.put_timestamp(KeySlotId::Sig, data),
-            TAG_TIME_DEC => return self.put_timestamp(KeySlotId::Dec, data),
-            TAG_TIME_AUTH => return self.put_timestamp(KeySlotId::Aut, data),
-            TAG_RESETTING_CODE => {
+            0x00C7 => return self.put_fingerprint(KeySlotId::Sig, data),
+            0x00C8 => return self.put_fingerprint(KeySlotId::Dec, data),
+            0x00C9 => return self.put_fingerprint(KeySlotId::Aut, data),
+            0x00CE => return self.put_timestamp(KeySlotId::Sig, data),
+            0x00CF => return self.put_timestamp(KeySlotId::Dec, data),
+            0x00D0 => return self.put_timestamp(KeySlotId::Aut, data),
+            0x00D3 => {
                 if data.is_empty() {
                     self.pins.clear_rc();
                 } else if let Err(status) = self.pins.set_rc(data) {
                     return status.into();
                 }
             }
-            TAG_UIF_SIG => return self.put_uif(KeySlotId::Sig, data),
-            TAG_UIF_DEC => return self.put_uif(KeySlotId::Dec, data),
-            TAG_UIF_AUT => return self.put_uif(KeySlotId::Aut, data),
+            0x00D6 => return self.put_uif(KeySlotId::Sig, data),
+            0x00D7 => return self.put_uif(KeySlotId::Dec, data),
+            0x00D8 => return self.put_uif(KeySlotId::Aut, data),
             _ => unreachable!("is_writable_do checked above"),
         }
         Status::Success.into()
@@ -410,34 +403,37 @@ impl PgpApplet {
 const fn is_writable_do(tag: u16) -> bool {
     matches!(
         tag,
-        TAG_NAME
-            | TAG_LANGUAGE
-            | TAG_SEX
-            | TAG_URL
-            | TAG_LOGIN_DATA
-            | TAG_ALGO_ATTR_SIG
-            | TAG_ALGO_ATTR_DEC
-            | TAG_ALGO_ATTR_AUT
-            | TAG_PW_STATUS
-            | TAG_FPR_SIGN
-            | TAG_FPR_DEC
-            | TAG_FPR_AUTH
-            | TAG_TIME_SIGN
-            | TAG_TIME_DEC
-            | TAG_TIME_AUTH
-            | TAG_RESETTING_CODE
-            | TAG_UIF_SIG
-            | TAG_UIF_DEC
-            | TAG_UIF_AUT
+        0x005B
+            | 0x5F2D
+            | 0x5F35
+            | 0x5F50
+            | 0x005E
+            | 0x00C1
+            | 0x00C2
+            | 0x00C3
+            | 0x00C4
+            | 0x00C7
+            | 0x00C8
+            | 0x00C9
+            | 0x00CE
+            | 0x00CF
+            | 0x00D0
+            | 0x00D3
+            | 0x00D6
+            | 0x00D7
+            | 0x00D8
     )
 }
 
 #[cfg(test)]
 mod tests {
     use keyroost_openpgp::{
-        KeyAlg, KeyCrt, PW1_SIGN, PW3_ADMIN, find_nested, find_tag, parse_algorithm_information,
-        parse_application_related_data, parse_pw_status, parse_signature_counter, parse_tlvs,
-        uif_asks_touch,
+        KeyAlg, KeyCrt, PW1_SIGN, PW3_ADMIN, TAG_AID, TAG_CA_FINGERPRINTS,
+        TAG_CARDHOLDER_RELATED_DATA, TAG_EXTENDED_CAPABILITIES, TAG_GENERATION_TIMES,
+        TAG_HISTORICAL_BYTES, TAG_LANGUAGE, TAG_LOGIN_DATA, TAG_NAME, TAG_PW_STATUS,
+        TAG_SECURITY_SUPPORT, TAG_SEX, TAG_UIF_AUT, TAG_UIF_DEC, TAG_UIF_SIG, TAG_URL, find_nested,
+        find_tag, parse_algorithm_information, parse_application_related_data, parse_pw_status,
+        parse_signature_counter, parse_tlvs, uif_asks_touch,
     };
 
     use super::*;
@@ -770,10 +766,7 @@ mod tests {
         // Resetting Code (00D3): set then clear
         assert_eq!(
             applet
-                .process(&keyroost_openpgp::put_data(
-                    TAG_RESETTING_CODE,
-                    b"resetcode"
-                ))
+                .process(&keyroost_openpgp::put_data(0x00D3, b"resetcode"))
                 .status(),
             Status::Success
         );
@@ -783,7 +776,7 @@ mod tests {
 
         assert_eq!(
             applet
-                .process(&keyroost_openpgp::put_data(TAG_RESETTING_CODE, &[]))
+                .process(&keyroost_openpgp::put_data(0x00D3, &[]))
                 .status(),
             Status::Success
         );

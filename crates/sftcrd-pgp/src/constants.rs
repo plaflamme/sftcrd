@@ -34,39 +34,6 @@ impl PgpInstruction {
     }
 }
 
-// OpenPGP Card v3.4 Data Object tags
-pub(crate) const TAG_AID: u16 = 0x004F;
-pub(crate) const TAG_NAME: u16 = 0x005B;
-pub(crate) const TAG_LOGIN_DATA: u16 = 0x005E;
-pub(crate) const TAG_LANGUAGE: u16 = 0x5F2D;
-pub(crate) const TAG_SEX: u16 = 0x5F35;
-pub(crate) const TAG_URL: u16 = 0x5F50;
-pub(crate) const TAG_HISTORICAL_BYTES: u16 = 0x5F52;
-pub(crate) const TAG_CARDHOLDER_RELATED_DATA: u16 = 0x0065;
-pub(crate) const TAG_APPLICATION_RELATED_DATA: u16 = 0x006E;
-pub(crate) const TAG_DISCRETIONARY: u16 = 0x0073;
-pub(crate) const TAG_SECURITY_SUPPORT: u16 = 0x007A;
-pub(crate) const TAG_DS_COUNTER: u16 = 0x0093;
-pub(crate) const TAG_EXTENDED_CAPABILITIES: u16 = 0x00C0;
-pub(crate) const TAG_ALGO_ATTR_SIG: u16 = 0x00C1;
-pub(crate) const TAG_ALGO_ATTR_DEC: u16 = 0x00C2;
-pub(crate) const TAG_ALGO_ATTR_AUT: u16 = 0x00C3;
-pub(crate) const TAG_PW_STATUS: u16 = 0x00C4;
-pub(crate) const TAG_FINGERPRINTS: u16 = 0x00C5;
-pub(crate) const TAG_CA_FINGERPRINTS: u16 = 0x00C6;
-pub(crate) const TAG_FPR_SIGN: u16 = 0x00C7;
-pub(crate) const TAG_FPR_DEC: u16 = 0x00C8;
-pub(crate) const TAG_FPR_AUTH: u16 = 0x00C9;
-pub(crate) const TAG_GENERATION_TIMES: u16 = 0x00CD;
-pub(crate) const TAG_TIME_SIGN: u16 = 0x00CE;
-pub(crate) const TAG_TIME_DEC: u16 = 0x00CF;
-pub(crate) const TAG_TIME_AUTH: u16 = 0x00D0;
-pub(crate) const TAG_RESETTING_CODE: u16 = 0x00D3;
-pub(crate) const TAG_UIF_SIG: u16 = 0x00D6;
-pub(crate) const TAG_UIF_DEC: u16 = 0x00D7;
-pub(crate) const TAG_UIF_AUT: u16 = 0x00D8;
-pub(crate) const TAG_ALGORITHM_INFORMATION: u16 = 0x00FA;
-
 /// Historical bytes (`5F52`): category `00`, card service `31 C5`, card
 /// capabilities `73 C0 01 C0`, status indicator `05 90 00`.
 pub(crate) const HISTORICAL_BYTES: [u8; 10] =
