@@ -9,9 +9,10 @@ use sftcrd_tlv::{
 use crate::{
     PgpApplet, Response,
     constants::{
-        AlgoId, DEFAULT_ALGO_ATTR, DEFAULT_UIF, EXTENDED_CAPABILITIES, Gender, HISTORICAL_BYTES,
-        OID_ED25519, OID_NIST_P256, OID_NIST_P384, OID_NIST_P521, OID_X25519, UifMode,
+        DEFAULT_ALGO_ATTR, DEFAULT_UIF, EXTENDED_CAPABILITIES, HISTORICAL_BYTES, OID_ED25519,
+        OID_NIST_P256, OID_NIST_P384, OID_NIST_P521, OID_X25519,
     },
+    pgp::{AlgoId, Gender, UifMode},
     pin::{PinState, PwRef},
 };
 

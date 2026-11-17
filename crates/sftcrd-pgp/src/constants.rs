@@ -1,5 +1,7 @@
 //! Applet-wide constants for `OpenPGP` Card v3.4.
 
+use crate::pgp::{AlgoId, UifMode};
+
 /// `OpenPGP` Card application AID prefix (RID `D2 76 00 01 24` + PIX `01`).
 pub const AID_PREFIX: [u8; 6] = [0xD2, 0x76, 0x00, 0x01, 0x24, 0x01];
 
@@ -11,28 +13,6 @@ pub const MANUFACTURER_ID: [u8; 2] = [0x00, 0x06];
 
 /// Default 4-byte card serial number.
 pub const DEFAULT_SERIAL: u32 = 87_654_321;
-
-/// `OpenPGP` Card instructions not in the `iso7816` crate.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-#[repr(u8)]
-pub(crate) enum PgpInstruction {
-    GetData = 0xCA,
-    PutData = 0xDA,
-    TerminateDf = 0xE6,
-    ActivateFile = 0x44,
-}
-
-impl PgpInstruction {
-    pub(crate) const fn from_u8(code: u8) -> Option<Self> {
-        match code {
-            0xCA => Some(Self::GetData),
-            0xDA => Some(Self::PutData),
-            0xE6 => Some(Self::TerminateDf),
-            0x44 => Some(Self::ActivateFile),
-            _ => None,
-        }
-    }
-}
 
 /// Historical bytes (`5F52`): category `00`, card service `31 C5`, card
 /// capabilities `73 C0 01 C0`, status indicator `05 90 00`.
@@ -49,72 +29,6 @@ pub(crate) const DEFAULT_ALGO_ATTR: [u8; 6] = [AlgoId::Rsa as u8, 0x08, 0x00, 0x
 
 /// Default User Interaction Flag (`D6`/`D7`/`D8`): off (`00`), button present (`20`).
 pub(crate) const DEFAULT_UIF: [u8; 2] = [UifMode::Off as u8, 0x20];
-
-/// ISO/IEC 5218 gender encoding (`5F35`).
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
-#[repr(u8)]
-pub(crate) enum Gender {
-    NotKnown = b'0',
-    Male = b'1',
-    Female = b'2',
-    #[default]
-    NotApplicable = b'9',
-}
-
-impl Gender {
-    pub(crate) const fn from_u8(value: u8) -> Option<Self> {
-        match value {
-            b'0' => Some(Self::NotKnown),
-            b'1' => Some(Self::Male),
-            b'2' => Some(Self::Female),
-            b'9' => Some(Self::NotApplicable),
-            _ => None,
-        }
-    }
-}
-
-/// User Interaction Flag mode (`D6`/`D7`/`D8` byte 0).
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
-#[repr(u8)]
-pub(crate) enum UifMode {
-    #[default]
-    Off = 0x00,
-    On = 0x01,
-    Permanent = 0x02,
-}
-
-impl UifMode {
-    pub(crate) const fn from_u8(value: u8) -> Option<Self> {
-        match value {
-            0x00 => Some(Self::Off),
-            0x01 => Some(Self::On),
-            0x02 => Some(Self::Permanent),
-            _ => None,
-        }
-    }
-}
-
-/// Supported algorithm IDs (`OpenPGP` Card v3.4 §4.4.3.9).
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-#[repr(u8)]
-pub(crate) enum AlgoId {
-    Rsa = 0x01,
-    Ecdh = 0x12,
-    Ecdsa = 0x13,
-    EdDsa = 0x16,
-}
-
-impl AlgoId {
-    pub(crate) const fn from_u8(value: u8) -> Option<Self> {
-        match value {
-            0x01 => Some(Self::Rsa),
-            0x12 => Some(Self::Ecdh),
-            0x13 => Some(Self::Ecdsa),
-            0x16 => Some(Self::EdDsa),
-            _ => None,
-        }
-    }
-}
 
 // Supported curve OIDs (bare OID body, without 0x06 + length)
 pub(crate) const OID_ED25519: &[u8] = &[0x2B, 0x06, 0x01, 0x04, 0x01, 0xDA, 0x47, 0x0F, 0x01];

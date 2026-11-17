@@ -9,11 +9,12 @@
 mod auth;
 mod constants;
 mod data;
+mod pgp;
 mod pin;
 
-use constants::PgpInstruction;
 use data::CardData;
 use iso7816::{Instruction, Status};
+use pgp::PgpInstruction;
 use pin::PinState;
 pub use pin::PwRef;
 pub use sftcrd_apdu::Response;
