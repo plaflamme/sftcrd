@@ -78,7 +78,7 @@ tlv_struct! {
     #[length(BerLength)]
     struct DiscretionaryData<'a> {
         #[tag = 0xC0]
-        extended_capabilities: &'a [u8],
+        extended_capabilities: [u8; 10],
         #[tag = 0xC1]
         algo_attr_sig: &'a [u8],
         #[tag = 0xC2]
@@ -86,19 +86,19 @@ tlv_struct! {
         #[tag = 0xC3]
         algo_attr_aut: &'a [u8],
         #[tag = 0xC4]
-        pw_status: Vec<u8>,
+        pw_status: [u8; 7],
         #[tag = 0xC5]
-        fingerprints: Vec<u8>,
+        fingerprints: [[u8; 20]; 3],
         #[tag = 0xC6]
-        ca_fingerprints: Vec<u8>,
+        ca_fingerprints: [[u8; 20]; 3],
         #[tag = 0xCD]
-        generation_times: Vec<u8>,
+        generation_times: [u32; 3],
         #[tag = 0xD6]
-        uif_sig: &'a [u8],
+        uif_sig: [u8; 2],
         #[tag = 0xD7]
-        uif_dec: &'a [u8],
+        uif_dec: [u8; 2],
         #[tag = 0xD8]
-        uif_aut: &'a [u8],
+        uif_aut: [u8; 2],
     }
 }
 
@@ -148,36 +148,33 @@ impl CardData {
         aid: &'a [u8; 16],
         pins: &PinState,
     ) -> ApplicationRelatedData<'a> {
-        let mut fingerprints = Vec::with_capacity(60);
-        fingerprints.extend_from_slice(&self.sig.fingerprint);
-        fingerprints.extend_from_slice(&self.dec.fingerprint);
-        fingerprints.extend_from_slice(&self.aut.fingerprint);
-
-        let mut ca_fingerprints = Vec::with_capacity(60);
-        ca_fingerprints.extend_from_slice(&self.sig.ca_fingerprint);
-        ca_fingerprints.extend_from_slice(&self.dec.ca_fingerprint);
-        ca_fingerprints.extend_from_slice(&self.aut.ca_fingerprint);
-
-        let mut generation_times = Vec::with_capacity(12);
-        generation_times.extend_from_slice(&self.sig.generation_time.to_be_bytes());
-        generation_times.extend_from_slice(&self.dec.generation_time.to_be_bytes());
-        generation_times.extend_from_slice(&self.aut.generation_time.to_be_bytes());
-
         ApplicationRelatedData {
             aid,
             historical_bytes: &HISTORICAL_BYTES,
             discretionary: DiscretionaryData {
-                extended_capabilities: &EXTENDED_CAPABILITIES,
+                extended_capabilities: EXTENDED_CAPABILITIES,
                 algo_attr_sig: &self.sig.algo_attr,
                 algo_attr_dec: &self.dec.algo_attr,
                 algo_attr_aut: &self.aut.algo_attr,
-                pw_status: pins.pw_status_bytes().to_vec(),
-                fingerprints,
-                ca_fingerprints,
-                generation_times,
-                uif_sig: &self.sig.uif,
-                uif_dec: &self.dec.uif,
-                uif_aut: &self.aut.uif,
+                pw_status: pins.pw_status_bytes(),
+                fingerprints: [
+                    self.sig.fingerprint,
+                    self.dec.fingerprint,
+                    self.aut.fingerprint,
+                ],
+                ca_fingerprints: [
+                    self.sig.ca_fingerprint,
+                    self.dec.ca_fingerprint,
+                    self.aut.ca_fingerprint,
+                ],
+                generation_times: [
+                    self.sig.generation_time,
+                    self.dec.generation_time,
+                    self.aut.generation_time,
+                ],
+                uif_sig: self.sig.uif,
+                uif_dec: self.dec.uif,
+                uif_aut: self.aut.uif,
             },
         }
     }

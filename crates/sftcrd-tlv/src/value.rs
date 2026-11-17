@@ -63,6 +63,45 @@ impl ValueDecoder<'_> for u16 {
     }
 }
 
+impl ConstLength for u16 {
+    const LENGTH: usize = 2;
+}
+
+impl ValueDecoder<'_> for u32 {
+    fn decode(bytes: &[u8]) -> Result<Self, DecodeError> {
+        let Ok(arr): Result<[u8; 4], _> = bytes.try_into() else {
+            return Err(DecodeError::BufferUnderrun);
+        };
+        Ok(u32::from_be_bytes(arr))
+    }
+}
+
+impl ConstLength for u32 {
+    const LENGTH: usize = 4;
+}
+
+impl<'a, T, const N: usize> ValueDecoder<'a> for [T; N]
+where
+    T: ValueDecoder<'a> + ConstLength,
+{
+    fn decode(bytes: &'a [u8]) -> Result<Self, DecodeError> {
+        if bytes.len() < N * T::LENGTH {
+            return Err(DecodeError::BufferUnderrun);
+        }
+        if bytes.len() > N * T::LENGTH {
+            return Err(DecodeError::InvalidValue);
+        }
+        let mut items = Vec::with_capacity(N);
+        for chunk in bytes.chunks_exact(T::LENGTH) {
+            items.push(T::decode(chunk)?);
+        }
+        items.try_into().map_err(|_| DecodeError::BufferUnderrun)
+    }
+}
+
+impl<T: ConstLength, const N: usize> ConstLength for [T; N] {
+    const LENGTH: usize = N * T::LENGTH;
+}
 impl ValueDecoder<'_> for Vec<u8> {
     fn decode(bytes: &[u8]) -> Result<Self, DecodeError> {
         Ok(Vec::from(bytes))
@@ -138,6 +177,36 @@ impl ValueEncoder for u16 {
 
     fn encode(&self, buf: &mut [u8]) -> Result<(), EncodeError> {
         buf.copy_from_slice(&self.to_be_bytes());
+        Ok(())
+    }
+}
+
+impl ValueEncoder for u32 {
+    fn length(&self) -> usize {
+        4
+    }
+
+    fn encode(&self, buf: &mut [u8]) -> Result<(), EncodeError> {
+        buf.copy_from_slice(&self.to_be_bytes());
+        Ok(())
+    }
+}
+
+impl<T: ValueEncoder, const N: usize> ValueEncoder for [T; N] {
+    fn length(&self) -> usize {
+        self.iter().map(ValueEncoder::length).sum()
+    }
+
+    fn encode(&self, buf: &mut [u8]) -> Result<(), EncodeError> {
+        let mut offset = 0;
+        for item in self {
+            let len = item.length();
+            if offset + len > buf.len() {
+                return Err(EncodeError::BufferUnderrun);
+            }
+            item.encode(&mut buf[offset..offset + len])?;
+            offset += len;
+        }
         Ok(())
     }
 }

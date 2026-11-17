@@ -568,4 +568,28 @@ mod tests {
             Err(DecodeError::InvalidLength)
         );
     }
+
+    #[test]
+    fn test_fixed_array_and_u32_codec() {
+        let arr: [[u8; 2]; 3] = [[0x01, 0x02], [0x03, 0x04], [0x05, 0x06]];
+        let encoded = arr.encode_top_level().unwrap();
+        assert_eq!(encoded, [0x01, 0x02, 0x03, 0x04, 0x05, 0x06]);
+        assert_eq!(<[[u8; 2]; 3]>::decode(&encoded), Ok(arr));
+        assert_eq!(
+            <[[u8; 2]; 3]>::decode(&[0x01, 0x02, 0x03]),
+            Err(DecodeError::BufferUnderrun)
+        );
+        assert_eq!(
+            <[[u8; 2]; 3]>::decode(&[0x01, 0x02, 0x03, 0x04, 0x05, 0x06, 0x07]),
+            Err(DecodeError::InvalidValue)
+        );
+
+        let nums: [u32; 2] = [0x0102_0304, 0xAABB_CCDD];
+        let encoded_nums = nums.encode_top_level().unwrap();
+        assert_eq!(
+            encoded_nums,
+            [0x01, 0x02, 0x03, 0x04, 0xAA, 0xBB, 0xCC, 0xDD]
+        );
+        assert_eq!(<[u32; 2]>::decode(&encoded_nums), Ok(nums));
+    }
 }
