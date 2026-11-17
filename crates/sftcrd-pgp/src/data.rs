@@ -76,7 +76,7 @@ pub(crate) struct CardData {
 tlv_struct! {
     #[tag_type(BerTag)]
     #[length(BerLength)]
-    pub(crate) struct DiscretionaryData<'a> {
+    struct DiscretionaryData<'a> {
         #[tag = 0xC0]
         extended_capabilities: &'a [u8],
         #[tag = 0xC1]
@@ -105,7 +105,7 @@ tlv_struct! {
 tlv_struct! {
     #[tag_type(BerTag)]
     #[length(BerLength)]
-    pub(crate) struct ApplicationRelatedData<'a> {
+    struct ApplicationRelatedData<'a> {
         #[tag = 0x4F]
         aid: &'a [u8],
         #[tag = 0x5F52]
@@ -143,7 +143,7 @@ impl CardData {
     }
 
     /// Build Application Related Data (`006E` value: `4F`, `5F52`, `73`).
-    pub(crate) fn application_related_data<'a>(
+    fn application_related_data<'a>(
         &'a self,
         aid: &'a [u8; 16],
         pins: &PinState,
