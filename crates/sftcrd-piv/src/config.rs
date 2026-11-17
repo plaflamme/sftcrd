@@ -500,11 +500,11 @@ tlv_struct! {
     /// - Tag `0xFE`: LRC byte (empty)
     #[length(BerLength)]
     struct CertificateData<'a> {
-        #[tag=0x70]
+        #[tag(0x70)]
         cert: &'a [u8],
-        #[tag=0x71]
+        #[tag(0x71)]
         cert_info: CertInfo,
-        #[tag=0xFE]
+        #[tag(0xFE)]
         lrc: &'a [u8]
     }
 }

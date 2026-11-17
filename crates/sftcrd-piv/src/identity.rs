@@ -88,9 +88,9 @@ impl PivApplet {
 tlv_struct! {
     #[length(BerLength)]
     struct PinReferenceMetadata {
-        #[tag=0x05]
+        #[tag(0x05)]
         is_default: bool,
-        #[tag=0x06]
+        #[tag(0x06)]
         tries: (u8, u8),
 
     }
@@ -99,19 +99,19 @@ tlv_struct! {
 tlv_struct! {
     #[length(BerLength)]
     struct KeyReferenceMetadata {
-        #[tag=0x01]
+        #[tag(0x01)]
         key_alg: KeyAlg,
 
-        #[tag=0x02]
+        #[tag(0x02)]
         policies: (PinPolicy, TouchPolicy),
 
-        #[tag=0x03]
+        #[tag(0x03)]
         origin: KeyOrigin,
 
-        #[tag=0x04]
+        #[tag(0x04)]
         public_key: PublicKeyResponse,
 
-        #[tag=0x05]
+        #[tag(0x05)]
         is_default: bool,
 
     }

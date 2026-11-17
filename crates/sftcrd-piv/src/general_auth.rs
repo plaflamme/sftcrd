@@ -5,8 +5,8 @@
 use iso7816::Status;
 
 use crate::piv::MgmtAlg;
-use sftcrd_tlv::{BerLength, ValueDecoder, tlv_struct};
 use crate::{PivApplet, Response};
+use sftcrd_tlv::{BerLength, ValueDecoder, tlv_struct};
 
 /// SP 800-73-4 §4.1.3 dynamic-authentication tags: the `7C` wrapper and its
 /// witness / challenge / response / exponent members.
@@ -176,13 +176,13 @@ tlv_struct! {
     #[derive(Debug)]
     #[length(BerLength)]
     struct GaTemplate<'a> {
-        #[tag=0x80]
+        #[tag(0x80)]
         witness: Option<&'a [u8]>,
-        #[tag=0x81]
+        #[tag(0x81)]
         challenge: Option<&'a [u8]>,
-        #[tag=0x82]
+        #[tag(0x82)]
         response: Option<&'a [u8]>,
-        #[tag=0x85]
+        #[tag(0x85)]
         exponent: Option<&'a [u8]>,
     }
 }
@@ -191,7 +191,7 @@ tlv_struct! {
     #[derive(Debug)]
     #[length(sftcrd_tlv::BerLength)]
     struct GaRequest<'a> {
-        #[tag=0x7C]
+        #[tag(0x7C)]
         ga_template: GaTemplate<'a>
     }
 }

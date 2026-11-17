@@ -110,7 +110,7 @@ macro_rules! tlv_struct {
         header: [ $($header:tt)* ],
         parsed: [ $($parsed:tt)* ],
         remaining: [
-            #[tag = $tag:expr]
+            #[tag($tag:expr)]
             $(#[$field_meta:meta])*
             $field_vis:vis $field_name:ident : Option < $inner_ty:ty >
             $(, $($rest:tt)*)?
@@ -147,7 +147,7 @@ macro_rules! tlv_struct {
         header: [ $($header:tt)* ],
         parsed: [ $($parsed:tt)* ],
         remaining: [
-            #[tag = $tag:expr]
+            #[tag($tag:expr)]
             $(#[$field_meta:meta])*
             $field_vis:vis $field_name:ident : $field_ty:ty
             $(, $($rest:tt)*)?
@@ -344,11 +344,11 @@ mod tests {
         tlv_struct! {
             #[derive(Debug, PartialEq)]
             pub struct Packet {
-                #[tag = 0x01]
+                #[tag(0x01)]
                 pub version: u8,
-                #[tag = 0x02]
+                #[tag(0x02)]
                 pub payload_len: u16,
-                #[tag = 0x03]
+                #[tag(0x03)]
                 pub opt: Option<u16>,
             }
         }
@@ -406,9 +406,9 @@ mod tests {
             #[derive(Debug, PartialEq)]
             #[tag_type(U16Tag)]
             pub struct Packet {
-                #[tag = 0x0101]
+                #[tag(0x0101)]
                 pub version: u8,
-                #[tag = 0x0102]
+                #[tag(0x0102)]
                 pub payload_len: u8,
             }
         }
@@ -436,13 +436,13 @@ mod tests {
             #[tag_type(BerTag)]
             #[length(BerLength)]
             pub struct Packet<'a> {
-                #[tag = 0x4F]
+                #[tag(0x4F)]
                 pub aid: &'a [u8],
-                #[tag = 0x5F52]
+                #[tag(0x5F52)]
                 pub historical: Option<&'a [u8]>,
-                #[tag = 0x7F49]
+                #[tag(0x7F49)]
                 pub key: Option<Vec<u8>>,
-                #[tag = 0xC5]
+                #[tag(0xC5)]
                 pub fingerprints: Option<&'a [u8]>,
             }
         }
@@ -511,9 +511,9 @@ mod tests {
             #[derive(Debug, PartialEq)]
             #[length(BerLength)]
             pub struct Packet {
-                #[tag = 0x01]
+                #[tag(0x01)]
                 pub version: u8,
-                #[tag = 0x02]
+                #[tag(0x02)]
                 pub payload_len: Vec<u8>,
             }
         }
@@ -543,9 +543,9 @@ mod tests {
             #[derive(Debug, PartialEq)]
             #[length(BerLength)]
             pub struct Packet<'a> {
-                #[tag = 0x01]
+                #[tag(0x01)]
                 pub version: u8,
-                #[tag = 0x02]
+                #[tag(0x02)]
                 pub payload_len: &'a [u8],
             }
         }

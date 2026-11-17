@@ -1011,6 +1011,7 @@ dependencies = [
  "iso7816",
  "keyroost-openpgp",
  "sftcrd-apdu",
+ "sftcrd-tlv",
  "tracing",
 ]
 

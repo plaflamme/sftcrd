@@ -37,11 +37,11 @@ use sftcrd_tlv::{BerLength, ValueDecoder, ValueEncoder};
 tlv_struct! {
     #[length(BerLength)]
     pub(crate) struct PublicKeyResponse {
-        #[tag = 0x86]
+        #[tag(0x86)]
         point: Option<Vec<u8>>,
-        #[tag = 0x81]
+        #[tag(0x81)]
         n: Option<Vec<u8>>,
-        #[tag = 0x82]
+        #[tag(0x82)]
         e: Option<Vec<u8>>,
     }
 }
@@ -50,7 +50,7 @@ tlv_struct! {
     #[tag_type(sftcrd_tlv::U16Tag)]
     #[length(BerLength)]
     struct GenerateResponse {
-        #[tag = 0x7F49]
+        #[tag(0x7F49)]
         public_key: PublicKeyResponse,
     }
 }
@@ -177,7 +177,9 @@ impl PivApplet {
         let Some(index) = crate::piv::Slot::from_u8(command.p2) else {
             return iso7816::Status::IncorrectP1OrP2Parameter.into();
         };
-        let Some(alg @ (KeyAlg::EccP256 | KeyAlg::EccP384 | KeyAlg::EccP521 | KeyAlg::Rsa(_))) = KeyAlg::from_u8(command.p1) else {
+        let Some(alg @ (KeyAlg::EccP256 | KeyAlg::EccP384 | KeyAlg::EccP521 | KeyAlg::Rsa(_))) =
+            KeyAlg::from_u8(command.p1)
+        else {
             return iso7816::Status::IncorrectDataParameter.into();
         };
         let Ok(import) = ImportTemplate::decode(command.data()) else {
@@ -259,32 +261,32 @@ impl PivApplet {
 tlv_struct! {
     #[derive(Debug, PartialEq)]
     pub struct Control {
-        #[tag = 0x80]
+        #[tag(0x80)]
         alg: KeyAlg,
-        #[tag = 0xAA]
+        #[tag(0xAA)]
         pin_policy: Option<Defaultable<PinPolicy>>,
-        #[tag = 0xAB]
+        #[tag(0xAB)]
         touch_policy: Option<Defaultable<TouchPolicy>>,
     }
 }
 
 tlv_struct! {
     struct ImportTemplate<'a> {
-        #[tag = 0x01]
+        #[tag(0x01)]
         p: Option<&'a [u8]>,
-        #[tag = 0x02]
+        #[tag(0x02)]
         q: Option<&'a [u8]>,
-        #[tag = 0x03]
+        #[tag(0x03)]
         dp: Option<&'a [u8]>,
-        #[tag = 0x04]
+        #[tag(0x04)]
         dq: Option<&'a [u8]>,
-        #[tag = 0x05]
+        #[tag(0x05)]
         n: Option<&'a [u8]>,
-        #[tag = 0x06]
+        #[tag(0x06)]
         scalar: Option<&'a [u8]>,
-        #[tag = 0xAA]
+        #[tag(0xAA)]
         pin_policy: Option<Defaultable<PinPolicy>>,
-        #[tag = 0xAB]
+        #[tag(0xAB)]
         touch_policy: Option<Defaultable<TouchPolicy>>,
     }
 }
@@ -361,7 +363,6 @@ mod tests {
 
     use super::*;
     use crate::general_auth::tests::mgmt_handshake;
-    use sftcrd_apdu::YubicoInstruction;
     use elliptic_curve::Curve;
     use elliptic_curve::sec1::ToSec1Point;
     use keyroost_piv::{
@@ -371,6 +372,7 @@ mod tests {
     use p256::ecdsa::SigningKey;
     use rsa::BoxedUint;
     use rsa::traits::{PrivateKeyParts, PublicKeyParts};
+    use sftcrd_apdu::YubicoInstruction;
 
     /// A management-unlocked applet: the factory 3DES handshake ran, the
     /// 9B session is unlocked.

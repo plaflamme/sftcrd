@@ -75,11 +75,11 @@ tlv_struct! {
     #[tag_type(BerTag)]
     #[length(BerLength)]
     struct CardholderRelatedData<'a> {
-        #[tag = 0x5B]
+        #[tag(0x5B)]
         name: &'a [u8],
-        #[tag = 0x5F2D]
+        #[tag(0x5F2D)]
         language: &'a [u8],
-        #[tag = 0x5F35]
+        #[tag(0x5F35)]
         gender: u8,
     }
 }
@@ -88,7 +88,7 @@ tlv_struct! {
     #[tag_type(BerTag)]
     #[length(BerLength)]
     struct SecuritySupportTemplate {
-        #[tag = 0x93]
+        #[tag(0x93)]
         ds_counter: [u8; 3],
     }
 }
@@ -97,27 +97,27 @@ tlv_struct! {
     #[tag_type(BerTag)]
     #[length(BerLength)]
     struct DiscretionaryData<'a> {
-        #[tag = 0xC0]
+        #[tag(0xC0)]
         extended_capabilities: [u8; 10],
-        #[tag = 0xC1]
+        #[tag(0xC1)]
         algo_attr_sig: &'a [u8],
-        #[tag = 0xC2]
+        #[tag(0xC2)]
         algo_attr_dec: &'a [u8],
-        #[tag = 0xC3]
+        #[tag(0xC3)]
         algo_attr_aut: &'a [u8],
-        #[tag = 0xC4]
+        #[tag(0xC4)]
         pw_status: [u8; 7],
-        #[tag = 0xC5]
+        #[tag(0xC5)]
         fingerprints: [[u8; 20]; 3],
-        #[tag = 0xC6]
+        #[tag(0xC6)]
         ca_fingerprints: [[u8; 20]; 3],
-        #[tag = 0xCD]
+        #[tag(0xCD)]
         generation_times: [u32; 3],
-        #[tag = 0xD6]
+        #[tag(0xD6)]
         uif_sig: [u8; 2],
-        #[tag = 0xD7]
+        #[tag(0xD7)]
         uif_dec: [u8; 2],
-        #[tag = 0xD8]
+        #[tag(0xD8)]
         uif_aut: [u8; 2],
     }
 }
@@ -126,11 +126,11 @@ tlv_struct! {
     #[tag_type(BerTag)]
     #[length(BerLength)]
     struct ApplicationRelatedData<'a> {
-        #[tag = 0x4F]
+        #[tag(0x4F)]
         aid: &'a [u8],
-        #[tag = 0x5F52]
+        #[tag(0x5F52)]
         historical_bytes: &'a [u8],
-        #[tag = 0x73]
+        #[tag(0x73)]
         discretionary: DiscretionaryData<'a>,
     }
 }

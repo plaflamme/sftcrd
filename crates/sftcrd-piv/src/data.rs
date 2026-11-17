@@ -203,7 +203,7 @@ tlv_struct! {
     #[derive(Debug)]
     #[length(sftcrd_tlv::BerLength)]
     struct GetDataRequest {
-        #[tag=0x5C]
+        #[tag(0x5C)]
         selector: Selector,
     }
 }
@@ -212,7 +212,7 @@ tlv_struct! {
     #[derive(Debug)]
     #[length(sftcrd_tlv::BerLength)]
     struct GetDataResponse<'a> {
-        #[tag=0x53]
+        #[tag(0x53)]
         data: &'a [u8],
     }
 }
@@ -221,9 +221,9 @@ tlv_struct! {
     #[derive(Debug)]
     #[length(sftcrd_tlv::BerLength)]
     struct PutDataRequest<'a> {
-        #[tag=0x5C]
+        #[tag(0x5C)]
         selector: Selector,
-        #[tag=0x53]
+        #[tag(0x53)]
         data: &'a [u8],
     }
 }
