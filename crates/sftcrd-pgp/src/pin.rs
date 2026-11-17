@@ -1,5 +1,6 @@
 //! `OpenPGP` Card v3.4 PIN state: PW1, Resetting Code (RC), and PW3.
 
+use iso7816::Status;
 use zeroize::Zeroizing;
 
 /// `OpenPGP` Card password reference (`P2` in `VERIFY`, `CHANGE REFERENCE DATA`,
@@ -104,10 +105,6 @@ impl PinSlot {
         self.min_len
     }
 
-    pub(crate) fn len(&self) -> usize {
-        self.value.len()
-    }
-
     pub(crate) fn is_valid_new_pin(&self, candidate: &[u8]) -> bool {
         (self.min_len..=MAX_PIN_LEN).contains(&candidate.len())
     }
@@ -155,6 +152,35 @@ impl PinSlot {
                 Err(tries)
             }
         }
+    }
+
+    /// Gate an `old_secret || new_secret` body against this slot.
+    ///
+    /// Returns `Ok(new_secret)` when the slot is unblocked and the prefix
+    /// matches in constant time, or `Err(Status)` otherwise.
+    pub(crate) fn check_prefix<'a>(
+        &mut self,
+        data: &'a [u8],
+        min_new_len: usize,
+    ) -> Result<&'a [u8], Status> {
+        if self.tries == 0 {
+            return Err(Status::OperationBlocked);
+        }
+        if data.len() < self.min_len + min_new_len {
+            return Err(Status::WrongLength);
+        }
+        let Some((presented, rest)) = data.split_at_checked(self.value.len()) else {
+            let Err(tries) = self.check(data) else {
+                unreachable!("shorter slice never matches stored secret");
+            };
+            self.session_end();
+            return Err(Status::RemainingRetries(tries));
+        };
+        if let Err(tries) = self.check(presented) {
+            self.session_end();
+            return Err(Status::RemainingRetries(tries));
+        }
+        Ok(rest)
     }
 
     /// Replace the stored value, restore `tries` to `max_tries`, and clear

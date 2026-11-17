@@ -5,7 +5,7 @@ use iso7816::Status;
 use crate::{
     PgpApplet, Response,
     apdu::CommandView,
-    pin::{MAX_PIN_LEN, PW1_MIN_LEN, PwRef, RC_MIN_LEN},
+    pin::{MAX_PIN_LEN, PW1_MIN_LEN, PwRef},
 };
 
 impl PgpApplet {
@@ -71,36 +71,16 @@ impl PgpApplet {
             Some(PwRef::Pw1Other) | None => return Status::KeyReferenceNotFound.into(),
         };
         let slot = self.pins.slot_mut(pw_ref);
-
-        if slot.tries() == 0 {
-            return Status::OperationBlocked.into();
-        }
-
-        let data = cmd.data();
-        if data.len() < slot.min_len() * 2 {
+        let min_len = slot.min_len();
+        let new_pin = match slot.check_prefix(cmd.data(), min_len) {
+            Ok(rest) => rest,
+            Err(status) => return status.into(),
+        };
+        if !slot.is_valid_new_pin(new_pin) {
             return Status::WrongLength.into();
         }
-
-        let old_len = slot.len();
-        if data.len() < old_len {
-            let Err(tries) = slot.check(data) else {
-                unreachable!("shorter slice never matches stored PIN");
-            };
-            slot.session_end();
-            return Status::RemainingRetries(tries).into();
-        }
-
-        let (old_pin, new_pin) = data.split_at(old_len);
-        if let Err(tries) = slot.check(old_pin) {
-            slot.session_end();
-            Status::RemainingRetries(tries).into()
-        } else {
-            if !slot.is_valid_new_pin(new_pin) {
-                return Status::WrongLength.into();
-            }
-            slot.set_value(new_pin);
-            Status::Success.into()
-        }
+        slot.set_value(new_pin);
+        Status::Success.into()
     }
 
     /// `RESET RETRY COUNTER` (`0x2C`): unblock PW1 (`P2 = 0x81`) using RC
@@ -121,37 +101,20 @@ impl PgpApplet {
         let Some(rc) = self.pins.rc_mut() else {
             return Status::OperationBlocked.into();
         };
-        if rc.tries() == 0 {
-            return Status::OperationBlocked.into();
+        match rc.check_prefix(data, PW1_MIN_LEN) {
+            Ok(new_pw1) => self.reset_pw1(new_pw1),
+            Err(status) => status.into(),
         }
-        if data.len() < RC_MIN_LEN + PW1_MIN_LEN {
-            return Status::WrongLength.into();
-        }
-
-        let rc_len = rc.len();
-        if data.len() < rc_len {
-            let Err(tries) = rc.check(data) else {
-                unreachable!("shorter slice never matches stored RC");
-            };
-            return Status::RemainingRetries(tries).into();
-        }
-
-        let (rc_presented, new_pw1) = data.split_at(rc_len);
-        if let Err(tries) = rc.check(rc_presented) {
-            return Status::RemainingRetries(tries).into();
-        }
-        let pw1 = self.pins.slot_mut(PwRef::Pw1Sign);
-        if !pw1.is_valid_new_pin(new_pw1) {
-            return Status::WrongLength.into();
-        }
-        pw1.set_value(new_pw1);
-        Status::Success.into()
     }
 
     fn reset_pw1_by_admin(&mut self, new_pw1: &[u8]) -> Response {
         if !self.pins.is_verified(PwRef::Pw3Admin) {
             return Status::SecurityStatusNotSatisfied.into();
         }
+        self.reset_pw1(new_pw1)
+    }
+
+    fn reset_pw1(&mut self, new_pw1: &[u8]) -> Response {
         let pw1 = self.pins.slot_mut(PwRef::Pw1Sign);
         if !pw1.is_valid_new_pin(new_pw1) {
             return Status::WrongLength.into();
