@@ -72,6 +72,14 @@ pub(crate) struct CardData {
 }
 
 impl CardData {
+    fn slot(&self, id: KeySlotId) -> &KeySlotMeta {
+        match id {
+            KeySlotId::Sig => &self.sig,
+            KeySlotId::Dec => &self.dec,
+            KeySlotId::Aut => &self.aut,
+        }
+    }
+
     fn slot_mut(&mut self, id: KeySlotId) -> &mut KeySlotMeta {
         match id {
             KeySlotId::Sig => &mut self.sig,
@@ -250,58 +258,136 @@ fn is_supported_ecc(slot: KeySlotId, algo_id: AlgoId, oid: &[u8]) -> bool {
     }
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum GetDataSelector {
+    Aid,
+    LoginData,
+    Url,
+    HistoricalBytes,
+    CardholderRelatedData,
+    ApplicationRelatedData,
+    SecuritySupport,
+    PwStatus,
+    AlgorithmInformation,
+    Uif(KeySlotId),
+}
+
+impl GetDataSelector {
+    const fn from_p1_p2(p1: u8, p2: u8) -> Option<Self> {
+        match u16::from_be_bytes([p1, p2]) {
+            0x004F => Some(Self::Aid),
+            0x005E => Some(Self::LoginData),
+            0x5F50 => Some(Self::Url),
+            0x5F52 => Some(Self::HistoricalBytes),
+            0x0065 => Some(Self::CardholderRelatedData),
+            0x006E => Some(Self::ApplicationRelatedData),
+            0x007A => Some(Self::SecuritySupport),
+            0x00C4 => Some(Self::PwStatus),
+            0x00FA => Some(Self::AlgorithmInformation),
+            0x00D6 => Some(Self::Uif(KeySlotId::Sig)),
+            0x00D7 => Some(Self::Uif(KeySlotId::Dec)),
+            0x00D8 => Some(Self::Uif(KeySlotId::Aut)),
+            _ => None,
+        }
+    }
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum PutDataSelector {
+    Name,
+    Language,
+    Gender,
+    Url,
+    LoginData,
+    AlgoAttr(KeySlotId),
+    PwStatus,
+    Fingerprint(KeySlotId),
+    GenerationTime(KeySlotId),
+    ResettingCode,
+    Uif(KeySlotId),
+}
+
+impl PutDataSelector {
+    const fn from_p1_p2(p1: u8, p2: u8) -> Option<Self> {
+        match u16::from_be_bytes([p1, p2]) {
+            0x005B => Some(Self::Name),
+            0x5F2D => Some(Self::Language),
+            0x5F35 => Some(Self::Gender),
+            0x5F50 => Some(Self::Url),
+            0x005E => Some(Self::LoginData),
+            0x00C1 => Some(Self::AlgoAttr(KeySlotId::Sig)),
+            0x00C2 => Some(Self::AlgoAttr(KeySlotId::Dec)),
+            0x00C3 => Some(Self::AlgoAttr(KeySlotId::Aut)),
+            0x00C4 => Some(Self::PwStatus),
+            0x00C7 => Some(Self::Fingerprint(KeySlotId::Sig)),
+            0x00C8 => Some(Self::Fingerprint(KeySlotId::Dec)),
+            0x00C9 => Some(Self::Fingerprint(KeySlotId::Aut)),
+            0x00CE => Some(Self::GenerationTime(KeySlotId::Sig)),
+            0x00CF => Some(Self::GenerationTime(KeySlotId::Dec)),
+            0x00D0 => Some(Self::GenerationTime(KeySlotId::Aut)),
+            0x00D3 => Some(Self::ResettingCode),
+            0x00D6 => Some(Self::Uif(KeySlotId::Sig)),
+            0x00D7 => Some(Self::Uif(KeySlotId::Dec)),
+            0x00D8 => Some(Self::Uif(KeySlotId::Aut)),
+            _ => None,
+        }
+    }
+}
+
 impl PgpApplet {
     /// `GET DATA` (`0xCA`): read a Data Object identified by `P1 || P2`.
     pub(crate) fn process_get_data(&self, cmd: &CommandView<'_>) -> Response {
         if !cmd.data().is_empty() {
             return Status::WrongLength.into();
         }
-        let tag = u16::from_be_bytes([cmd.p1, cmd.p2]);
-        match tag {
-            0x004F => self.aid.as_slice().into(),
-            0x005E => self.data.login_data.as_slice().into(),
-            0x5F50 => self.data.url.as_slice().into(),
-            0x5F52 => HISTORICAL_BYTES.as_slice().into(),
-            0x0065 => self.data.encode_cardholder_related_data().into(),
-            0x006E => self
+        let Some(selector) = GetDataSelector::from_p1_p2(cmd.p1, cmd.p2) else {
+            return Status::KeyReferenceNotFound.into();
+        };
+        match selector {
+            GetDataSelector::Aid => self.aid.as_slice().into(),
+            GetDataSelector::LoginData => self.data.login_data.as_slice().into(),
+            GetDataSelector::Url => self.data.url.as_slice().into(),
+            GetDataSelector::HistoricalBytes => HISTORICAL_BYTES.as_slice().into(),
+            GetDataSelector::CardholderRelatedData => {
+                self.data.encode_cardholder_related_data().into()
+            }
+            GetDataSelector::ApplicationRelatedData => self
                 .data
                 .encode_application_related_data(&self.aid, &self.pins)
                 .into(),
-            0x007A => self.data.encode_security_support().into(),
-            0x00C4 => self.pins.pw_status_bytes().into(),
-            0x00FA => CardData::encode_algorithm_information().into(),
-            0x00D6 => self.data.sig.uif.into(),
-            0x00D7 => self.data.dec.uif.into(),
-            0x00D8 => self.data.aut.uif.into(),
-            _ => Status::KeyReferenceNotFound.into(),
+            GetDataSelector::SecuritySupport => self.data.encode_security_support().into(),
+            GetDataSelector::PwStatus => self.pins.pw_status_bytes().into(),
+            GetDataSelector::AlgorithmInformation => {
+                CardData::encode_algorithm_information().into()
+            }
+            GetDataSelector::Uif(slot) => self.data.slot(slot).uif.into(),
         }
     }
 
     /// `PUT DATA` (`0xDA`): write a PW3-gated Data Object identified by `P1 || P2`.
     pub(crate) fn process_put_data(&mut self, cmd: &CommandView<'_>) -> Response {
-        let tag = u16::from_be_bytes([cmd.p1, cmd.p2]);
-        if !is_writable_do(tag) {
+        let Some(selector) = PutDataSelector::from_p1_p2(cmd.p1, cmd.p2) else {
             return Status::KeyReferenceNotFound.into();
-        }
+        };
         if !self.pins.is_verified(PwRef::Pw3Admin) {
             return Status::SecurityStatusNotSatisfied.into();
         }
 
         let data = cmd.data();
-        match tag {
-            0x005B => {
+        match selector {
+            PutDataSelector::Name => {
                 if data.len() > MAX_NAME_LEN {
                     return Status::WrongLength.into();
                 }
                 self.data.name = data.to_vec();
             }
-            0x5F2D => {
+            PutDataSelector::Language => {
                 if data.len() > MAX_LANGUAGE_LEN {
                     return Status::WrongLength.into();
                 }
                 self.data.language = data.to_vec();
             }
-            0x5F35 => {
+            PutDataSelector::Gender => {
                 if data.len() != 1 {
                     return Status::WrongLength.into();
                 }
@@ -310,22 +396,20 @@ impl PgpApplet {
                 };
                 self.data.sex = gender;
             }
-            0x5F50 => {
+            PutDataSelector::Url => {
                 if data.len() > MAX_URL_LEN {
                     return Status::WrongLength.into();
                 }
                 self.data.url = data.to_vec();
             }
-            0x005E => {
+            PutDataSelector::LoginData => {
                 if data.len() > MAX_LOGIN_DATA_LEN {
                     return Status::WrongLength.into();
                 }
                 self.data.login_data = data.to_vec();
             }
-            0x00C1 => return self.put_algo_attr(KeySlotId::Sig, data),
-            0x00C2 => return self.put_algo_attr(KeySlotId::Dec, data),
-            0x00C3 => return self.put_algo_attr(KeySlotId::Aut, data),
-            0x00C4 => {
+            PutDataSelector::AlgoAttr(slot) => return self.put_algo_attr(slot, data),
+            PutDataSelector::PwStatus => {
                 if data.len() != 1 {
                     return Status::WrongLength.into();
                 }
@@ -335,23 +419,16 @@ impl PgpApplet {
                     _ => return Status::IncorrectDataParameter.into(),
                 }
             }
-            0x00C7 => return self.put_fingerprint(KeySlotId::Sig, data),
-            0x00C8 => return self.put_fingerprint(KeySlotId::Dec, data),
-            0x00C9 => return self.put_fingerprint(KeySlotId::Aut, data),
-            0x00CE => return self.put_timestamp(KeySlotId::Sig, data),
-            0x00CF => return self.put_timestamp(KeySlotId::Dec, data),
-            0x00D0 => return self.put_timestamp(KeySlotId::Aut, data),
-            0x00D3 => {
+            PutDataSelector::Fingerprint(slot) => return self.put_fingerprint(slot, data),
+            PutDataSelector::GenerationTime(slot) => return self.put_timestamp(slot, data),
+            PutDataSelector::ResettingCode => {
                 if data.is_empty() {
                     self.pins.clear_rc();
                 } else if let Err(status) = self.pins.set_rc(data) {
                     return status.into();
                 }
             }
-            0x00D6 => return self.put_uif(KeySlotId::Sig, data),
-            0x00D7 => return self.put_uif(KeySlotId::Dec, data),
-            0x00D8 => return self.put_uif(KeySlotId::Aut, data),
-            _ => unreachable!("is_writable_do checked above"),
+            PutDataSelector::Uif(slot) => return self.put_uif(slot, data),
         }
         Status::Success.into()
     }
@@ -398,31 +475,6 @@ impl PgpApplet {
         meta.uif = uif;
         Status::Success.into()
     }
-}
-
-const fn is_writable_do(tag: u16) -> bool {
-    matches!(
-        tag,
-        0x005B
-            | 0x5F2D
-            | 0x5F35
-            | 0x5F50
-            | 0x005E
-            | 0x00C1
-            | 0x00C2
-            | 0x00C3
-            | 0x00C4
-            | 0x00C7
-            | 0x00C8
-            | 0x00C9
-            | 0x00CE
-            | 0x00CF
-            | 0x00D0
-            | 0x00D3
-            | 0x00D6
-            | 0x00D7
-            | 0x00D8
-    )
 }
 
 #[cfg(test)]
