@@ -8,13 +8,31 @@ use sftcrd_tlv::{
 
 use crate::{
     PgpApplet, Response,
-    constants::{
-        DEFAULT_ALGO_ATTR, DEFAULT_UIF, EXTENDED_CAPABILITIES, HISTORICAL_BYTES, OID_ED25519,
-        OID_NIST_P256, OID_NIST_P384, OID_NIST_P521, OID_X25519,
-    },
     pgp::{AlgoId, Gender, UifMode},
     pin::{PinState, PwRef},
 };
+
+/// Historical bytes (`5F52`): category `00`, card service `31 C5`, card
+/// capabilities `73 C0 01 C0`, status indicator `05 90 00`.
+const HISTORICAL_BYTES: [u8; 10] = [0x00, 0x31, 0xC5, 0x73, 0xC0, 0x01, 0xC0, 0x05, 0x90, 0x00];
+
+/// Extended capabilities (`C0`, 10 bytes): key import (`0x20`), PW status
+/// changeable (`0x10`), algorithm attributes changeable (`0x04`).
+const EXTENDED_CAPABILITIES: [u8; 10] =
+    [0x34, 0x00, 0x00, 0x00, 0x00, 0x00, 0x08, 0x00, 0x00, 0x00];
+
+/// Default algorithm attributes: RSA-2048 (`01 | 08 00 | 00 20 | 00`).
+const DEFAULT_ALGO_ATTR: [u8; 6] = [AlgoId::Rsa as u8, 0x08, 0x00, 0x00, 0x20, 0x00];
+
+/// Default User Interaction Flag (`D6`/`D7`/`D8`): off (`00`), button present (`20`).
+const DEFAULT_UIF: [u8; 2] = [UifMode::Off as u8, 0x20];
+
+// Supported curve OIDs (bare OID body, without 0x06 + length)
+const OID_ED25519: &[u8] = &[0x2B, 0x06, 0x01, 0x04, 0x01, 0xDA, 0x47, 0x0F, 0x01];
+const OID_X25519: &[u8] = &[0x2B, 0x06, 0x01, 0x04, 0x01, 0x97, 0x55, 0x01, 0x05, 0x01];
+const OID_NIST_P256: &[u8] = &[0x2A, 0x86, 0x48, 0xCE, 0x3D, 0x03, 0x01, 0x07];
+const OID_NIST_P384: &[u8] = &[0x2B, 0x81, 0x04, 0x00, 0x22];
+const OID_NIST_P521: &[u8] = &[0x2B, 0x81, 0x04, 0x00, 0x23];
 
 const MAX_NAME_LEN: usize = 39;
 const MAX_LANGUAGE_LEN: usize = 8;

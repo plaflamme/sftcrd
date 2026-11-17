@@ -371,12 +371,12 @@ mod tests {
                 .data(),
         )
         .unwrap();
-        assert_eq!(app.algo_attr_sig, constants::DEFAULT_ALGO_ATTR);
+        assert_eq!(app.algo_attr_sig, data::KeySlotMeta::default().algo_attr);
         assert_eq!(
             applet
                 .process(&keyroost_openpgp::get_data(keyroost_openpgp::TAG_UIF_SIG))
                 .data(),
-            &constants::DEFAULT_UIF
+            &data::KeySlotMeta::default().uif
         );
         let ch_resp = applet.process(&keyroost_openpgp::get_data(
             keyroost_openpgp::TAG_CARDHOLDER_RELATED_DATA,

@@ -1,7 +1,5 @@
 //! Applet-wide constants for `OpenPGP` Card v3.4.
 
-use crate::pgp::{AlgoId, UifMode};
-
 /// `OpenPGP` Card application AID prefix (RID `D2 76 00 01 24` + PIX `01`).
 pub const AID_PREFIX: [u8; 6] = [0xD2, 0x76, 0x00, 0x01, 0x24, 0x01];
 
@@ -13,29 +11,6 @@ pub const MANUFACTURER_ID: [u8; 2] = [0x00, 0x06];
 
 /// Default 4-byte card serial number.
 pub const DEFAULT_SERIAL: u32 = 87_654_321;
-
-/// Historical bytes (`5F52`): category `00`, card service `31 C5`, card
-/// capabilities `73 C0 01 C0`, status indicator `05 90 00`.
-pub(crate) const HISTORICAL_BYTES: [u8; 10] =
-    [0x00, 0x31, 0xC5, 0x73, 0xC0, 0x01, 0xC0, 0x05, 0x90, 0x00];
-
-/// Extended capabilities (`C0`, 10 bytes): key import (`0x20`), PW status
-/// changeable (`0x10`), algorithm attributes changeable (`0x04`).
-pub(crate) const EXTENDED_CAPABILITIES: [u8; 10] =
-    [0x34, 0x00, 0x00, 0x00, 0x00, 0x00, 0x08, 0x00, 0x00, 0x00];
-
-/// Default algorithm attributes: RSA-2048 (`01 | 08 00 | 00 20 | 00`).
-pub(crate) const DEFAULT_ALGO_ATTR: [u8; 6] = [AlgoId::Rsa as u8, 0x08, 0x00, 0x00, 0x20, 0x00];
-
-/// Default User Interaction Flag (`D6`/`D7`/`D8`): off (`00`), button present (`20`).
-pub(crate) const DEFAULT_UIF: [u8; 2] = [UifMode::Off as u8, 0x20];
-
-// Supported curve OIDs (bare OID body, without 0x06 + length)
-pub(crate) const OID_ED25519: &[u8] = &[0x2B, 0x06, 0x01, 0x04, 0x01, 0xDA, 0x47, 0x0F, 0x01];
-pub(crate) const OID_X25519: &[u8] = &[0x2B, 0x06, 0x01, 0x04, 0x01, 0x97, 0x55, 0x01, 0x05, 0x01];
-pub(crate) const OID_NIST_P256: &[u8] = &[0x2A, 0x86, 0x48, 0xCE, 0x3D, 0x03, 0x01, 0x07];
-pub(crate) const OID_NIST_P384: &[u8] = &[0x2B, 0x81, 0x04, 0x00, 0x22];
-pub(crate) const OID_NIST_P521: &[u8] = &[0x2B, 0x81, 0x04, 0x00, 0x23];
 
 /// Build the 16-byte `OpenPGP` Card AID:
 /// `D2 76 00 01 24 01 | 03 04 | 00 06 | <serial:4 BE> | 00 00`.
