@@ -2,7 +2,7 @@
 
 use zeroize::Zeroizing;
 
-use crate::constants::{PW1_OTHER, PW1_SIGN, PW3_ADMIN};
+use crate::constants::PwRef;
 
 /// Error returned when a PIN or Resetting Code length is outside the allowed range.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -171,14 +171,12 @@ impl Default for PinState {
 }
 
 impl PinState {
-    /// Resolve a `VERIFY` password reference (`0x81`, `0x82`, `0x83`) to its
-    /// [`PinSlot`] and [`PinContext`].
-    pub(crate) fn slot_and_context(&mut self, p2: u8) -> Option<(&mut PinSlot, PinContext)> {
-        match p2 {
-            PW1_SIGN => Some((&mut self.pw1, PinContext::Primary)),
-            PW1_OTHER => Some((&mut self.pw1, PinContext::Secondary)),
-            PW3_ADMIN => Some((&mut self.pw3, PinContext::Primary)),
-            _ => None,
+    /// Resolve a [`PwRef`] to its [`PinSlot`] and [`PinContext`].
+    pub(crate) fn slot_and_context(&mut self, pw_ref: PwRef) -> (&mut PinSlot, PinContext) {
+        match pw_ref {
+            PwRef::Pw1Sign => (&mut self.pw1, PinContext::Primary),
+            PwRef::Pw1Other => (&mut self.pw1, PinContext::Secondary),
+            PwRef::Pw3Admin => (&mut self.pw3, PinContext::Primary),
         }
     }
 

@@ -5,7 +5,7 @@ use iso7816::Status;
 use crate::{
     PgpApplet, Response,
     apdu::CommandView,
-    constants::{PW1_SIGN, PW3_ADMIN},
+    constants::PwRef,
     pin::{MAX_PIN_LEN, PW1_MIN_LEN, PinContext, RC_MIN_LEN},
 };
 
@@ -24,17 +24,19 @@ impl PgpApplet {
         if !data.is_empty() {
             return Status::WrongLength.into();
         }
-        let Some((slot, ctx)) = self.pins.slot_and_context(p2) else {
+        let Some(pw_ref) = PwRef::from_u8(p2) else {
             return Status::KeyReferenceNotFound.into();
         };
+        let (slot, ctx) = self.pins.slot_and_context(pw_ref);
         slot.clear_verified(ctx);
         Status::Success.into()
     }
 
     fn verify_present_or_status(&mut self, p2: u8, data: &[u8]) -> Response {
-        let Some((slot, ctx)) = self.pins.slot_and_context(p2) else {
+        let Some(pw_ref) = PwRef::from_u8(p2) else {
             return Status::KeyReferenceNotFound.into();
         };
+        let (slot, ctx) = self.pins.slot_and_context(pw_ref);
 
         if data.is_empty() {
             return if slot.is_verified(ctx) {
@@ -66,10 +68,10 @@ impl PgpApplet {
             return Status::IncorrectP1OrP2Parameter.into();
         }
 
-        let slot = match cmd.p2 {
-            PW1_SIGN => &mut self.pins.pw1,
-            PW3_ADMIN => &mut self.pins.pw3,
-            _ => return Status::KeyReferenceNotFound.into(),
+        let slot = match PwRef::from_u8(cmd.p2) {
+            Some(PwRef::Pw1Sign) => &mut self.pins.pw1,
+            Some(PwRef::Pw3Admin) => &mut self.pins.pw3,
+            Some(PwRef::Pw1Other) | None => return Status::KeyReferenceNotFound.into(),
         };
 
         if slot.tries() == 0 {
@@ -106,7 +108,7 @@ impl PgpApplet {
     /// `RESET RETRY COUNTER` (`0x2C`): unblock PW1 (`P2 = 0x81`) using RC
     /// (`P1 = 0x00`) or verified PW3 (`P1 = 0x02`).
     pub(crate) fn process_reset_retry_counter(&mut self, cmd: &CommandView<'_>) -> Response {
-        if cmd.p2 != PW1_SIGN {
+        if PwRef::from_u8(cmd.p2) != Some(PwRef::Pw1Sign) {
             return Status::KeyReferenceNotFound.into();
         }
 
