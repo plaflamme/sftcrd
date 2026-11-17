@@ -2,7 +2,7 @@
 
 use iso7816::Status;
 use sftcrd_apdu::CommandView;
-use sftcrd_tlv::{BerLength, BerTag, ValueEncoder as _, encode_sequence, tlv_struct};
+use sftcrd_tlv::{BerLength, BerTag, ValueEncoder as _, tlv_struct};
 
 use crate::{
     PgpApplet, Response,
@@ -81,6 +81,19 @@ tlv_struct! {
         language: &'a [u8],
         #[tag(0x5F35)]
         gender: u8,
+    }
+}
+
+tlv_struct! {
+    #[tag_type(BerTag)]
+    #[length(BerLength)]
+    struct AlgorithmInformation {
+        #[tag(0xC1, repeated)]
+        sig: Vec<Vec<u8>>,
+        #[tag(0xC2, repeated)]
+        dec: Vec<Vec<u8>>,
+        #[tag(0xC3, repeated)]
+        aut: Vec<Vec<u8>>,
     }
 }
 
@@ -206,35 +219,37 @@ impl CardData {
         }
     }
 
-    /// Encode Algorithm Information (`00FA` value): supported algorithms per slot.
-    pub(crate) fn encode_algorithm_information() -> Vec<u8> {
-        let mut entries: Vec<(BerTag, Vec<u8>)> = Vec::new();
-        for (tag, slot) in [
-            (BerTag(0xC1), KeySlotId::Sig),
-            (BerTag(0xC2), KeySlotId::Dec),
-            (BerTag(0xC3), KeySlotId::Aut),
-        ] {
-            for bits in [2048u16, 3072, 4096] {
-                let [hi, lo] = bits.to_be_bytes();
-                entries.push((tag, vec![AlgoId::Rsa as u8, hi, lo, 0x00, 0x20, 0x00]));
-            }
+    /// Build Algorithm Information (`00FA` value): supported algorithms per slot.
+    fn algorithm_information() -> AlgorithmInformation {
+        fn slot_algs(slot: KeySlotId) -> Vec<Vec<u8>> {
+            let mut algs: Vec<Vec<u8>> = [2048u16, 3072, 4096]
+                .into_iter()
+                .map(|bits| {
+                    let [hi, lo] = bits.to_be_bytes();
+                    vec![AlgoId::Rsa as u8, hi, lo, 0x00, 0x20, 0x00]
+                })
+                .collect();
             match slot {
                 KeySlotId::Sig | KeySlotId::Aut => {
                     for oid in [OID_NIST_P256, OID_NIST_P384, OID_NIST_P521] {
-                        entries.push((tag, ecc_attr(AlgoId::Ecdsa, oid)));
+                        algs.push(ecc_attr(AlgoId::Ecdsa, oid));
                     }
-                    entries.push((tag, ecc_attr(AlgoId::EdDsa, OID_ED25519)));
+                    algs.push(ecc_attr(AlgoId::EdDsa, OID_ED25519));
                 }
                 KeySlotId::Dec => {
                     for oid in [OID_NIST_P256, OID_NIST_P384, OID_NIST_P521, OID_X25519] {
-                        entries.push((tag, ecc_attr(AlgoId::Ecdh, oid)));
+                        algs.push(ecc_attr(AlgoId::Ecdh, oid));
                     }
                 }
             }
+            algs
         }
 
-        encode_sequence::<BerTag, BerLength, _>(&entries)
-            .expect("in-memory TLV encoding cannot overflow")
+        AlgorithmInformation {
+            sig: slot_algs(KeySlotId::Sig),
+            dec: slot_algs(KeySlotId::Dec),
+            aut: slot_algs(KeySlotId::Aut),
+        }
     }
 }
 
@@ -405,9 +420,9 @@ impl PgpApplet {
                 .encode_top_level()
                 .map_or_else(|_| Status::MemoryFailure.into(), Response::from),
             GetDataSelector::PwStatus => self.pins.pw_status_bytes().into(),
-            GetDataSelector::AlgorithmInformation => {
-                CardData::encode_algorithm_information().into()
-            }
+            GetDataSelector::AlgorithmInformation => CardData::algorithm_information()
+                .encode_top_level()
+                .map_or_else(|_| Status::MemoryFailure.into(), Response::from),
             GetDataSelector::Uif(slot) => self.data.slot(slot).uif.into(),
         }
     }

@@ -101,6 +101,43 @@ macro_rules! tlv_struct {
     // 2) Field Munchers
     // -------------------------------------------------------------------------
 
+    // Muncher Arm 0: Repeated field (`Vec<T>`)
+    (@parse_fields
+        tag_type: [ $tag_ty:path ],
+        length: [ $len_ty:ty ],
+        impl_lt: [ $impl_lt:lifetime ],
+        struct_lt: [ $($struct_lt:lifetime)? ],
+        header: [ $($header:tt)* ],
+        parsed: [ $($parsed:tt)* ],
+        remaining: [
+            #[tag($tag:expr, repeated)]
+            $(#[$field_meta:meta])*
+            $field_vis:vis $field_name:ident : Vec < $inner_ty:ty >
+            $(, $($rest:tt)*)?
+        ]
+    ) => {
+        tlv_struct!(@parse_fields
+            tag_type: [ $tag_ty ],
+            length: [ $len_ty ],
+            impl_lt: [ $impl_lt ],
+            struct_lt: [ $($struct_lt)? ],
+            header: [ $($header)* ],
+            parsed: [
+                $($parsed)*
+                (
+                    rep,
+                    $tag,
+                    [ $(#[$field_meta])* ],
+                    $field_vis,
+                    $field_name,
+                    Vec<$inner_ty>,
+                    $inner_ty
+                )
+            ],
+            remaining: [ $($($rest)*)? ]
+        );
+    };
+
     // Muncher Arm 1: Optional field (`Option<T>`)
     (@parse_fields
         tag_type: [ $tag_ty:path ],
@@ -199,18 +236,14 @@ macro_rules! tlv_struct {
         // $impl_lt is ALWAYS present here, while $struct_lt is optional!
         impl <$impl_lt> $crate::ValueDecoder<$impl_lt> for $name $(<$struct_lt>)? {
             fn decode(input: &$impl_lt [u8]) -> Result<Self, $crate::DecodeError> {
-                $( let mut $field_name: Option<$parse_ty> = None; )*
+                $( tlv_struct!(@init_field $kind, $field_name, $parse_ty); )*
 
                 for entry in $crate::Decoder::new(input).into_iter_tags::<$tag_ty, $len_ty>() {
                     let (tag, value_bytes) = entry?;
                     match tag {
                         $(
                             $tag_ty($tag) => {
-                                if $field_name.is_some() {
-                                    return Err($crate::DecodeError::DuplicateTag);
-                                }
-                                let val = <$parse_ty as $crate::ValueDecoder>::decode(value_bytes)?;
-                                $field_name = Some(val);
+                                tlv_struct!(@decode_field $kind, $field_name, $parse_ty, value_bytes);
                             }
                         )*
                         _ => return Err($crate::DecodeError::InvalidTag),
@@ -227,16 +260,12 @@ macro_rules! tlv_struct {
             fn length(&self) -> usize {
                 let mut length = 0;
                 $(
-                    let value = &self.$field_name;
-                    match tlv_struct!(@wrap_field $kind, value) {
-                        None => (),
-                        Some(value) => {
-                            let value_len = <$parse_ty as $crate::ValueEncoder>::length(value);
-                            let length_len = <$len_ty as $crate::Length>::length(value_len) as usize;
-                            let tag_length = $crate::Tag::length(&$tag_ty($tag));
-                            length += tag_length + length_len + value_len;
-                        },
-                    };
+                    for value in tlv_struct!(@as_slice $kind, &self.$field_name) {
+                        let value_len = <$parse_ty as $crate::ValueEncoder>::length(value);
+                        let length_len = <$len_ty as $crate::Length>::length(value_len) as usize;
+                        let tag_length = $crate::Tag::length(&$tag_ty($tag));
+                        length += tag_length + length_len + value_len;
+                    }
                 )*
                 length
             }
@@ -244,15 +273,30 @@ macro_rules! tlv_struct {
             fn encode(&self, buf: &mut [u8]) -> Result<(), $crate::EncodeError> {
                 let mut encoder = $crate::Encoder::new(buf);
                 $(
-                    let value = &self.$field_name;
-                    match tlv_struct!(@wrap_field $kind, value) {
-                        None => (),
-                        Some(value) => encoder.write_tlv::<$tag_ty, $len_ty, $parse_ty>(&$tag_ty($tag), value)?,
-                    };
+                    for value in tlv_struct!(@as_slice $kind, &self.$field_name) {
+                        encoder.write_tlv::<$tag_ty, $len_ty, $parse_ty>(&$tag_ty($tag), value)?;
+                    }
                 )*
                 Ok(())
             }
         }
+    };
+
+    (@init_field rep, $field_name:ident, $parse_ty:ty) => {
+        let mut $field_name: Vec<$parse_ty> = Vec::new();
+    };
+    (@init_field $kind:ident, $field_name:ident, $parse_ty:ty) => {
+        let mut $field_name: Option<$parse_ty> = None;
+    };
+
+    (@decode_field rep, $field_name:ident, $parse_ty:ty, $value_bytes:ident) => {
+        $field_name.push(<$parse_ty as $crate::ValueDecoder>::decode($value_bytes)?);
+    };
+    (@decode_field $kind:ident, $field_name:ident, $parse_ty:ty, $value_bytes:ident) => {
+        if $field_name.is_some() {
+            return Err($crate::DecodeError::DuplicateTag);
+        }
+        $field_name = Some(<$parse_ty as $crate::ValueDecoder>::decode($value_bytes)?);
     };
 
     (@unwrap_field req, $field_name:ident) => {
@@ -261,12 +305,18 @@ macro_rules! tlv_struct {
     (@unwrap_field opt, $field_name:ident) => {
         $field_name
     };
-
-    (@wrap_field req, $field:expr) => {
-        Some($field)
+    (@unwrap_field rep, $field_name:ident) => {
+        $field_name
     };
-    (@wrap_field opt, $field:expr) => {
-        $field
+
+    (@as_slice req, $field:expr) => {
+        core::slice::from_ref($field)
+    };
+    (@as_slice opt, $field:expr) => {
+        $field.as_slice()
+    };
+    (@as_slice rep, $field:expr) => {
+        $field.as_slice()
     };
 
     // -------------------------------------------------------------------------
@@ -591,5 +641,41 @@ mod tests {
             [0x01, 0x02, 0x03, 0x04, 0xAA, 0xBB, 0xCC, 0xDD]
         );
         assert_eq!(<[u32; 2]>::decode(&encoded_nums), Ok(nums));
+    }
+
+    #[test]
+    fn test_tlv_struct_repeated() {
+        tlv_struct! {
+            #[derive(Debug, PartialEq)]
+            #[tag_type(BerTag)]
+            #[length(BerLength)]
+            struct RepeatedPacket {
+                #[tag(0xC1, repeated)]
+                sig: Vec<Vec<u8>>,
+                #[tag(0xC2, repeated)]
+                dec: Vec<u16>,
+            }
+        }
+
+        let packet = RepeatedPacket {
+            sig: vec![vec![0xAA], vec![0xBB, 0xCC]],
+            dec: vec![0x0102, 0x0304],
+        };
+        let encoded = packet.encode_top_level().unwrap();
+        assert_eq!(
+            encoded,
+            [
+                0xC1, 0x01, 0xAA, 0xC1, 0x02, 0xBB, 0xCC, 0xC2, 0x02, 0x01, 0x02, 0xC2, 0x02, 0x03,
+                0x04
+            ]
+        );
+        assert_eq!(RepeatedPacket::decode(&encoded), Ok(packet));
+        assert_eq!(
+            RepeatedPacket::decode(&[]),
+            Ok(RepeatedPacket {
+                sig: Vec::new(),
+                dec: Vec::new(),
+            })
+        );
     }
 }
