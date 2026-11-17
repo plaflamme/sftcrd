@@ -2,7 +2,9 @@
 
 use iso7816::Status;
 use sftcrd_apdu::CommandView;
-use sftcrd_tlv::{BerLength, BerTag, Encoder, Length as _, Tag as _};
+use sftcrd_tlv::{
+    BerLength, BerTag, Encoder, Length as _, Tag as _, ValueEncoder as _, tlv_struct,
+};
 
 use crate::{
     PgpApplet, Response,
@@ -71,6 +73,48 @@ pub(crate) struct CardData {
     pub(crate) aut: KeySlotMeta,
 }
 
+tlv_struct! {
+    #[tag_type(BerTag)]
+    #[length(BerLength)]
+    pub(crate) struct DiscretionaryData<'a> {
+        #[tag = 0xC0]
+        extended_capabilities: &'a [u8],
+        #[tag = 0xC1]
+        algo_attr_sig: &'a [u8],
+        #[tag = 0xC2]
+        algo_attr_dec: &'a [u8],
+        #[tag = 0xC3]
+        algo_attr_aut: &'a [u8],
+        #[tag = 0xC4]
+        pw_status: Vec<u8>,
+        #[tag = 0xC5]
+        fingerprints: Vec<u8>,
+        #[tag = 0xC6]
+        ca_fingerprints: Vec<u8>,
+        #[tag = 0xCD]
+        generation_times: Vec<u8>,
+        #[tag = 0xD6]
+        uif_sig: &'a [u8],
+        #[tag = 0xD7]
+        uif_dec: &'a [u8],
+        #[tag = 0xD8]
+        uif_aut: &'a [u8],
+    }
+}
+
+tlv_struct! {
+    #[tag_type(BerTag)]
+    #[length(BerLength)]
+    pub(crate) struct ApplicationRelatedData<'a> {
+        #[tag = 0x4F]
+        aid: &'a [u8],
+        #[tag = 0x5F52]
+        historical_bytes: &'a [u8],
+        #[tag = 0x73]
+        discretionary: DiscretionaryData<'a>,
+    }
+}
+
 impl CardData {
     fn slot(&self, id: KeySlotId) -> &KeySlotMeta {
         match id {
@@ -98,48 +142,44 @@ impl CardData {
         ])
     }
 
-    /// Encode Application Related Data (`006E` value: `4F`, `5F52`, `73`).
-    pub(crate) fn encode_application_related_data(
-        &self,
-        aid: &[u8; 16],
+    /// Build Application Related Data (`006E` value: `4F`, `5F52`, `73`).
+    pub(crate) fn application_related_data<'a>(
+        &'a self,
+        aid: &'a [u8; 16],
         pins: &PinState,
-    ) -> Vec<u8> {
-        let pw_status = pins.pw_status_bytes();
+    ) -> ApplicationRelatedData<'a> {
+        let mut fingerprints = Vec::with_capacity(60);
+        fingerprints.extend_from_slice(&self.sig.fingerprint);
+        fingerprints.extend_from_slice(&self.dec.fingerprint);
+        fingerprints.extend_from_slice(&self.aut.fingerprint);
 
-        let mut fingerprints = [0u8; 60];
-        fingerprints[0..20].copy_from_slice(&self.sig.fingerprint);
-        fingerprints[20..40].copy_from_slice(&self.dec.fingerprint);
-        fingerprints[40..60].copy_from_slice(&self.aut.fingerprint);
+        let mut ca_fingerprints = Vec::with_capacity(60);
+        ca_fingerprints.extend_from_slice(&self.sig.ca_fingerprint);
+        ca_fingerprints.extend_from_slice(&self.dec.ca_fingerprint);
+        ca_fingerprints.extend_from_slice(&self.aut.ca_fingerprint);
 
-        let mut ca_fingerprints = [0u8; 60];
-        ca_fingerprints[0..20].copy_from_slice(&self.sig.ca_fingerprint);
-        ca_fingerprints[20..40].copy_from_slice(&self.dec.ca_fingerprint);
-        ca_fingerprints[40..60].copy_from_slice(&self.aut.ca_fingerprint);
+        let mut generation_times = Vec::with_capacity(12);
+        generation_times.extend_from_slice(&self.sig.generation_time.to_be_bytes());
+        generation_times.extend_from_slice(&self.dec.generation_time.to_be_bytes());
+        generation_times.extend_from_slice(&self.aut.generation_time.to_be_bytes());
 
-        let mut timestamps = [0u8; 12];
-        timestamps[0..4].copy_from_slice(&self.sig.generation_time.to_be_bytes());
-        timestamps[4..8].copy_from_slice(&self.dec.generation_time.to_be_bytes());
-        timestamps[8..12].copy_from_slice(&self.aut.generation_time.to_be_bytes());
-
-        let discretionary = encode_tlvs(&[
-            (0x00C0, &EXTENDED_CAPABILITIES),
-            (0x00C1, &self.sig.algo_attr),
-            (0x00C2, &self.dec.algo_attr),
-            (0x00C3, &self.aut.algo_attr),
-            (0x00C4, &pw_status),
-            (0x00C5, &fingerprints),
-            (0x00C6, &ca_fingerprints),
-            (0x00CD, &timestamps),
-            (0x00D6, &self.sig.uif),
-            (0x00D7, &self.dec.uif),
-            (0x00D8, &self.aut.uif),
-        ]);
-
-        encode_tlvs(&[
-            (0x004F, aid),
-            (0x5F52, &HISTORICAL_BYTES),
-            (0x0073, &discretionary),
-        ])
+        ApplicationRelatedData {
+            aid,
+            historical_bytes: &HISTORICAL_BYTES,
+            discretionary: DiscretionaryData {
+                extended_capabilities: &EXTENDED_CAPABILITIES,
+                algo_attr_sig: &self.sig.algo_attr,
+                algo_attr_dec: &self.dec.algo_attr,
+                algo_attr_aut: &self.aut.algo_attr,
+                pw_status: pins.pw_status_bytes().to_vec(),
+                fingerprints,
+                ca_fingerprints,
+                generation_times,
+                uif_sig: &self.sig.uif,
+                uif_dec: &self.dec.uif,
+                uif_aut: &self.aut.uif,
+            },
+        }
     }
 
     /// Encode Security Support Template (`007A` value: `93`).
@@ -353,8 +393,9 @@ impl PgpApplet {
             }
             GetDataSelector::ApplicationRelatedData => self
                 .data
-                .encode_application_related_data(&self.aid, &self.pins)
-                .into(),
+                .application_related_data(&self.aid, &self.pins)
+                .encode_top_level()
+                .map_or_else(|_| Status::MemoryFailure.into(), Response::from),
             GetDataSelector::SecuritySupport => self.data.encode_security_support().into(),
             GetDataSelector::PwStatus => self.pins.pw_status_bytes().into(),
             GetDataSelector::AlgorithmInformation => {
