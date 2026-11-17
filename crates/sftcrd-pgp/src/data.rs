@@ -2,7 +2,9 @@
 
 use iso7816::Status;
 use sftcrd_apdu::CommandView;
-use sftcrd_tlv::{BerLength, BerTag, ValueEncoder as _, tlv_struct};
+use sftcrd_tlv::{
+    BerLength, BerTag, DecodeError, EncodeError, ValueDecoder, ValueEncoder, tlv_struct,
+};
 
 use crate::{
     PgpApplet, Response,
@@ -84,16 +86,89 @@ tlv_struct! {
     }
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum AlgoAttr<'a> {
+    Rsa {
+        n_bits: u16,
+        e_bits: u16,
+        format: u8,
+    },
+    Ecc {
+        algo_id: AlgoId,
+        oid: &'a [u8],
+    },
+}
+
+impl<'a> ValueDecoder<'a> for AlgoAttr<'a> {
+    fn decode(bytes: &'a [u8]) -> Result<Self, DecodeError> {
+        let Some(&raw_algo_id) = bytes.first() else {
+            return Err(DecodeError::BufferUnderrun);
+        };
+        let algo_id = AlgoId::from_u8(raw_algo_id).ok_or(DecodeError::InvalidValue)?;
+        match algo_id {
+            AlgoId::Rsa => {
+                if bytes.len() < 5 {
+                    return Err(DecodeError::BufferUnderrun);
+                }
+                if bytes.len() > 6 {
+                    return Err(DecodeError::InvalidValue);
+                }
+                Ok(Self::Rsa {
+                    n_bits: u16::from_be_bytes([bytes[1], bytes[2]]),
+                    e_bits: u16::from_be_bytes([bytes[3], bytes[4]]),
+                    format: bytes.get(5).copied().unwrap_or(0x00),
+                })
+            }
+            AlgoId::Ecdh | AlgoId::Ecdsa | AlgoId::EdDsa => Ok(Self::Ecc {
+                algo_id,
+                oid: &bytes[1..],
+            }),
+        }
+    }
+}
+
+impl ValueEncoder for AlgoAttr<'_> {
+    fn length(&self) -> usize {
+        match self {
+            Self::Rsa { .. } => 6,
+            Self::Ecc { oid, .. } => 1 + oid.len(),
+        }
+    }
+
+    fn encode(&self, buf: &mut [u8]) -> Result<(), EncodeError> {
+        let len = self.length();
+        if buf.len() < len {
+            return Err(EncodeError::BufferUnderrun);
+        }
+        match self {
+            Self::Rsa {
+                n_bits,
+                e_bits,
+                format,
+            } => {
+                let [nh, nl] = n_bits.to_be_bytes();
+                let [eh, el] = e_bits.to_be_bytes();
+                buf[..6].copy_from_slice(&[AlgoId::Rsa as u8, nh, nl, eh, el, *format]);
+            }
+            Self::Ecc { algo_id, oid } => {
+                buf[0] = *algo_id as u8;
+                buf[1..len].copy_from_slice(oid);
+            }
+        }
+        Ok(())
+    }
+}
+
 tlv_struct! {
     #[tag_type(BerTag)]
     #[length(BerLength)]
-    struct AlgorithmInformation {
+    struct AlgorithmInformation<'a> {
         #[tag(0xC1, repeated)]
-        sig: Vec<Vec<u8>>,
+        sig: Vec<AlgoAttr<'a>>,
         #[tag(0xC2, repeated)]
-        dec: Vec<Vec<u8>>,
+        dec: Vec<AlgoAttr<'a>>,
         #[tag(0xC3, repeated)]
-        aut: Vec<Vec<u8>>,
+        aut: Vec<AlgoAttr<'a>>,
     }
 }
 
@@ -220,25 +295,35 @@ impl CardData {
     }
 
     /// Build Algorithm Information (`00FA` value): supported algorithms per slot.
-    fn algorithm_information() -> AlgorithmInformation {
-        fn slot_algs(slot: KeySlotId) -> Vec<Vec<u8>> {
-            let mut algs: Vec<Vec<u8>> = [2048u16, 3072, 4096]
+    fn algorithm_information() -> AlgorithmInformation<'static> {
+        fn slot_algs(slot: KeySlotId) -> Vec<AlgoAttr<'static>> {
+            let mut algs: Vec<AlgoAttr<'static>> = [2048u16, 3072, 4096]
                 .into_iter()
-                .map(|bits| {
-                    let [hi, lo] = bits.to_be_bytes();
-                    vec![AlgoId::Rsa as u8, hi, lo, 0x00, 0x20, 0x00]
+                .map(|n_bits| AlgoAttr::Rsa {
+                    n_bits,
+                    e_bits: 0x0020,
+                    format: 0x00,
                 })
                 .collect();
             match slot {
                 KeySlotId::Sig | KeySlotId::Aut => {
                     for oid in [OID_NIST_P256, OID_NIST_P384, OID_NIST_P521] {
-                        algs.push(ecc_attr(AlgoId::Ecdsa, oid));
+                        algs.push(AlgoAttr::Ecc {
+                            algo_id: AlgoId::Ecdsa,
+                            oid,
+                        });
                     }
-                    algs.push(ecc_attr(AlgoId::EdDsa, OID_ED25519));
+                    algs.push(AlgoAttr::Ecc {
+                        algo_id: AlgoId::EdDsa,
+                        oid: OID_ED25519,
+                    });
                 }
                 KeySlotId::Dec => {
                     for oid in [OID_NIST_P256, OID_NIST_P384, OID_NIST_P521, OID_X25519] {
-                        algs.push(ecc_attr(AlgoId::Ecdh, oid));
+                        algs.push(AlgoAttr::Ecc {
+                            algo_id: AlgoId::Ecdh,
+                            oid,
+                        });
                     }
                 }
             }
@@ -251,13 +336,6 @@ impl CardData {
             aut: slot_algs(KeySlotId::Aut),
         }
     }
-}
-
-fn ecc_attr(algo_id: AlgoId, oid: &[u8]) -> Vec<u8> {
-    let mut attr = Vec::with_capacity(1 + oid.len());
-    attr.push(algo_id as u8);
-    attr.extend_from_slice(oid);
-    attr
 }
 
 fn validate_algo_attr(slot: KeySlotId, attr: &[u8]) -> Result<(), Status> {
