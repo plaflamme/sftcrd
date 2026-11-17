@@ -235,6 +235,33 @@ impl PinState {
         self.pw1_validity == Pw1Validity::Multiple
     }
 
+    pub(crate) fn set_pw1_valid_multiple(&mut self, valid_multiple: bool) {
+        self.pw1_validity = if valid_multiple {
+            Pw1Validity::Multiple
+        } else {
+            Pw1Validity::Single
+        };
+    }
+
+    /// Encode the 7-byte PW Status DO (`C4`).
+    pub(crate) fn pw_status_bytes(&self) -> [u8; 7] {
+        #[allow(clippy::cast_possible_truncation)]
+        let max_len = MAX_PIN_LEN as u8;
+        [
+            u8::from(self.pw1_valid_multiple()),
+            max_len,
+            max_len,
+            max_len,
+            self.pw1.tries(),
+            self.rc.as_ref().map_or(0, PinSlot::tries),
+            self.pw3.tries(),
+        ]
+    }
+
+    pub(crate) fn both_pw1_and_pw3_blocked(&self) -> bool {
+        self.pw1.tries() == 0 && self.pw3.tries() == 0
+    }
+
     pub(crate) fn is_verified(&self, pw_ref: PwRef) -> bool {
         let (slot, ctx) = self.slot_and_context(pw_ref);
         slot.is_verified(ctx)
@@ -257,6 +284,11 @@ impl PinState {
         }
         self.rc = Some(PinSlot::new(rc, RC_MIN_LEN, DEFAULT_TRIES));
         Ok(())
+    }
+
+    /// Remove the optional Resetting Code (RC).
+    pub(crate) fn clear_rc(&mut self) {
+        self.rc = None;
     }
 
     /// Clear all session verification flags (on `SELECT` / `deselect`).

@@ -8,8 +8,11 @@
 
 mod auth;
 mod constants;
+mod data;
 mod pin;
 
+use constants::{INS_ACTIVATE_FILE, INS_GET_DATA, INS_PUT_DATA, INS_TERMINATE_DF};
+use data::CardData;
 use iso7816::{Instruction, Status};
 use pin::PinState;
 pub use pin::PwRef;
@@ -24,6 +27,10 @@ pub struct PgpApplet {
     aid: [u8; 16],
     /// PIN secrets, retry counters, and session verification flags.
     pub(crate) pins: PinState,
+    /// Persistent cardholder and key-slot metadata.
+    pub(crate) data: CardData,
+    /// Whether `TERMINATE DF` (`0xE6`) has put the applet in termination state.
+    terminated: bool,
 }
 
 impl Default for PgpApplet {
@@ -106,6 +113,8 @@ impl PgpApplet {
         Self {
             aid: build_aid(serial),
             pins: PinState::default(),
+            data: CardData::default(),
+            terminated: false,
         }
     }
 
@@ -161,12 +170,57 @@ impl PgpApplet {
             return Status::ClaNotSupported.into();
         }
 
+        if self.terminated {
+            return match command.instruction() {
+                Instruction::Unknown(INS_ACTIVATE_FILE) => self.process_activate_file(command),
+                _ => Status::ConditionsOfUseNotSatisfied.into(),
+            };
+        }
+
         match command.instruction() {
             Instruction::Verify => self.process_verify(command),
             Instruction::ChangeReferenceData => self.process_change_reference_data(command),
             Instruction::ResetRetryCounter => self.process_reset_retry_counter(command),
+            Instruction::Unknown(INS_GET_DATA) => self.process_get_data(command),
+            Instruction::Unknown(INS_PUT_DATA) => self.process_put_data(command),
+            Instruction::Unknown(INS_TERMINATE_DF) => self.process_terminate_df(command),
+            Instruction::Unknown(INS_ACTIVATE_FILE) => self.process_activate_file(command),
             _ => Status::InstructionNotSupportedOrInvalid.into(),
         }
+    }
+
+    /// `TERMINATE DF` (`0xE6`): enter termination state when PW3 is verified
+    /// or when both PW1 and PW3 are blocked.
+    fn process_terminate_df(&mut self, cmd: &CommandView<'_>) -> Response {
+        if cmd.p1 != 0x00 || cmd.p2 != 0x00 {
+            return Status::IncorrectP1OrP2Parameter.into();
+        }
+        if !cmd.data().is_empty() {
+            return Status::WrongLength.into();
+        }
+        if !self.pins.is_verified(PwRef::Pw3Admin) && !self.pins.both_pw1_and_pw3_blocked() {
+            return Status::SecurityStatusNotSatisfied.into();
+        }
+        self.pins.session_end();
+        self.terminated = true;
+        Status::Success.into()
+    }
+
+    /// `ACTIVATE FILE` (`0x44`): factory-reset a terminated applet.
+    fn process_activate_file(&mut self, cmd: &CommandView<'_>) -> Response {
+        if cmd.p1 != 0x00 || cmd.p2 != 0x00 {
+            return Status::IncorrectP1OrP2Parameter.into();
+        }
+        if !cmd.data().is_empty() {
+            return Status::WrongLength.into();
+        }
+        if !self.terminated {
+            return Status::ConditionsOfUseNotSatisfied.into();
+        }
+        self.pins = PinState::default();
+        self.data = CardData::default();
+        self.terminated = false;
+        Status::Success.into()
     }
 }
 
@@ -196,5 +250,187 @@ mod tests {
         let mut applet = PgpApplet::new();
         let chunk = [0x10, 0x20, 0x00, 0x81, 0x03, b'1', b'2', b'3'];
         assert_eq!(applet.process(&chunk).status(), Status::ClaNotSupported);
+    }
+
+    fn customize_applet_state(applet: &mut PgpApplet) {
+        use keyroost_openpgp::{KeyAlg, KeyCrt, PW1_SIGN, PW3_ADMIN};
+
+        assert_eq!(
+            applet
+                .process(&keyroost_openpgp::verify(PW3_ADMIN, b"12345678"))
+                .status(),
+            Status::Success
+        );
+        assert_eq!(
+            applet
+                .process(&keyroost_openpgp::put_cardholder_name(b"Alice"))
+                .status(),
+            Status::Success
+        );
+        let ed25519 = KeyAlg::Ed25519.attributes(KeyCrt::Sign).unwrap();
+        assert_eq!(
+            applet
+                .process(&keyroost_openpgp::put_algorithm_attributes(
+                    KeyCrt::Sign,
+                    &ed25519
+                ))
+                .status(),
+            Status::Success
+        );
+        assert_eq!(
+            applet
+                .process(&keyroost_openpgp::put_data(
+                    constants::TAG_UIF_SIG,
+                    &[0x02, 0x20]
+                ))
+                .status(),
+            Status::Success
+        );
+        assert_eq!(
+            applet
+                .process(&keyroost_openpgp::change_reference_data(
+                    PW1_SIGN, b"123456", b"654321"
+                ))
+                .status(),
+            Status::Success
+        );
+    }
+
+    #[test]
+    fn terminate_df_and_activate_file_factory_reset_via_pw3() {
+        use keyroost_openpgp::PW1_SIGN;
+
+        let mut applet = PgpApplet::new();
+
+        // ACTIVATE FILE fails when not terminated
+        assert_eq!(
+            applet.process(&keyroost_openpgp::activate_file()).status(),
+            Status::ConditionsOfUseNotSatisfied
+        );
+
+        // TERMINATE DF fails without PW3 (and without both PINs blocked)
+        assert_eq!(
+            applet.process(&keyroost_openpgp::terminate_df()).status(),
+            Status::SecurityStatusNotSatisfied
+        );
+        assert_eq!(
+            applet
+                .process(&keyroost_openpgp::verify(PW1_SIGN, b"123456"))
+                .status(),
+            Status::Success
+        );
+        assert_eq!(
+            applet.process(&keyroost_openpgp::terminate_df()).status(),
+            Status::SecurityStatusNotSatisfied
+        );
+
+        customize_applet_state(&mut applet);
+
+        // TERMINATE DF succeeds
+        assert_eq!(
+            applet.process(&keyroost_openpgp::terminate_df()).status(),
+            Status::Success
+        );
+
+        // In termination state, other commands fail with ConditionsOfUseNotSatisfied
+        assert_eq!(
+            applet
+                .process(&keyroost_openpgp::get_application_related_data())
+                .status(),
+            Status::ConditionsOfUseNotSatisfied
+        );
+        assert_eq!(
+            applet
+                .process(&keyroost_openpgp::verify(PW1_SIGN, b"654321"))
+                .status(),
+            Status::ConditionsOfUseNotSatisfied
+        );
+
+        // ACTIVATE FILE resets everything to factory defaults
+        assert_eq!(
+            applet.process(&keyroost_openpgp::activate_file()).status(),
+            Status::Success
+        );
+        assert_eq!(
+            applet
+                .process(&keyroost_openpgp::verify(PW1_SIGN, b"123456"))
+                .status(),
+            Status::Success
+        );
+        let app = keyroost_openpgp::parse_application_related_data(
+            applet
+                .process(&keyroost_openpgp::get_application_related_data())
+                .data(),
+        )
+        .unwrap();
+        assert_eq!(app.algo_attr_sig, constants::DEFAULT_ALGO_ATTR);
+        assert_eq!(
+            applet
+                .process(&keyroost_openpgp::get_data(constants::TAG_UIF_SIG))
+                .data(),
+            &constants::DEFAULT_UIF
+        );
+        let ch_resp = applet.process(&keyroost_openpgp::get_data(
+            constants::TAG_CARDHOLDER_RELATED_DATA,
+        ));
+        let ch = keyroost_openpgp::parse_tlvs(ch_resp.data()).unwrap();
+        assert_eq!(
+            keyroost_openpgp::find_tag(&ch, constants::TAG_NAME),
+            Some(&[][..])
+        );
+    }
+
+    #[test]
+    fn terminate_df_allowed_when_both_pw1_and_pw3_blocked() {
+        use keyroost_openpgp::{PW1_SIGN, PW3_ADMIN};
+
+        let mut applet = PgpApplet::new();
+
+        // Block PW1
+        for tries in (1..=3u8).rev() {
+            assert_eq!(
+                applet
+                    .process(&keyroost_openpgp::verify(PW1_SIGN, b"000000"))
+                    .status(),
+                Status::RemainingRetries(tries - 1)
+            );
+        }
+        // Still denied while PW3 is not blocked
+        assert_eq!(
+            applet.process(&keyroost_openpgp::terminate_df()).status(),
+            Status::SecurityStatusNotSatisfied
+        );
+
+        // Block PW3
+        for tries in (1..=3u8).rev() {
+            assert_eq!(
+                applet
+                    .process(&keyroost_openpgp::verify(PW3_ADMIN, b"00000000"))
+                    .status(),
+                Status::RemainingRetries(tries - 1)
+            );
+        }
+
+        // Now TERMINATE DF and ACTIVATE FILE recover the card
+        assert_eq!(
+            applet.process(&keyroost_openpgp::terminate_df()).status(),
+            Status::Success
+        );
+        assert_eq!(
+            applet.process(&keyroost_openpgp::activate_file()).status(),
+            Status::Success
+        );
+        assert_eq!(
+            applet
+                .process(&keyroost_openpgp::verify(PW1_SIGN, b"123456"))
+                .status(),
+            Status::Success
+        );
+        assert_eq!(
+            applet
+                .process(&keyroost_openpgp::verify(PW3_ADMIN, b"12345678"))
+                .status(),
+            Status::Success
+        );
     }
 }
