@@ -5,8 +5,8 @@ use iso7816::Status;
 use crate::{
     PgpApplet, Response,
     apdu::CommandView,
-    constants::{PW1_OTHER, PW1_SIGN, PW3_ADMIN},
-    pin::{MAX_PIN_LEN, PW1_MIN_LEN, RC_MIN_LEN},
+    constants::{PW1_SIGN, PW3_ADMIN},
+    pin::{CTX_PRIMARY, MAX_PIN_LEN, PW1_MIN_LEN, RC_MIN_LEN},
 };
 
 impl PgpApplet {
@@ -24,25 +24,20 @@ impl PgpApplet {
         if !data.is_empty() {
             return Status::WrongLength.into();
         }
-        match p2 {
-            PW1_SIGN => self.pins.pw1_sign_verified = false,
-            PW1_OTHER => self.pins.pw1_other_verified = false,
-            PW3_ADMIN => self.pins.pw3_verified = false,
-            _ => return Status::KeyReferenceNotFound.into(),
-        }
+        let Some((slot, ctx)) = self.pins.slot_and_context(p2) else {
+            return Status::KeyReferenceNotFound.into();
+        };
+        slot.clear_verified(ctx);
         Status::Success.into()
     }
 
     fn verify_present_or_status(&mut self, p2: u8, data: &[u8]) -> Response {
-        let (slot, verified) = match p2 {
-            PW1_SIGN => (&mut self.pins.pw1, &mut self.pins.pw1_sign_verified),
-            PW1_OTHER => (&mut self.pins.pw1, &mut self.pins.pw1_other_verified),
-            PW3_ADMIN => (&mut self.pins.pw3, &mut self.pins.pw3_verified),
-            _ => return Status::KeyReferenceNotFound.into(),
+        let Some((slot, ctx)) = self.pins.slot_and_context(p2) else {
+            return Status::KeyReferenceNotFound.into();
         };
 
         if data.is_empty() {
-            return if *verified {
+            return if slot.is_verified(ctx) {
                 Status::Success.into()
             } else if slot.tries() == 0 {
                 Status::OperationBlocked.into()
@@ -59,15 +54,9 @@ impl PgpApplet {
             return Status::WrongLength.into();
         }
 
-        match slot.check(data) {
-            Ok(()) => {
-                *verified = true;
-                Status::Success.into()
-            }
-            Err(tries) => {
-                *verified = false;
-                Status::RemainingRetries(tries).into()
-            }
+        match slot.verify(ctx, data) {
+            Ok(()) => Status::Success.into(),
+            Err(tries) => Status::RemainingRetries(tries).into(),
         }
     }
 
@@ -77,16 +66,10 @@ impl PgpApplet {
             return Status::IncorrectP1OrP2Parameter.into();
         }
 
-        let is_pw1 = match cmd.p2 {
-            PW1_SIGN => true,
-            PW3_ADMIN => false,
+        let slot = match cmd.p2 {
+            PW1_SIGN => &mut self.pins.pw1,
+            PW3_ADMIN => &mut self.pins.pw3,
             _ => return Status::KeyReferenceNotFound.into(),
-        };
-
-        let slot = if is_pw1 {
-            &mut self.pins.pw1
-        } else {
-            &mut self.pins.pw3
         };
 
         if slot.tries() == 0 {
@@ -103,29 +86,20 @@ impl PgpApplet {
             let Err(tries) = slot.check(data) else {
                 unreachable!("shorter slice never matches stored PIN");
             };
-            self.clear_verified_for(is_pw1);
+            slot.session_end();
             return Status::RemainingRetries(tries).into();
         }
 
         let (old_pin, new_pin) = data.split_at(old_len);
         if let Err(tries) = slot.check(old_pin) {
-            self.clear_verified_for(is_pw1);
+            slot.session_end();
             Status::RemainingRetries(tries).into()
         } else {
             if !slot.is_valid_new_pin(new_pin) {
                 return Status::WrongLength.into();
             }
             slot.set_value(new_pin);
-            self.clear_verified_for(is_pw1);
             Status::Success.into()
-        }
-    }
-
-    fn clear_verified_for(&mut self, is_pw1: bool) {
-        if is_pw1 {
-            self.pins.clear_pw1_verified();
-        } else {
-            self.pins.pw3_verified = false;
         }
     }
 
@@ -170,19 +144,17 @@ impl PgpApplet {
             return Status::WrongLength.into();
         }
         self.pins.pw1.set_value(new_pw1);
-        self.pins.clear_pw1_verified();
         Status::Success.into()
     }
 
     fn reset_pw1_by_admin(&mut self, new_pw1: &[u8]) -> Response {
-        if !self.pins.pw3_verified {
+        if !self.pins.pw3.is_verified(CTX_PRIMARY) {
             return Status::SecurityStatusNotSatisfied.into();
         }
         if !self.pins.pw1.is_valid_new_pin(new_pw1) {
             return Status::WrongLength.into();
         }
         self.pins.pw1.set_value(new_pw1);
-        self.pins.clear_pw1_verified();
         Status::Success.into()
     }
 }

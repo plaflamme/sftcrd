@@ -2,6 +2,8 @@
 
 use zeroize::Zeroizing;
 
+use crate::constants::{PW1_OTHER, PW1_SIGN, PW3_ADMIN};
+
 /// Error returned when a PIN or Resetting Code length is outside the allowed range.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct InvalidPinLength;
@@ -22,6 +24,11 @@ pub(crate) const PW3_MIN_LEN: usize = 8;
 /// Maximum length of any `OpenPGP` PIN/RC in bytes (`OpenPGP` Card v3.4 §4.3.2).
 pub(crate) const MAX_PIN_LEN: usize = 127;
 
+/// Bitmask context for `PW1_SIGN` (`0x81`) and `PW3_ADMIN` (`0x83`).
+pub(crate) const CTX_PRIMARY: u8 = 1 << 0;
+/// Bitmask context for `PW1_OTHER` (`0x82`).
+pub(crate) const CTX_SECONDARY: u8 = 1 << 1;
+
 /// Constant-time byte-slice equality.
 fn ct_eq(a: &[u8], b: &[u8]) -> bool {
     if a.len() != b.len() {
@@ -34,12 +41,13 @@ fn ct_eq(a: &[u8], b: &[u8]) -> bool {
     diff == 0
 }
 
-/// Stored PIN or Resetting Code secret and retry counter.
+/// Stored PIN or Resetting Code secret, retry counter, and session verification flags.
 pub(crate) struct PinSlot {
     value: Zeroizing<Vec<u8>>,
     min_len: usize,
     max_tries: u8,
     tries: u8,
+    verified_mask: u8,
 }
 
 impl PinSlot {
@@ -49,6 +57,7 @@ impl PinSlot {
             min_len,
             max_tries,
             tries: max_tries,
+            verified_mask: 0,
         }
     }
 
@@ -68,7 +77,20 @@ impl PinSlot {
         (self.min_len..=MAX_PIN_LEN).contains(&candidate.len())
     }
 
-    /// Compare `presented` against the stored PIN in constant time.
+    pub(crate) fn is_verified(&self, ctx: u8) -> bool {
+        self.verified_mask & ctx != 0
+    }
+
+    pub(crate) fn clear_verified(&mut self, ctx: u8) {
+        self.verified_mask &= !ctx;
+    }
+
+    pub(crate) fn session_end(&mut self) {
+        self.verified_mask = 0;
+    }
+
+    /// Compare `presented` against the stored PIN in constant time without
+    /// modifying verification flags.
     ///
     /// On match, restores `tries` to `max_tries`. On mismatch, decrements
     /// `tries` and returns the remaining count.
@@ -85,9 +107,27 @@ impl PinSlot {
         }
     }
 
+    /// Verify `presented` for `ctx`, updating both retry counter and the
+    /// verification bit for `ctx`.
+    pub(crate) fn verify(&mut self, ctx: u8, presented: &[u8]) -> Result<(), u8> {
+        match self.check(presented) {
+            Ok(()) => {
+                self.verified_mask |= ctx;
+                Ok(())
+            }
+            Err(tries) => {
+                self.clear_verified(ctx);
+                Err(tries)
+            }
+        }
+    }
+
+    /// Replace the stored value, restore `tries` to `max_tries`, and clear
+    /// all verification flags.
     pub(crate) fn set_value(&mut self, new_value: &[u8]) {
         *self.value = new_value.to_vec();
         self.tries = self.max_tries;
+        self.verified_mask = 0;
     }
 }
 
@@ -99,19 +139,13 @@ pub(crate) enum Pw1Validity {
     Multiple,
 }
 
-/// All `OpenPGP` Card PINs and session verification flags.
+/// All `OpenPGP` Card PINs.
 pub(crate) struct PinState {
     pub(crate) pw1: PinSlot,
     pub(crate) rc: Option<PinSlot>,
     pub(crate) pw3: PinSlot,
     /// PW1 (`0x81`) validity mode: single `PSO:CDS` vs multiple.
     pub(crate) pw1_validity: Pw1Validity,
-    /// Session verification flag for PW1 signing context (`0x81`).
-    pub(crate) pw1_sign_verified: bool,
-    /// Session verification flag for PW1 other context (`0x82`).
-    pub(crate) pw1_other_verified: bool,
-    /// Session verification flag for PW3 admin context (`0x83`).
-    pub(crate) pw3_verified: bool,
 }
 
 impl Default for PinState {
@@ -121,14 +155,22 @@ impl Default for PinState {
             rc: None,
             pw3: PinSlot::new(DEFAULT_PW3, PW3_MIN_LEN, DEFAULT_TRIES),
             pw1_validity: Pw1Validity::default(),
-            pw1_sign_verified: false,
-            pw1_other_verified: false,
-            pw3_verified: false,
         }
     }
 }
 
 impl PinState {
+    /// Resolve a `VERIFY` password reference (`0x81`, `0x82`, `0x83`) to its
+    /// [`PinSlot`] and verification bit.
+    pub(crate) fn slot_and_context(&mut self, p2: u8) -> Option<(&mut PinSlot, u8)> {
+        match p2 {
+            PW1_SIGN => Some((&mut self.pw1, CTX_PRIMARY)),
+            PW1_OTHER => Some((&mut self.pw1, CTX_SECONDARY)),
+            PW3_ADMIN => Some((&mut self.pw3, CTX_PRIMARY)),
+            _ => None,
+        }
+    }
+
     /// Configure or replace the optional Resetting Code (RC).
     pub(crate) fn set_rc(&mut self, rc: &[u8]) -> Result<(), InvalidPinLength> {
         if !(RC_MIN_LEN..=MAX_PIN_LEN).contains(&rc.len()) {
@@ -140,14 +182,7 @@ impl PinState {
 
     /// Clear all session verification flags (on `SELECT` / `deselect`).
     pub(crate) fn session_end(&mut self) {
-        self.pw1_sign_verified = false;
-        self.pw1_other_verified = false;
-        self.pw3_verified = false;
-    }
-
-    /// Clear both PW1 verification flags (`0x81` and `0x82`).
-    pub(crate) fn clear_pw1_verified(&mut self) {
-        self.pw1_sign_verified = false;
-        self.pw1_other_verified = false;
+        self.pw1.session_end();
+        self.pw3.session_end();
     }
 }
