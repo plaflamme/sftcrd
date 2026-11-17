@@ -2,9 +2,7 @@
 
 use iso7816::Status;
 use sftcrd_apdu::CommandView;
-use sftcrd_tlv::{
-    BerLength, BerTag, Encoder, Length as _, Tag as _, ValueEncoder as _, tlv_struct,
-};
+use sftcrd_tlv::{BerLength, BerTag, ValueEncoder as _, encode_sequence, tlv_struct};
 
 use crate::{
     PgpApplet, Response,
@@ -210,11 +208,11 @@ impl CardData {
 
     /// Encode Algorithm Information (`00FA` value): supported algorithms per slot.
     pub(crate) fn encode_algorithm_information() -> Vec<u8> {
-        let mut entries: Vec<(u32, Vec<u8>)> = Vec::new();
+        let mut entries: Vec<(BerTag, Vec<u8>)> = Vec::new();
         for (tag, slot) in [
-            (0x00C1, KeySlotId::Sig),
-            (0x00C2, KeySlotId::Dec),
-            (0x00C3, KeySlotId::Aut),
+            (BerTag(0xC1), KeySlotId::Sig),
+            (BerTag(0xC2), KeySlotId::Dec),
+            (BerTag(0xC3), KeySlotId::Aut),
         ] {
             for bits in [2048u16, 3072, 4096] {
                 let [hi, lo] = bits.to_be_bytes();
@@ -235,20 +233,8 @@ impl CardData {
             }
         }
 
-        let total_len: usize = entries
-            .iter()
-            .map(|(tag, val)| {
-                BerTag(*tag).length() + BerLength::length(val.len()) as usize + val.len()
-            })
-            .sum();
-        let mut buf = vec![0u8; total_len];
-        let mut encoder = Encoder::new(&mut buf);
-        for (tag, val) in &entries {
-            encoder
-                .write_tlv::<BerTag, BerLength, _>(&BerTag(*tag), val)
-                .expect("exact pre-sized buffer cannot overflow");
-        }
-        buf
+        encode_sequence::<BerTag, BerLength, _>(&entries)
+            .expect("in-memory TLV encoding cannot overflow")
     }
 }
 

@@ -60,6 +60,29 @@ impl<'a> Encoder<'a> {
     }
 }
 
+/// Encodes a sequence of `(tag, value)` pairs into a newly allocated buffer.
+///
+/// # Errors
+///
+/// Returns an [`EncodeError`] if any tag, length, or value fails to encode.
+pub fn encode_sequence<T: Tag, L: Length, V: ValueEncoder>(
+    entries: &[(T, V)],
+) -> Result<Vec<u8>, EncodeError> {
+    let total_len: usize = entries
+        .iter()
+        .map(|(tag, val)| {
+            let val_len = val.length();
+            tag.length() + L::length(val_len) as usize + val_len
+        })
+        .sum();
+    let mut buf = vec![0u8; total_len];
+    let mut encoder = Encoder::new(&mut buf);
+    for (tag, val) in entries {
+        encoder.write_tlv::<T, L, V>(tag, val)?;
+    }
+    Ok(buf)
+}
+
 #[cfg(test)]
 mod test {
     use super::*;
