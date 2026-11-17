@@ -5,17 +5,17 @@ edition = "2024"
 description = "Smartcard server for PIV applet via VSmartCard protocol."
 
 [dependencies]
-sftcrd-piv = { path = "../sftcrd-piv" }
-sftcrd-tlv = { path = "../sftcrd-tlv" }
-apdu-dispatch = "0.4"
-hex = "0.4"
-iso7816 = "0.2"
-tracing = "0.1"
-tracing-subscriber = { version = "0.3", features = ["env-filter"] }
-clap = { version = "4", features = ["derive"] }
+sftcrd-piv = { workspace = true }
+sftcrd-tlv = { workspace = true }
+apdu-dispatch = { workspace = true }
+hex = { workspace = true }
+iso7816 = { workspace = true }
+tracing = { workspace = true }
+tracing-subscriber = { workspace = true }
+clap = { workspace = true }
 
 [dev-dependencies]
-keyroost-piv = "0.16.0"
+keyroost-piv = { workspace = true }
 
-[lints.clippy]
-pedantic = "warn"
+[lints]
+workspace = true

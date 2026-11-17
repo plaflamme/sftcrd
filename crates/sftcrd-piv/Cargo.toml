@@ -5,33 +5,33 @@ edition = "2024"
 description = "Pure-Rust PIV (NIST SP 800-73-4 / FIPS 201) card-side applet."
 
 [dependencies]
-aes = "0.9"
-apdu-app = "0.2"
-apdu-dispatch = "0.4"
-cipher = "0.5"
-des = "0.9"
-ecdsa = { version = "0.17.0", features = ["der"] }
-elliptic-curve = { version = "0.14", features = ["sec1", "pkcs8"] }
-figment = { version = "0.10", features = ["toml"] }
-hex = "0.4"
-iso7816 = "0.2"
-p256 = { version = "0.14.0", features = ["ecdh"] }
-p384 = { version = "0.14.0", features = ["ecdh"] }
-p521 = { version = "0.14.0", features = ["ecdh"] }
-pem-rfc7468 = { version = "1.0", features = ["std"] }
-pkcs8 = "0.11"
-rand = { version = "0.10" }
-rsa = { version = "0.10", features = ["hazmat"] }
-serde = { version = "1.0", features = ["derive"] }
-sftcrd-tlv = { path = "../sftcrd-tlv" }
-sha2 = "0.11"
-toml-example = "0.17"
-tracing = "0.1"
-x509-cert = { version = "0.3.0", features = ["builder"] }
-zeroize = { version = "1", default-features = false, features = ["alloc"] }
+aes = { workspace = true }
+apdu-app = { workspace = true }
+apdu-dispatch = { workspace = true }
+cipher = { workspace = true }
+des = { workspace = true }
+ecdsa = { workspace = true }
+elliptic-curve = { workspace = true }
+figment = { workspace = true }
+hex = { workspace = true }
+iso7816 = { workspace = true }
+p256 = { workspace = true }
+p384 = { workspace = true }
+p521 = { workspace = true }
+pem-rfc7468 = { workspace = true }
+pkcs8 = { workspace = true }
+rand = { workspace = true }
+rsa = { workspace = true }
+serde = { workspace = true }
+sftcrd-tlv = { workspace = true }
+sha2 = { workspace = true }
+toml-example = { workspace = true }
+tracing = { workspace = true }
+x509-cert = { workspace = true }
+zeroize = { workspace = true }
 
 [dev-dependencies]
-keyroost-piv = "0.16.0"
+keyroost-piv = { workspace = true }
 
-[lints.clippy]
-pedantic = "warn"
+[lints]
+workspace = true

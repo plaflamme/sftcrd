@@ -8,5 +8,5 @@ description = "TLV utilities for sftcrd"
 
 [dev-dependencies]
 
-[lints.clippy]
-pedantic = "warn"
+[lints]
+workspace = true

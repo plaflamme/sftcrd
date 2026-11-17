@@ -5,3 +5,36 @@ members = [
     "crates/sftcrd",
 ]
 resolver = "2"
+
+[workspace.dependencies]
+aes = "0.9"
+apdu-app = "0.2"
+apdu-dispatch = "0.4"
+cipher = "0.5"
+clap = { version = "4", features = ["derive"] }
+des = "0.9"
+ecdsa = { version = "0.17.0", features = ["der"] }
+elliptic-curve = { version = "0.14", features = ["sec1", "pkcs8"] }
+figment = { version = "0.10", features = ["toml"] }
+hex = "0.4"
+iso7816 = "0.2"
+keyroost-piv = "0.16.0"
+p256 = { version = "0.14.0", features = ["ecdh"] }
+p384 = { version = "0.14.0", features = ["ecdh"] }
+p521 = { version = "0.14.0", features = ["ecdh"] }
+pem-rfc7468 = { version = "1.0", features = ["std"] }
+pkcs8 = "0.11"
+rand = "0.10"
+rsa = { version = "0.10", features = ["hazmat"] }
+serde = { version = "1.0", features = ["derive"] }
+sftcrd-piv = { path = "crates/sftcrd-piv" }
+sftcrd-tlv = { path = "crates/sftcrd-tlv" }
+sha2 = "0.11"
+toml-example = "0.17"
+tracing = "0.1"
+tracing-subscriber = { version = "0.3", features = ["env-filter"] }
+x509-cert = { version = "0.3.0", features = ["builder"] }
+zeroize = { version = "1", default-features = false, features = ["alloc"] }
+
+[workspace.lints.clippy]
+pedantic = "warn"
