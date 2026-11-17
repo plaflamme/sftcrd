@@ -5,8 +5,7 @@ use iso7816::Status;
 use crate::{
     PgpApplet, Response,
     apdu::CommandView,
-    constants::PwRef,
-    pin::{MAX_PIN_LEN, PW1_MIN_LEN, PinContext, RC_MIN_LEN},
+    pin::{MAX_PIN_LEN, PW1_MIN_LEN, PinContext, PwRef, RC_MIN_LEN},
 };
 
 impl PgpApplet {

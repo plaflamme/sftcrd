@@ -13,11 +13,9 @@ mod pin;
 mod trace;
 
 pub use apdu::Response;
-pub use constants::{
-    AID_PREFIX, DEFAULT_SERIAL, MANUFACTURER_ID, OPENPGP_VERSION, PwRef, build_aid,
-};
+pub use constants::{AID_PREFIX, DEFAULT_SERIAL, MANUFACTURER_ID, OPENPGP_VERSION, build_aid};
 use iso7816::{Instruction, Status};
-pub use pin::InvalidPinLength;
+pub use pin::{InvalidPinLength, PwRef};
 use pin::{PinState, Pw1Validity};
 use trace::Trace;
 

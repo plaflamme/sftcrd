@@ -36,29 +36,3 @@ pub const fn build_aid(serial: u32) -> [u8; 16] {
         0x00,
     ]
 }
-
-/// `OpenPGP` Card password reference (`P2` in `VERIFY`, `CHANGE REFERENCE DATA`,
-/// and `RESET RETRY COUNTER`).
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-#[repr(u8)]
-pub enum PwRef {
-    /// PW1 in signing context (`PSO:CDS`).
-    Pw1Sign = 0x81,
-    /// PW1 in other contexts (decipher, internal auth).
-    Pw1Other = 0x82,
-    /// PW3 (admin PIN).
-    Pw3Admin = 0x83,
-}
-
-impl PwRef {
-    /// Parse a raw `P2` byte into a [`PwRef`].
-    #[must_use]
-    pub const fn from_u8(value: u8) -> Option<Self> {
-        match value {
-            0x81 => Some(Self::Pw1Sign),
-            0x82 => Some(Self::Pw1Other),
-            0x83 => Some(Self::Pw3Admin),
-            _ => None,
-        }
-    }
-}
