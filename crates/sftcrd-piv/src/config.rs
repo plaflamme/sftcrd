@@ -11,6 +11,7 @@ use std::str::FromStr;
 
 use figment::Figment;
 use figment::providers::{Format, Toml};
+use pkcs8::der::{Decode, Encode};
 use serde::Deserialize;
 use sftcrd_tlv::{BerLength, EncodeError, ValueDecoder, ValueEncoder, tlv_struct};
 use toml_example::TomlExample;
@@ -32,6 +33,8 @@ pub enum ConfigError {
     InvalidMgmtKey(String),
     /// An invalid policy string.
     InvalidPolicy(String),
+    /// An invalid key origin string.
+    InvalidKeyOrigin(String),
     /// A PEM decoding error.
     PemError(String),
     /// An unsupported or invalid cryptographic key.
@@ -48,6 +51,7 @@ impl fmt::Display for ConfigError {
             ConfigError::InvalidPin(s) => write!(f, "invalid PIN/PUK: {s}"),
             ConfigError::InvalidMgmtKey(s) => write!(f, "invalid management key: {s}"),
             ConfigError::InvalidPolicy(s) => write!(f, "invalid policy: {s}"),
+            ConfigError::InvalidKeyOrigin(s) => write!(f, "invalid key origin: {s}"),
             ConfigError::PemError(s) => write!(f, "PEM decode error: {s}"),
             ConfigError::KeyError(s) => write!(f, "key error: {s}"),
             ConfigError::CertError(s) => write!(f, "certificate error: {s}"),
@@ -95,6 +99,8 @@ pub struct PivConfig {
     /// Management key configuration.
     #[toml_example(nesting, require)]
     pub management_key: Option<MgmtKeyConfig>,
+    #[toml_example(nesting, require)]
+    pub attestation: Option<AttestationConfig>,
     /// Slot configurations mapped by slot identifier (e.g. `"9a"`, `"9c"`, `"82"`).
     #[serde(default)]
     #[toml_example(default = "9a", nesting)]
@@ -126,6 +132,33 @@ pub struct MgmtKeyConfig {
     pub algorithm: Option<String>,
 }
 
+/// Configuration for the attestation key and certificate.
+/// By default a secret key and self-signed certificate will be generated on startup if none is provided here.
+#[derive(TomlExample, Debug, Deserialize, Clone)]
+#[serde(deny_unknown_fields)]
+pub struct AttestationConfig {
+    /// PEM-encoded NISTP256 elliptic curve private key, i.e: `BEGIN EC PRIVATE KEY`.
+    #[toml_example(
+        default = """
+-----BEGIN EC PRIVATE KEY-----
+...
+-----END EC PRIVATE KEY-----
+""",
+        require
+    )]
+    pub key: String,
+    /// PEM-encoded X.509 certificate (`BEGIN CERTIFICATE`).
+    #[toml_example(
+        default = """
+-----BEGIN CERTIFICATE-----
+...
+-----END CERTIFICATE-----
+""",
+        require
+    )]
+    pub cert: String,
+}
+
 /// Configuration for an asymmetric key slot.
 #[derive(TomlExample, Debug, Deserialize, Default, Clone)]
 #[serde(deny_unknown_fields)]
@@ -150,6 +183,9 @@ pub struct SlotConfig {
         require
     )]
     pub cert: Option<String>,
+    /// The key's origin, either `"imported"` or `"generated"`.
+    #[toml_example(default = "imported", require)]
+    pub origin: Option<String>,
     /// PIN policy: `"never"`, `"once"`, or `"always"`.
     #[toml_example(default = "never", require)]
     pub pin_policy: Option<String>,
@@ -249,6 +285,17 @@ fn parse_touch_policy(s: &str) -> Result<TouchPolicy, ConfigError> {
     }
 }
 
+/// Parse a Touch policy string.
+fn parse_key_origin(s: &str) -> Result<KeyOrigin, ConfigError> {
+    match s.trim().to_ascii_lowercase().as_str() {
+        "generated" => Ok(KeyOrigin::Generated),
+        "imported" => Ok(KeyOrigin::Imported),
+        other => Err(ConfigError::InvalidKeyOrigin(format!(
+            "invalid touch policy: {other}"
+        ))),
+    }
+}
+
 /// Parse a PEM-encoded private key into a `SlotKey`.
 pub(crate) fn parse_pem_key(pem_str: &str) -> Result<SlotKey, ConfigError> {
     use pem_rfc7468::decode_vec;
@@ -262,6 +309,28 @@ pub(crate) fn parse_pem_key(pem_str: &str) -> Result<SlotKey, ConfigError> {
         "EC PRIVATE KEY" => parse_sec1_der(&der),
         other => Err(ConfigError::KeyError(format!(
             "unsupported PEM type '{other}', expected 'PRIVATE KEY', 'RSA PRIVATE KEY', or 'EC PRIVATE KEY'"
+        ))),
+    }
+}
+
+/// Parse a PEM-encoded private key into a `SlotKey`.
+pub(crate) fn parse_attestation_key(
+    pem_str: &str,
+) -> Result<elliptic_curve::SecretKey<p256::NistP256>, ConfigError> {
+    use pem_rfc7468::decode_vec;
+
+    let (label, der) =
+        decode_vec(pem_str.as_bytes()).map_err(|e| ConfigError::PemError(e.to_string()))?;
+
+    match label {
+        "EC PRIVATE KEY" => elliptic_curve::SecretKey::<p256::NistP256>::from_sec1_der(&der)
+            .map_err(|_| {
+                ConfigError::KeyError(
+                    "failed to parse SEC1 EC private key as P-256, P-384, or P-521".to_string(),
+                )
+            }),
+        other => Err(ConfigError::KeyError(format!(
+            "unsupported PEM type '{other}', expected 'EC PRIVATE KEY'"
         ))),
     }
 }
@@ -342,8 +411,8 @@ fn parse_sec1_der(der: &[u8]) -> Result<SlotKey, ConfigError> {
     ))
 }
 
-/// Parse a PEM-encoded X.509 certificate and encode it into a PIV certificate data object.
-pub(crate) fn parse_pem_cert_object(pem_str: &str) -> Result<Vec<u8>, ConfigError> {
+/// Parse a PEM-encoded X.509 certificate.
+pub(crate) fn parse_pem_cert(pem_str: &str) -> Result<x509_cert::Certificate, ConfigError> {
     use pem_rfc7468::decode_vec;
 
     let (label, der) =
@@ -355,8 +424,18 @@ pub(crate) fn parse_pem_cert_object(pem_str: &str) -> Result<Vec<u8>, ConfigErro
         )));
     }
 
+    x509_cert::Certificate::from_der(&der)
+        .map_err(|e| ConfigError::CertError(format!("cannot decode certificate: {e:?}")))
+}
+
+/// Parse a PEM-encoded X.509 certificate and encode it into a PIV certificate data object.
+pub(crate) fn parse_pem_cert_object(pem_str: &str) -> Result<Vec<u8>, ConfigError> {
+    let cert = parse_pem_cert(pem_str)?;
+
     let cert_data = CertificateData {
-        cert: &der,
+        cert: &cert
+            .to_der()
+            .map_err(|e| ConfigError::CertError(format!("cannot encode certificate: {e:?}")))?,
         cert_info: CertInfo::Uncompressed,
         lrc: &[],
     };
@@ -536,6 +615,14 @@ impl PivApplet {
             })?;
         }
 
+        // Configure attestation
+        if let Some(attest_cfg) = &config.attestation {
+            let key = parse_attestation_key(&attest_cfg.key)?;
+            let cert = parse_pem_cert(&attest_cfg.cert)?;
+            applet.attestation.secret_key = key;
+            applet.attestation.cert = Some(cert);
+        }
+
         // Configure Slots
         for (slot_id, slot_cfg) in &config.slots {
             let slot = Slot::from_str(slot_id)?;
@@ -551,6 +638,9 @@ impl PivApplet {
                 let slot_key = parse_pem_key(key_pem)?;
                 slot_ref.key = Some(slot_key);
                 slot_ref.origin = KeyOrigin::Imported;
+            }
+            if let Some(origin) = &slot_cfg.origin {
+                slot_ref.origin = parse_key_origin(origin)?;
             }
             if let Some(cert_pem) = &slot_cfg.cert {
                 let cert_bytes = parse_pem_cert_object(cert_pem)?;
