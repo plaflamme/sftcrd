@@ -23,6 +23,10 @@ jobs:
           nix_path: nixpkgs=channel:nixos-unstable
           extra_nix_config: |
             experimental-features = nix-command flakes
+      - uses: cachix/cachix-action@v17
+        with:
+          name: sftcrd
+          authToken: "${{ secrets.CACHIX_AUTH_TOKEN }}"
       - run: nix build -L '.#docs'
       # result symlinks into the read-only store; the artifact step needs a
       # plain writable tree.
