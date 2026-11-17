@@ -8,6 +8,7 @@
     };
 
     piv.slots = {
+      "9c".key = "p256";
       "9d" = {
         key = ''
           -----BEGIN PRIVATE KEY-----
@@ -59,6 +60,10 @@
     assert slot_9d["cert_present"] == True, f"Invalid cert_present: {slot_9d["cert_present"]=}"
     # assert slot_9d["pin_policy"] == "always", f"Invalid pin_policy: {slot_9d["pin_policy"]=}"
     # assert slot_9d["touch_policy"] == "always", f"Invalid touch_policy: {slot_9d["touch_policy"]=}"
+
+    slot_9c = get_slot(output, "9c")
+    assert slot_9c["key_present"] == True, f"Invalid key_present: {slot_9c["key_present"]=}"
+    assert slot_9c["cert_present"] == False, f"Invalid cert_present: {slot_9c["cert_present"]=}"
 
     slot_9a = get_slot(output, "9a")
     assert slot_9a["key_present"] == False
