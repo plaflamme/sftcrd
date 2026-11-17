@@ -1,6 +1,5 @@
 //! Yubico PIV extensions: the custom instructions the `YubiKey` implements beyond
 //! the standard ISO 7816-4 instruction set.
-//!
 
 /// Yubico extension instructions not in the iso7816 crate.
 #[derive(Copy, Clone, PartialEq, Eq, Debug)]

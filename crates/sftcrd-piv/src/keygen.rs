@@ -361,7 +361,7 @@ mod tests {
 
     use super::*;
     use crate::general_auth::tests::mgmt_handshake;
-    use crate::yubico::YubicoInstruction;
+    use sftcrd_apdu::YubicoInstruction;
     use elliptic_curve::Curve;
     use elliptic_curve::sec1::ToSec1Point;
     use keyroost_piv::{
