@@ -6,7 +6,7 @@ use crate::{
     PgpApplet, Response,
     apdu::CommandView,
     constants::{PW1_SIGN, PW3_ADMIN},
-    pin::{CTX_PRIMARY, MAX_PIN_LEN, PW1_MIN_LEN, RC_MIN_LEN},
+    pin::{MAX_PIN_LEN, PW1_MIN_LEN, PinContext, RC_MIN_LEN},
 };
 
 impl PgpApplet {
@@ -148,7 +148,7 @@ impl PgpApplet {
     }
 
     fn reset_pw1_by_admin(&mut self, new_pw1: &[u8]) -> Response {
-        if !self.pins.pw3.is_verified(CTX_PRIMARY) {
+        if !self.pins.pw3.is_verified(PinContext::Primary) {
             return Status::SecurityStatusNotSatisfied.into();
         }
         if !self.pins.pw1.is_valid_new_pin(new_pw1) {

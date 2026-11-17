@@ -24,10 +24,21 @@ pub(crate) const PW3_MIN_LEN: usize = 8;
 /// Maximum length of any `OpenPGP` PIN/RC in bytes (`OpenPGP` Card v3.4 §4.3.2).
 pub(crate) const MAX_PIN_LEN: usize = 127;
 
-/// Bitmask context for `PW1_SIGN` (`0x81`) and `PW3_ADMIN` (`0x83`).
-pub(crate) const CTX_PRIMARY: u8 = 1 << 0;
-/// Bitmask context for `PW1_OTHER` (`0x82`).
-pub(crate) const CTX_SECONDARY: u8 = 1 << 1;
+/// Verification context within a [`PinSlot`].
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[repr(u8)]
+pub(crate) enum PinContext {
+    /// Primary context: `PW1_SIGN` (`0x81`) or `PW3_ADMIN` (`0x83`).
+    Primary = 1 << 0,
+    /// Secondary context: `PW1_OTHER` (`0x82`).
+    Secondary = 1 << 1,
+}
+
+impl PinContext {
+    const fn bit(self) -> u8 {
+        self as u8
+    }
+}
 
 /// Constant-time byte-slice equality.
 fn ct_eq(a: &[u8], b: &[u8]) -> bool {
@@ -77,12 +88,12 @@ impl PinSlot {
         (self.min_len..=MAX_PIN_LEN).contains(&candidate.len())
     }
 
-    pub(crate) fn is_verified(&self, ctx: u8) -> bool {
-        self.verified_mask & ctx != 0
+    pub(crate) fn is_verified(&self, ctx: PinContext) -> bool {
+        self.verified_mask & ctx.bit() != 0
     }
 
-    pub(crate) fn clear_verified(&mut self, ctx: u8) {
-        self.verified_mask &= !ctx;
+    pub(crate) fn clear_verified(&mut self, ctx: PinContext) {
+        self.verified_mask &= !ctx.bit();
     }
 
     pub(crate) fn session_end(&mut self) {
@@ -109,10 +120,10 @@ impl PinSlot {
 
     /// Verify `presented` for `ctx`, updating both retry counter and the
     /// verification bit for `ctx`.
-    pub(crate) fn verify(&mut self, ctx: u8, presented: &[u8]) -> Result<(), u8> {
+    pub(crate) fn verify(&mut self, ctx: PinContext, presented: &[u8]) -> Result<(), u8> {
         match self.check(presented) {
             Ok(()) => {
-                self.verified_mask |= ctx;
+                self.verified_mask |= ctx.bit();
                 Ok(())
             }
             Err(tries) => {
@@ -161,12 +172,12 @@ impl Default for PinState {
 
 impl PinState {
     /// Resolve a `VERIFY` password reference (`0x81`, `0x82`, `0x83`) to its
-    /// [`PinSlot`] and verification bit.
-    pub(crate) fn slot_and_context(&mut self, p2: u8) -> Option<(&mut PinSlot, u8)> {
+    /// [`PinSlot`] and [`PinContext`].
+    pub(crate) fn slot_and_context(&mut self, p2: u8) -> Option<(&mut PinSlot, PinContext)> {
         match p2 {
-            PW1_SIGN => Some((&mut self.pw1, CTX_PRIMARY)),
-            PW1_OTHER => Some((&mut self.pw1, CTX_SECONDARY)),
-            PW3_ADMIN => Some((&mut self.pw3, CTX_PRIMARY)),
+            PW1_SIGN => Some((&mut self.pw1, PinContext::Primary)),
+            PW1_OTHER => Some((&mut self.pw1, PinContext::Secondary)),
+            PW3_ADMIN => Some((&mut self.pw3, PinContext::Primary)),
             _ => None,
         }
     }
