@@ -129,7 +129,7 @@ impl PgpApplet {
     /// Returns [`InvalidPinLength`] if `rc` is shorter than 8 bytes or longer
     /// than 127 bytes.
     pub fn set_resetting_code(&mut self, rc: &[u8]) -> Result<(), InvalidPinLength> {
-        self.pins.rc.set(rc)
+        self.pins.set_rc(rc)
     }
 
     /// Parse and process a raw APDU byte slice.

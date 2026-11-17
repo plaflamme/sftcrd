@@ -144,36 +144,34 @@ impl PgpApplet {
     }
 
     fn reset_pw1_by_rc(&mut self, data: &[u8]) -> Response {
-        let Some(rc_len) = self.pins.rc.len() else {
+        let Some(rc) = self.pins.rc.as_mut() else {
             return Status::OperationBlocked.into();
         };
-        if self.pins.rc.tries() == 0 {
+        if rc.tries() == 0 {
             return Status::OperationBlocked.into();
         }
         if data.len() < RC_MIN_LEN + PW1_MIN_LEN {
             return Status::WrongLength.into();
         }
 
+        let rc_len = rc.len();
         if data.len() < rc_len {
-            return match self.pins.rc.check(data) {
-                Err(Some(tries)) => Status::RemainingRetries(tries).into(),
-                Err(None) | Ok(()) => Status::OperationBlocked.into(),
+            let Err(tries) = rc.check(data) else {
+                unreachable!("shorter slice never matches stored RC");
             };
+            return Status::RemainingRetries(tries).into();
         }
 
         let (rc_presented, new_pw1) = data.split_at(rc_len);
-        match self.pins.rc.check(rc_presented) {
-            Err(None) => Status::OperationBlocked.into(),
-            Err(Some(tries)) => Status::RemainingRetries(tries).into(),
-            Ok(()) => {
-                if !self.pins.pw1.is_valid_new_pin(new_pw1) {
-                    return Status::WrongLength.into();
-                }
-                self.pins.pw1.set_value(new_pw1);
-                self.pins.clear_pw1_verified();
-                Status::Success.into()
-            }
+        if let Err(tries) = rc.check(rc_presented) {
+            return Status::RemainingRetries(tries).into();
         }
+        if !self.pins.pw1.is_valid_new_pin(new_pw1) {
+            return Status::WrongLength.into();
+        }
+        self.pins.pw1.set_value(new_pw1);
+        self.pins.clear_pw1_verified();
+        Status::Success.into()
     }
 
     fn reset_pw1_by_admin(&mut self, new_pw1: &[u8]) -> Response {
