@@ -99,6 +99,34 @@ enum AlgoAttr<'a> {
     },
 }
 
+impl AlgoAttr<'_> {
+    fn validate_for_slot(self, slot: KeySlotId) -> Result<(), Status> {
+        match self {
+            Self::Rsa {
+                n_bits,
+                e_bits,
+                format,
+            } => {
+                if !matches!(n_bits, 2048 | 3072 | 4096) || e_bits == 0 || format > 0x03 {
+                    return Err(Status::IncorrectDataParameter);
+                }
+                Ok(())
+            }
+            Self::Ecc { algo_id, oid } => {
+                let valid = is_supported_ecc(slot, algo_id, oid)
+                    || oid.split_last().is_some_and(|(&last, rest)| {
+                        matches!(last, 0x00 | 0xFF) && is_supported_ecc(slot, algo_id, rest)
+                    });
+                if valid {
+                    Ok(())
+                } else {
+                    Err(Status::IncorrectDataParameter)
+                }
+            }
+        }
+    }
+}
+
 impl<'a> ValueDecoder<'a> for AlgoAttr<'a> {
     fn decode(bytes: &'a [u8]) -> Result<Self, DecodeError> {
         let Some(&raw_algo_id) = bytes.first() else {
@@ -338,43 +366,6 @@ impl CardData {
     }
 }
 
-fn validate_algo_attr(slot: KeySlotId, attr: &[u8]) -> Result<(), Status> {
-    let Some(&raw_algo_id) = attr.first() else {
-        return Err(Status::WrongLength);
-    };
-    let algo_id = AlgoId::from_u8(raw_algo_id).ok_or(Status::IncorrectDataParameter)?;
-    if algo_id == AlgoId::Rsa {
-        if !(5..=6).contains(&attr.len()) {
-            return Err(Status::IncorrectDataParameter);
-        }
-        let n_bits = u16::from_be_bytes([attr[1], attr[2]]);
-        let e_bits = u16::from_be_bytes([attr[3], attr[4]]);
-        if !matches!(n_bits, 2048 | 3072 | 4096) || e_bits == 0 {
-            return Err(Status::IncorrectDataParameter);
-        }
-        if let Some(&fmt) = attr.get(5)
-            && fmt > 0x03
-        {
-            return Err(Status::IncorrectDataParameter);
-        }
-        return Ok(());
-    }
-
-    let raw_oid = &attr[1..];
-    let oid = if is_supported_ecc(slot, algo_id, raw_oid) {
-        raw_oid
-    } else if let Some((&last, rest)) = raw_oid.split_last()
-        && matches!(last, 0x00 | 0xFF)
-        && is_supported_ecc(slot, algo_id, rest)
-    {
-        rest
-    } else {
-        return Err(Status::IncorrectDataParameter);
-    };
-    let _ = oid;
-    Ok(())
-}
-
 fn is_supported_ecc(slot: KeySlotId, algo_id: AlgoId, oid: &[u8]) -> bool {
     match slot {
         KeySlotId::Sig | KeySlotId::Aut => {
@@ -575,7 +566,13 @@ impl PgpApplet {
     }
 
     fn put_algo_attr(&mut self, slot: KeySlotId, data: &[u8]) -> Response {
-        if let Err(status) = validate_algo_attr(slot, data) {
+        if data.is_empty() {
+            return Status::WrongLength.into();
+        }
+        let Ok(attr) = AlgoAttr::decode(data) else {
+            return Status::IncorrectDataParameter.into();
+        };
+        if let Err(status) = attr.validate_for_slot(slot) {
             return status.into();
         }
         let meta = self.data.slot_mut(slot);
