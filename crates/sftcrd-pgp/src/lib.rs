@@ -1,9 +1,8 @@
 //! `OpenPGP` Card v3.4 applet, in pure Rust.
 //!
 //! This is the card-side counterpart to [`keyroost-openpgp`]: it receives raw
-//! ISO 7816-4 APDUs (or [`apdu_app::App`] calls), handles command chaining,
-//! maintains PIN state (PW1, RC, PW3), and produces card responses without
-//! performing any I/O.
+//! ISO 7816-4 APDUs (or [`apdu_app::App`] calls), maintains PIN state (PW1,
+//! RC, PW3), and produces card responses without performing any I/O.
 
 #![forbid(unsafe_code)]
 
@@ -19,12 +18,6 @@ use iso7816::{Instruction, Status};
 pub use pin::InvalidPinLength;
 use pin::{PinState, Pw1Validity};
 use trace::Trace;
-use zeroize::Zeroizing;
-
-use crate::apdu::Command;
-
-/// Maximum total payload size accepted across a chained APDU sequence.
-const MAX_CHAIN_LEN: usize = 4096;
 
 /// An `OpenPGP` Card v3.4 applet instance.
 pub struct PgpApplet {
@@ -32,10 +25,6 @@ pub struct PgpApplet {
     aid: [u8; 16],
     /// PIN secrets, retry counters, and session verification flags.
     pub(crate) pins: PinState,
-    /// `(ins, p1, p2)` of an in-progress ISO 7816 command chain.
-    chain_header: Option<(u8, u8, u8)>,
-    /// Reassembly buffer for ISO 7816 command chaining (`CLA & 0x10 != 0`).
-    chain_buffer: Zeroizing<Vec<u8>>,
 }
 
 impl Default for PgpApplet {
@@ -65,13 +54,13 @@ impl apdu_app::App for PgpApplet {
             "select"
         );
 
-        self.reset_session();
+        self.pins.session_end();
         Ok(())
     }
 
     fn deselect(&mut self) {
         tracing::debug!("deselect");
-        self.reset_session();
+        self.pins.session_end();
     }
 
     fn call(
@@ -118,8 +107,6 @@ impl PgpApplet {
         Self {
             aid: build_aid(serial),
             pins: PinState::default(),
-            chain_header: None,
-            chain_buffer: Zeroizing::new(Vec::new()),
         }
     }
 
@@ -145,16 +132,6 @@ impl PgpApplet {
         self.pins.rc.set(rc)
     }
 
-    fn reset_session(&mut self) {
-        self.pins.session_end();
-        self.clear_chain();
-    }
-
-    fn clear_chain(&mut self) {
-        self.chain_header = None;
-        self.chain_buffer.clear();
-    }
-
     /// Parse and process a raw APDU byte slice.
     pub fn process(&mut self, apdu: &[u8]) -> Response {
         let command = match apdu::CommandView::try_from(apdu) {
@@ -172,67 +149,23 @@ impl PgpApplet {
         self.process_command(&command)
     }
 
-    /// Process a parsed [`apdu::CommandView`], handling ISO 7816 command chaining.
+    /// Process a parsed [`apdu::CommandView`].
     pub fn process_command(&mut self, command: &apdu::CommandView<'_>) -> Response {
+        if command.class().chain().not_the_last() {
+            return Status::ClaNotSupported.into();
+        }
+
         if matches!(
             command.class().range(),
             iso7816::command::class::Range::Proprietary
         ) {
-            self.clear_chain();
             return Status::ClaNotSupported.into();
         }
 
-        let ins = u8::from(command.instruction());
-        let header = (ins, command.p1, command.p2);
-
-        if command.class().chain().not_the_last() {
-            if let Some(expected) = self.chain_header
-                && expected != header
-            {
-                self.clear_chain();
-                return Status::ConditionsOfUseNotSatisfied.into();
-            }
-            if self.chain_buffer.len() + command.data().len() > MAX_CHAIN_LEN {
-                self.clear_chain();
-                return Status::WrongLength.into();
-            }
-            self.chain_header = Some(header);
-            self.chain_buffer.extend_from_slice(command.data());
-            return Status::Success.into();
-        }
-
-        if let Some(expected) = self.chain_header.take() {
-            if expected != header {
-                self.chain_buffer.clear();
-                return Status::ConditionsOfUseNotSatisfied.into();
-            }
-            if self.chain_buffer.len() + command.data().len() > MAX_CHAIN_LEN {
-                self.chain_buffer.clear();
-                return Status::WrongLength.into();
-            }
-            self.chain_buffer.extend_from_slice(command.data());
-            let assembled = Zeroizing::new(std::mem::take(&mut *self.chain_buffer));
-            return self.dispatch_command(&Command {
-                ins,
-                p1: command.p1,
-                p2: command.p2,
-                data: &assembled,
-            });
-        }
-
-        self.dispatch_command(&Command {
-            ins,
-            p1: command.p1,
-            p2: command.p2,
-            data: command.data(),
-        })
-    }
-
-    fn dispatch_command(&mut self, cmd: &Command<'_>) -> Response {
-        match Instruction::from(cmd.ins) {
-            Instruction::Verify => self.process_verify(cmd),
-            Instruction::ChangeReferenceData => self.process_change_reference_data(cmd),
-            Instruction::ResetRetryCounter => self.process_reset_retry_counter(cmd),
+        match command.instruction() {
+            Instruction::Verify => self.process_verify(command),
+            Instruction::ChangeReferenceData => self.process_change_reference_data(command),
+            Instruction::ResetRetryCounter => self.process_reset_retry_counter(command),
             _ => Status::InstructionNotSupportedOrInvalid.into(),
         }
     }
@@ -260,48 +193,9 @@ mod tests {
     }
 
     #[test]
-    fn command_chaining_reassembles_verify_apdu() {
+    fn rejects_unchained_cla_bit_directly() {
         let mut applet = PgpApplet::new();
-
-        // First chunk: CLA=0x10 (chaining), INS=0x20 (VERIFY), P1=0x00, P2=0x81, "123"
-        let chunk1 = [0x10, 0x20, 0x00, 0x81, 0x03, b'1', b'2', b'3'];
-        assert_eq!(applet.process(&chunk1).status(), Status::Success);
-
-        // Not yet verified until final chunk arrives
-        // (Send final chunk: CLA=0x00, INS=0x20, P1=0x00, P2=0x81, "456")
-        let chunk2 = [0x00, 0x20, 0x00, 0x81, 0x03, b'4', b'5', b'6'];
-        assert_eq!(applet.process(&chunk2).status(), Status::Success);
-
-        // Status query confirms PW1_SIGN is now verified
-        assert_eq!(
-            applet.process(&[0x00, 0x20, 0x00, 0x81]).status(),
-            Status::Success
-        );
-    }
-
-    #[test]
-    fn command_chaining_rejects_mismatched_header_and_clears_buffer() {
-        let mut applet = PgpApplet::new();
-
-        let chunk1 = [0x10, 0x20, 0x00, 0x81, 0x03, b'1', b'2', b'3'];
-        assert_eq!(applet.process(&chunk1).status(), Status::Success);
-
-        // Mismatched P2 in final chunk -> ConditionsNotSatisfied (6985)
-        let bad_chunk2 = [0x00, 0x20, 0x00, 0x82, 0x03, b'4', b'5', b'6'];
-        assert_eq!(
-            applet.process(&bad_chunk2).status(),
-            Status::ConditionsOfUseNotSatisfied
-        );
-
-        // Buffer was cleared; subsequent unchained VERIFY works normally
-        assert_eq!(
-            applet
-                .process(&keyroost_openpgp::verify(
-                    keyroost_openpgp::PW1_SIGN,
-                    b"123456"
-                ))
-                .status(),
-            Status::Success
-        );
+        let chunk = [0x10, 0x20, 0x00, 0x81, 0x03, b'1', b'2', b'3'];
+        assert_eq!(applet.process(&chunk).status(), Status::ClaNotSupported);
     }
 }

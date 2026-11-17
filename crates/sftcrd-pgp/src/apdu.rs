@@ -5,14 +5,6 @@ use iso7816::Status;
 
 pub type CommandView<'a> = iso7816::command::CommandView<'a>;
 
-/// A dispatched command after ISO 7816 command-chaining reassembly.
-pub(crate) struct Command<'a> {
-    pub(crate) ins: u8,
-    pub(crate) p1: u8,
-    pub(crate) p2: u8,
-    pub(crate) data: &'a [u8],
-}
-
 /// Response produced by [`crate::PgpApplet::process`].
 #[derive(Debug)]
 pub struct Response(ApduResponse);

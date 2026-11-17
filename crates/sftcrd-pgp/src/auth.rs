@@ -4,7 +4,7 @@ use iso7816::Status;
 
 use crate::{
     PgpApplet, Response,
-    apdu::Command,
+    apdu::CommandView,
     constants::{PW1_OTHER, PW1_SIGN, PW3_ADMIN},
     pin::{MAX_PIN_LEN, PW1_MIN_LEN, RC_MIN_LEN},
 };
@@ -12,10 +12,10 @@ use crate::{
 impl PgpApplet {
     /// `VERIFY` (`0x20`): verify PW1 (`0x81`/`0x82`) or PW3 (`0x83`), query
     /// verification/retry status (`Lc = 0`), or clear verification (`P1 = 0xFF`).
-    pub(crate) fn process_verify(&mut self, cmd: &Command<'_>) -> Response {
+    pub(crate) fn process_verify(&mut self, cmd: &CommandView<'_>) -> Response {
         match cmd.p1 {
-            0xFF => self.verify_clear(cmd.p2, cmd.data),
-            0x00 => self.verify_present_or_status(cmd.p2, cmd.data),
+            0xFF => self.verify_clear(cmd.p2, cmd.data()),
+            0x00 => self.verify_present_or_status(cmd.p2, cmd.data()),
             _ => Status::IncorrectP1OrP2Parameter.into(),
         }
     }
@@ -72,7 +72,7 @@ impl PgpApplet {
     }
 
     /// `CHANGE REFERENCE DATA` (`0x24`): change PW1 (`P2 = 0x81`) or PW3 (`P2 = 0x83`).
-    pub(crate) fn process_change_reference_data(&mut self, cmd: &Command<'_>) -> Response {
+    pub(crate) fn process_change_reference_data(&mut self, cmd: &CommandView<'_>) -> Response {
         if cmd.p1 != 0x00 {
             return Status::IncorrectP1OrP2Parameter.into();
         }
@@ -93,20 +93,21 @@ impl PgpApplet {
             return Status::OperationBlocked.into();
         }
 
-        if cmd.data.len() < slot.min_len() * 2 {
+        let data = cmd.data();
+        if data.len() < slot.min_len() * 2 {
             return Status::WrongLength.into();
         }
 
         let old_len = slot.len();
-        if cmd.data.len() < old_len {
-            let Err(tries) = slot.check(cmd.data) else {
+        if data.len() < old_len {
+            let Err(tries) = slot.check(data) else {
                 unreachable!("shorter slice never matches stored PIN");
             };
             self.clear_verified_for(is_pw1);
             return Status::RemainingRetries(tries).into();
         }
 
-        let (old_pin, new_pin) = cmd.data.split_at(old_len);
+        let (old_pin, new_pin) = data.split_at(old_len);
         if let Err(tries) = slot.check(old_pin) {
             self.clear_verified_for(is_pw1);
             Status::RemainingRetries(tries).into()
@@ -130,14 +131,14 @@ impl PgpApplet {
 
     /// `RESET RETRY COUNTER` (`0x2C`): unblock PW1 (`P2 = 0x81`) using RC
     /// (`P1 = 0x00`) or verified PW3 (`P1 = 0x02`).
-    pub(crate) fn process_reset_retry_counter(&mut self, cmd: &Command<'_>) -> Response {
+    pub(crate) fn process_reset_retry_counter(&mut self, cmd: &CommandView<'_>) -> Response {
         if cmd.p2 != PW1_SIGN {
             return Status::KeyReferenceNotFound.into();
         }
 
         match cmd.p1 {
-            0x00 => self.reset_pw1_by_rc(cmd.data),
-            0x02 => self.reset_pw1_by_admin(cmd.data),
+            0x00 => self.reset_pw1_by_rc(cmd.data()),
+            0x02 => self.reset_pw1_by_admin(cmd.data()),
             _ => Status::IncorrectP1OrP2Parameter.into(),
         }
     }
