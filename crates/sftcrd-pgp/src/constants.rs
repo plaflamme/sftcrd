@@ -83,10 +83,10 @@ pub(crate) const DEFAULT_ALGO_ATTR: [u8; 6] = [AlgoId::Rsa as u8, 0x08, 0x00, 0x
 /// Default User Interaction Flag (`D6`/`D7`/`D8`): off (`00`), button present (`20`).
 pub(crate) const DEFAULT_UIF: [u8; 2] = [UifMode::Off as u8, 0x20];
 
-/// ISO/IEC 5218 sex encoding (`5F35`).
+/// ISO/IEC 5218 gender/sex encoding (`5F35`).
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
 #[repr(u8)]
-pub(crate) enum Sex {
+pub(crate) enum Gender {
     NotKnown = b'0',
     Male = b'1',
     Female = b'2',
@@ -94,7 +94,7 @@ pub(crate) enum Sex {
     NotApplicable = b'9',
 }
 
-impl Sex {
+impl Gender {
     pub(crate) const fn from_u8(value: u8) -> Option<Self> {
         match value {
             b'0' => Some(Self::NotKnown),

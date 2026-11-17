@@ -7,8 +7,8 @@ use sftcrd_tlv::{BerLength, BerTag, Encoder, Length as _, Tag as _};
 use crate::{
     PgpApplet, Response,
     constants::{
-        AlgoId, DEFAULT_ALGO_ATTR, DEFAULT_UIF, EXTENDED_CAPABILITIES, HISTORICAL_BYTES,
-        OID_ED25519, OID_NIST_P256, OID_NIST_P384, OID_NIST_P521, OID_X25519, Sex, TAG_AID,
+        AlgoId, DEFAULT_ALGO_ATTR, DEFAULT_UIF, EXTENDED_CAPABILITIES, Gender, HISTORICAL_BYTES,
+        OID_ED25519, OID_NIST_P256, OID_NIST_P384, OID_NIST_P521, OID_X25519, TAG_AID,
         TAG_ALGO_ATTR_AUT, TAG_ALGO_ATTR_DEC, TAG_ALGO_ATTR_SIG, TAG_ALGORITHM_INFORMATION,
         TAG_APPLICATION_RELATED_DATA, TAG_CA_FINGERPRINTS, TAG_CARDHOLDER_RELATED_DATA,
         TAG_DISCRETIONARY, TAG_DS_COUNTER, TAG_EXTENDED_CAPABILITIES, TAG_FINGERPRINTS,
@@ -69,7 +69,7 @@ impl KeySlotMeta {
 pub(crate) struct CardData {
     pub(crate) name: Vec<u8>,
     pub(crate) language: Vec<u8>,
-    pub(crate) sex: Sex,
+    pub(crate) sex: Gender,
     pub(crate) url: Vec<u8>,
     pub(crate) login_data: Vec<u8>,
     pub(crate) ds_counter: u32,
@@ -312,10 +312,10 @@ impl PgpApplet {
                 if data.len() != 1 {
                     return Status::WrongLength.into();
                 }
-                let Some(sex) = Sex::from_u8(data[0]) else {
+                let Some(gender) = Gender::from_u8(data[0]) else {
                     return Status::IncorrectDataParameter.into();
                 };
-                self.data.sex = sex;
+                self.data.sex = gender;
             }
             TAG_URL => {
                 if data.len() > MAX_URL_LEN {
