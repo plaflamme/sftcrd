@@ -98,8 +98,8 @@ pub struct PivConfig {
 pub struct PinConfig {
     /// PIN or PUK value as a string (6-8 ASCII digits).
     pub value: String,
-    /// Maximum number of retry attempts.
-    pub retries: Option<u8>,
+    /// Maximum number of tries.
+    pub max_tries: Option<u8>,
 }
 
 /// Configuration for the 9B management key.
@@ -454,15 +454,15 @@ impl PivApplet {
         // Configure PIN
         if let Some(pin_cfg) = &config.pin {
             let pin_val = parse_pin_value(&pin_cfg.value)?;
-            let retries = pin_cfg.retries.unwrap_or(crate::pin::DEFAULT_PIN_TRIES);
-            applet.pin = crate::pin::Pin::new(pin_val, retries);
+            let max_tries = pin_cfg.max_tries.unwrap_or(crate::pin::DEFAULT_PIN_TRIES);
+            applet.pin = crate::pin::Pin::new(pin_val, max_tries);
         }
 
         // Configure PUK
         if let Some(puk_cfg) = &config.puk {
             let puk_val = parse_pin_value(&puk_cfg.value)?;
-            let retries = puk_cfg.retries.unwrap_or(crate::pin::DEFAULT_PUK_TRIES);
-            applet.puk = crate::pin::Pin::new(puk_val, retries);
+            let max_tries = puk_cfg.max_tries.unwrap_or(crate::pin::DEFAULT_PUK_TRIES);
+            applet.puk = crate::pin::Pin::new(puk_val, max_tries);
         }
 
         // Configure Management Key
@@ -625,8 +625,8 @@ EwEB/wQFMAMBAf8wCgYIKoZIzj0EAwIDRwAwRAIgbr2Vrt04qfVTfniWYaVIZHUT
 serial = 98765432
 
 [piv]
-pin = {{ value = "654321", retries = 4 }}
-puk = {{ value = "87654321", retries = 5 }}
+pin = {{ value = "654321", max_tries = 4 }}
+puk = {{ value = "87654321", max_tries = 5 }}
 
 [piv.management_key]
 key = "01020304050607080102030405060708"
