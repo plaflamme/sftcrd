@@ -1,7 +1,5 @@
-{ pkgs, ... }:
-let
-  writeTomlFile = (pkgs.formats.toml { }).generate;
-  configFile = writeTomlFile "cfg.toml" {
+{
+  nodes.host.services.sftcrd.config = {
     serial = 43210;
 
     piv.pin = {
@@ -35,9 +33,6 @@ let
       };
     };
   };
-in
-{
-  nodes.host.services.sftcrd.config-file = configFile;
   testScript = ''
     import json
 

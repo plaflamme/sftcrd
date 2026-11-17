@@ -60,33 +60,38 @@ in
       description = "Set the log level";
     };
 
-    config-file = lib.mkOption {
-      type = lib.types.nullOr lib.types.path;
+    config = lib.mkOption {
+      type = lib.types.nullOr lib.types.toml;
       default = null;
       description = ''
-        Path to a TOML configuration file to initialize the card state.
+        TOML configuration to initialize the card state.
       '';
     };
   };
 
-  config = lib.mkIf cfg.enable {
+  config =
+    let
+      configToml =
+        if (cfg.config != null) then (pkgs.formats.toml { }).generate "sftcrd.toml" cfg.config else null;
+    in
+    lib.mkIf cfg.enable {
 
-    services.pcscd.enable = true;
-    services.vsmartcard-vpcd = {
-      enable = true;
-      port = cfg.port;
-      hostname = cfg.hostname;
-    };
+      services.pcscd.enable = true;
+      services.vsmartcard-vpcd = {
+        enable = true;
+        port = cfg.port;
+        hostname = cfg.hostname;
+      };
 
-    systemd.services.sftcrd = {
-      wantedBy = [ "multi-user.target" ];
-      serviceConfig = {
-        Environment = "RUST_LOG=${cfg.log-level}";
-        ExecStart =
-          "${cfg.package}/bin/sftcrd --port ${toString cfg.port} --host ${cfg.hostname}"
-          + lib.optionalString (cfg.atr != null) " --atr ${cfg.atr}"
-          + lib.optionalString (cfg.config-file != null) " --config ${cfg.config-file}";
+      systemd.services.sftcrd = {
+        wantedBy = [ "multi-user.target" ];
+        serviceConfig = {
+          Environment = "RUST_LOG=${cfg.log-level}";
+          ExecStart =
+            "${cfg.package}/bin/sftcrd --port ${toString cfg.port} --host ${cfg.hostname}"
+            + lib.optionalString (cfg.atr != null) " --atr ${cfg.atr}"
+            + lib.optionalString (configToml != null) " --config ${configToml}";
+        };
       };
     };
-  };
 }
