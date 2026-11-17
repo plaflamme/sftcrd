@@ -1,0 +1,19 @@
+[package]
+name = "sftcrd-pgp"
+version = "0.1.0"
+edition = "2024"
+description = "Pure-Rust OpenPGP Card v3.4 applet."
+
+[dependencies]
+apdu-app = { workspace = true }
+apdu-dispatch = { workspace = true }
+hex = { workspace = true }
+iso7816 = { workspace = true }
+tracing = { workspace = true }
+zeroize = { workspace = true }
+
+[dev-dependencies]
+keyroost-openpgp = { workspace = true }
+
+[lints]
+workspace = true

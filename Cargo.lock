@@ -587,6 +587,16 @@ dependencies = [
 ]
 
 [[package]]
+name = "keyroost-openpgp"
+version = "0.16.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "5671038eff0621c045a36ed95ad6d1db97be574046ef89e2c20d615309b08bc6"
+dependencies = [
+ "keyroost-proto",
+ "zeroize",
+]
+
+[[package]]
 name = "keyroost-piv"
 version = "0.16.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -980,6 +990,19 @@ dependencies = [
  "sftcrd-tlv",
  "tracing",
  "tracing-subscriber",
+]
+
+[[package]]
+name = "sftcrd-pgp"
+version = "0.1.0"
+dependencies = [
+ "apdu-app",
+ "apdu-dispatch",
+ "hex",
+ "iso7816",
+ "keyroost-openpgp",
+ "tracing",
+ "zeroize",
 ]
 
 [[package]]
