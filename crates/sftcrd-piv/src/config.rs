@@ -163,15 +163,9 @@ pub struct AttestationConfig {
 #[derive(TomlExample, Debug, Deserialize, Default, Clone)]
 #[serde(deny_unknown_fields)]
 pub struct SlotConfig {
-    /// PEM-encoded private key (PKCS#8 `BEGIN PRIVATE KEY`, PKCS#1 `BEGIN RSA PRIVATE KEY`, or SEC1 `BEGIN EC PRIVATE KEY`).
-    #[toml_example(
-        default = """
------BEGIN PRIVATE KEY-----
-...
------END PRIVATE KEY-----
-""",
-        require
-    )]
+    /// PEM-encoded private key to import (PKCS#8, PKCS#1, or SEC1; sets origin to `"imported"`),
+    /// or an algorithm name to generate a random key (`"p256"`, `"p384"`, `"p521"`, `"rsa1024"`, `"rsa2048"`, `"rsa3072"`, `"rsa4096"`; sets origin to `"generated"`).
+    #[toml_example(default = "p256", require)]
     pub key: Option<String>,
     /// PEM-encoded X.509 certificate (`BEGIN CERTIFICATE`).
     #[toml_example(
@@ -183,7 +177,7 @@ pub struct SlotConfig {
         require
     )]
     pub cert: Option<String>,
-    /// The key's origin, either `"imported"` or `"generated"`.
+    /// Override the key's origin, either `"imported"` or `"generated"`.
     #[toml_example(default = "imported", require)]
     pub origin: Option<String>,
     /// PIN policy: `"never"`, `"once"`, or `"always"`.
@@ -296,6 +290,29 @@ fn parse_key_origin(s: &str) -> Result<KeyOrigin, ConfigError> {
     }
 }
 
+/// Parse a slot key specification: either an algorithm name to generate a random key
+/// (e.g. `"p256"`, `"rsa2048"`) or a PEM-encoded private key.
+pub(crate) fn parse_or_generate_slot_key(spec: &str) -> Result<(SlotKey, KeyOrigin), ConfigError> {
+    let alg = match spec.trim().to_ascii_lowercase().as_str() {
+        "p256" | "eccp256" | "nistp256" => Some(crate::piv::KeyAlg::EccP256),
+        "p384" | "eccp384" | "nistp384" => Some(crate::piv::KeyAlg::EccP384),
+        "p521" | "eccp521" | "nistp521" => Some(crate::piv::KeyAlg::EccP521),
+        "rsa1024" => Some(crate::piv::KeyAlg::Rsa(RsaBits::Rsa1024)),
+        "rsa2048" => Some(crate::piv::KeyAlg::Rsa(RsaBits::Rsa2048)),
+        "rsa3072" => Some(crate::piv::KeyAlg::Rsa(RsaBits::Rsa3072)),
+        "rsa4096" => Some(crate::piv::KeyAlg::Rsa(RsaBits::Rsa4096)),
+        _ => None,
+    };
+
+    if let Some(alg) = alg {
+        let key = SlotKey::generate(alg)
+            .map_err(|_| ConfigError::KeyError(format!("failed to generate {alg:?} key")))?;
+        return Ok((key, KeyOrigin::Generated));
+    }
+
+    parse_pem_key(spec).map(|key| (key, KeyOrigin::Imported))
+}
+
 /// Parse a PEM-encoded private key into a `SlotKey`.
 pub(crate) fn parse_pem_key(pem_str: &str) -> Result<SlotKey, ConfigError> {
     use pem_rfc7468::decode_vec;
@@ -313,7 +330,6 @@ pub(crate) fn parse_pem_key(pem_str: &str) -> Result<SlotKey, ConfigError> {
     }
 }
 
-/// Parse a PEM-encoded private key into a `SlotKey`.
 pub(crate) fn parse_attestation_key(
     pem_str: &str,
 ) -> Result<elliptic_curve::SecretKey<p256::NistP256>, ConfigError> {
@@ -634,10 +650,10 @@ impl PivApplet {
             if let Some(touch_policy) = &slot_cfg.touch_policy {
                 slot_ref.touch_policy = parse_touch_policy(touch_policy)?;
             }
-            if let Some(key_pem) = &slot_cfg.key {
-                let slot_key = parse_pem_key(key_pem)?;
+            if let Some(key_spec) = &slot_cfg.key {
+                let (slot_key, default_origin) = parse_or_generate_slot_key(key_spec)?;
                 slot_ref.key = Some(slot_key);
-                slot_ref.origin = KeyOrigin::Imported;
+                slot_ref.origin = default_origin;
             }
             if let Some(origin) = &slot_cfg.origin {
                 slot_ref.origin = parse_key_origin(origin)?;
@@ -865,5 +881,42 @@ cert = """
             &digest,
         ));
         assert_eq!(r.status(), iso7816::Status::Success);
+    }
+
+    #[test]
+    fn generate_slot_keys_from_toml() {
+        let toml = r#"
+[piv.slots.9a]
+key = "p256"
+
+[piv.slots.9c]
+key = "P384"
+
+[piv.slots.9d]
+key = "rsa1024"
+"#;
+
+        let applet = PivApplet::from_toml_str(toml).expect("applet loads from toml");
+
+        let slot_9a = &applet.slots[Slot::Authentication];
+        assert_eq!(slot_9a.origin, KeyOrigin::Generated);
+        assert_eq!(
+            slot_9a.key.as_ref().unwrap().alg(),
+            crate::piv::KeyAlg::EccP256
+        );
+
+        let slot_9c = &applet.slots[Slot::Signature];
+        assert_eq!(slot_9c.origin, KeyOrigin::Generated);
+        assert_eq!(
+            slot_9c.key.as_ref().unwrap().alg(),
+            crate::piv::KeyAlg::EccP384
+        );
+
+        let slot_9d = &applet.slots[Slot::KeyManagement];
+        assert_eq!(slot_9d.origin, KeyOrigin::Generated);
+        assert_eq!(
+            slot_9d.key.as_ref().unwrap().alg(),
+            crate::piv::KeyAlg::Rsa(RsaBits::Rsa1024)
+        );
     }
 }
