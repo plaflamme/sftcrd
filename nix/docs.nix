@@ -20,7 +20,7 @@ pkgs.stdenv.mkDerivation {
   buildPhase = ''
 
     mkdir -p input
-    cp -r ./docs/* input
+    cp -rL ./docs/* input
 
     ${sftcrd}/bin/sftcrd config-reference > input/config-reference.md
 
