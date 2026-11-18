@@ -1,6 +1,5 @@
 //! `OpenPGP` Card v3.4 key generation (`0x47`) and key import (`0xDB`, `3FFF`).
 
-use elliptic_curve::Generate;
 use iso7816::Status;
 use rsa::{
     BoxedUint,
@@ -13,41 +12,8 @@ use crate::{
     PgpApplet, Response,
     pgp::{GenerateMode, KeySlotId, RsaBits},
     pin::PwRef,
+    slot::{PublicKey as SlotPublicKey, SlotAlg, SlotKey},
 };
-
-/// Resolved key-slot algorithm from `C1`/`C2`/`C3` algorithm attributes.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub(crate) enum SlotAlg {
-    Rsa { n_bits: RsaBits, e_bits: u16 },
-    P256,
-    P384,
-    P521,
-    Ed25519,
-    X25519,
-}
-
-/// Asymmetric private key material held in an `OpenPGP` key slot.
-pub(crate) enum SlotKey {
-    Rsa(RsaBits, rsa::PrivateKey),
-    P256(elliptic_curve::SecretKey<p256::NistP256>),
-    P384(elliptic_curve::SecretKey<p384::NistP384>),
-    P521(elliptic_curve::SecretKey<p521::NistP521>),
-    Ed25519(ed25519_dalek::SigningKey),
-    X25519(x25519_dalek::StaticSecret),
-}
-
-impl core::fmt::Debug for SlotKey {
-    fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
-        match self {
-            Self::Rsa(bits, _) => write!(f, "SlotKey::Rsa({})", *bits as u16),
-            Self::P256(_) => f.write_str("SlotKey::P256"),
-            Self::P384(_) => f.write_str("SlotKey::P384"),
-            Self::P521(_) => f.write_str("SlotKey::P521"),
-            Self::Ed25519(_) => f.write_str("SlotKey::Ed25519"),
-            Self::X25519(_) => f.write_str("SlotKey::X25519"),
-        }
-    }
-}
 
 tlv_struct! {
     #[tag_type(BerTag)]
@@ -69,6 +35,31 @@ tlv_struct! {
         #[tag(0x7F49)]
         public_key: PublicKeyTemplate,
     }
+}
+
+impl From<SlotPublicKey> for PublicKeyTemplate {
+    fn from(value: SlotPublicKey) -> Self {
+        match value {
+            SlotPublicKey::Point(pt) => Self {
+                point: Some(pt),
+                modulus: None,
+                exponent: None,
+            },
+            SlotPublicKey::Rsa { n, e } => Self {
+                point: None,
+                modulus: Some(n),
+                exponent: Some(e),
+            },
+        }
+    }
+}
+
+fn encode_public_key(key: &SlotKey) -> Result<Vec<u8>, Status> {
+    GenerateKeyResponse {
+        public_key: key.public_key().into(),
+    }
+    .encode_top_level()
+    .map_err(|_| Status::MemoryFailure)
 }
 
 tlv_struct! {
@@ -132,76 +123,6 @@ tlv_struct! {
     }
 }
 
-impl SlotKey {
-    /// Generate a fresh key pair for `alg`.
-    pub(crate) fn generate(alg: SlotAlg) -> Result<Self, Status> {
-        match alg {
-            SlotAlg::Rsa { n_bits, .. } => {
-                let key = rsa::PrivateKey::new(&mut rand::rng(), n_bits as usize)
-                    .map_err(|_| Status::IncorrectDataParameter)?;
-                Ok(Self::Rsa(n_bits, key))
-            }
-            SlotAlg::P256 => Ok(Self::P256(
-                elliptic_curve::SecretKey::<p256::NistP256>::generate_from_rng(&mut rand::rng()),
-            )),
-            SlotAlg::P384 => Ok(Self::P384(
-                elliptic_curve::SecretKey::<p384::NistP384>::generate_from_rng(&mut rand::rng()),
-            )),
-            SlotAlg::P521 => Ok(Self::P521(
-                elliptic_curve::SecretKey::<p521::NistP521>::generate_from_rng(&mut rand::rng()),
-            )),
-            SlotAlg::Ed25519 => Ok(Self::Ed25519(ed25519_dalek::SigningKey::generate(
-                &mut rand::rng(),
-            ))),
-            SlotAlg::X25519 => Ok(Self::X25519(x25519_dalek::StaticSecret::random_from_rng(
-                &mut rand::rng(),
-            ))),
-        }
-    }
-
-    /// Encode the public key as a `7F49` BER-TLV template.
-    pub(crate) fn encode_public_key(&self) -> Result<Vec<u8>, Status> {
-        let template = match self {
-            Self::Rsa(_, key) => PublicKeyTemplate {
-                point: None,
-                modulus: Some(key.n().to_be_bytes().to_vec()),
-                exponent: Some(key.e().to_be_bytes_trimmed_vartime().to_vec()),
-            },
-            Self::P256(secret) => PublicKeyTemplate {
-                point: Some(secret.public_key().to_sec1_bytes().to_vec()),
-                modulus: None,
-                exponent: None,
-            },
-            Self::P384(secret) => PublicKeyTemplate {
-                point: Some(secret.public_key().to_sec1_bytes().to_vec()),
-                modulus: None,
-                exponent: None,
-            },
-            Self::P521(secret) => PublicKeyTemplate {
-                point: Some(secret.public_key().to_sec1_bytes().to_vec()),
-                modulus: None,
-                exponent: None,
-            },
-            Self::Ed25519(signing) => PublicKeyTemplate {
-                point: Some(signing.verifying_key().to_bytes().to_vec()),
-                modulus: None,
-                exponent: None,
-            },
-            Self::X25519(secret) => PublicKeyTemplate {
-                point: Some(x25519_dalek::PublicKey::from(secret).to_bytes().to_vec()),
-                modulus: None,
-                exponent: None,
-            },
-        };
-
-        GenerateKeyResponse {
-            public_key: template,
-        }
-        .encode_top_level()
-        .map_err(|_| Status::MemoryFailure)
-    }
-}
-
 impl PgpApplet {
     /// `GENERATE ASYMMETRIC KEY PAIR` (`0x47`):
     /// - `P1 = 0x80`: generate a new key pair for the CRT slot (PW3-gated).
@@ -233,7 +154,7 @@ impl PgpApplet {
                     Ok(key) => key,
                     Err(status) => return status.into(),
                 };
-                let resp = match key.encode_public_key() {
+                let resp = match encode_public_key(&key) {
                     Ok(bytes) => bytes,
                     Err(status) => return status.into(),
                 };
@@ -242,7 +163,7 @@ impl PgpApplet {
                 slot.generation_time = 0;
                 slot.key = Some(key);
                 if slot_id == KeySlotId::Sig {
-                    self.data.ds_counter = 0;
+                    self.data.reset_ds_counter();
                 }
                 resp.into()
             }
@@ -250,7 +171,7 @@ impl PgpApplet {
                 let Some(key) = &self.data.slot(slot_id).key else {
                     return Status::KeyReferenceNotFound.into();
                 };
-                match key.encode_public_key() {
+                match encode_public_key(key) {
                     Ok(bytes) => bytes.into(),
                     Err(status) => status.into(),
                 }
@@ -291,7 +212,7 @@ impl PgpApplet {
 
         self.data.slot_mut(slot_id).key = Some(key);
         if slot_id == KeySlotId::Sig {
-            self.data.ds_counter = 0;
+            self.data.reset_ds_counter();
         }
         Ok(())
     }
@@ -448,6 +369,7 @@ fn import_ecc(alg: SlotAlg, fields: &KeyImportFields<'_>) -> Result<SlotKey, Sta
 
 #[cfg(test)]
 mod tests {
+    use elliptic_curve::Generate as _;
     use keyroost_openpgp::{
         EccPrivateKeyParts, KeyAlg, KeyCrt, PW3_ADMIN, PublicKey, RsaImportFormat,
         RsaPrivateKeyParts, TAG_SECURITY_SUPPORT, generate_key, import_ecc_key,

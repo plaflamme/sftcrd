@@ -12,6 +12,8 @@ mod data;
 mod keygen;
 mod pgp;
 mod pin;
+mod pso;
+mod slot;
 
 use data::CardData;
 use iso7816::{Instruction, Status};
@@ -194,6 +196,10 @@ impl PgpApplet {
                 Some(PgpInstruction::PutData) => self.process_put_data(command),
                 Some(PgpInstruction::TerminateDf) => self.process_terminate_df(command),
                 Some(PgpInstruction::ActivateFile) => self.process_activate_file(command),
+                Some(PgpInstruction::PerformSecurityOperation) => self.process_pso(command),
+                Some(PgpInstruction::InternalAuthenticate) => {
+                    self.process_internal_authenticate(command)
+                }
                 None => Status::InstructionNotSupportedOrInvalid.into(),
             },
             _ => Status::InstructionNotSupportedOrInvalid.into(),

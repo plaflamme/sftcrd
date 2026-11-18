@@ -8,9 +8,9 @@ use sftcrd_tlv::{
 
 use crate::{
     PgpApplet, Response,
-    keygen::{SlotAlg, SlotKey},
     pgp::{AlgoId, Gender, KeySlotId, RsaBits, UifMode},
     pin::{PinState, PwRef},
+    slot::{SlotAlg, SlotKey},
 };
 
 /// Historical bytes (`5F52`): category `00`, card service `31 C5`, card
@@ -314,6 +314,14 @@ impl CardData {
             KeySlotId::Dec => &mut self.dec,
             KeySlotId::Aut => &mut self.aut,
         }
+    }
+
+    pub(crate) fn incr_ds_counter(&mut self) {
+        self.ds_counter = self.ds_counter.wrapping_add(1) & 0x00FF_FFFF;
+    }
+
+    pub(crate) fn reset_ds_counter(&mut self) {
+        self.ds_counter = 0;
     }
 
     /// Build Cardholder Related Data (`0065` value: `5B`, `5F2D`, `5F35`).

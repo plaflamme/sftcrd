@@ -8,6 +8,8 @@ pub(crate) enum PgpInstruction {
     PutData = 0xDA,
     TerminateDf = 0xE6,
     ActivateFile = 0x44,
+    PerformSecurityOperation = 0x2A,
+    InternalAuthenticate = 0x88,
 }
 
 impl PgpInstruction {
@@ -17,6 +19,28 @@ impl PgpInstruction {
             0xDA => Some(Self::PutData),
             0xE6 => Some(Self::TerminateDf),
             0x44 => Some(Self::ActivateFile),
+            0x2A => Some(Self::PerformSecurityOperation),
+            0x88 => Some(Self::InternalAuthenticate),
+            _ => None,
+        }
+    }
+}
+
+/// `P1P2` operation selector for `PERFORM SECURITY OPERATION` (`0x2A`).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[repr(u16)]
+pub(crate) enum PsoOp {
+    /// `COMPUTE DIGITAL SIGNATURE` (`9E 9A`).
+    ComputeDigitalSignature = 0x9E9A,
+    /// `DECIPHER` (`80 86`).
+    Decipher = 0x8086,
+}
+
+impl PsoOp {
+    pub(crate) const fn from_p1p2(p1: u8, p2: u8) -> Option<Self> {
+        match u16::from_be_bytes([p1, p2]) {
+            0x9E9A => Some(Self::ComputeDigitalSignature),
+            0x8086 => Some(Self::Decipher),
             _ => None,
         }
     }

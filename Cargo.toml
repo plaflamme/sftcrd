@@ -29,7 +29,7 @@ p521 = { version = "0.14.0", features = ["ecdh"] }
 pem-rfc7468 = { version = "1.0", features = ["std"] }
 pkcs8 = "0.11"
 rand = "0.10"
-rsa = { version = "0.10", features = ["hazmat"] }
+rsa = { version = "0.10", features = ["hazmat", "pkcs1v15"] }
 serde = { version = "1.0", features = ["derive"] }
 sftcrd-apdu = { path = "crates/sftcrd-apdu" }
 sftcrd-piv = { path = "crates/sftcrd-piv" }

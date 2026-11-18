@@ -7,6 +7,7 @@ description = "Pure-Rust OpenPGP Card v3.4 applet."
 [dependencies]
 apdu-app = { workspace = true }
 apdu-dispatch = { workspace = true }
+ecdsa = { workspace = true }
 ed25519-dalek = { workspace = true }
 elliptic-curve = { workspace = true }
 hex = { workspace = true }
