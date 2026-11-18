@@ -22,15 +22,10 @@
 
 use std::ops::{Index, IndexMut};
 
-use crate::piv::{KeyAlg, PinPolicy, RsaBits, TouchPolicy};
-use ecdsa::SignatureEncoding;
-use elliptic_curve::Generate;
 use iso7816::Status;
-use rsa::{
-    BoxedUint,
-    signature::hazmat::PrehashSigner,
-    traits::{PrivateKeyParts, PublicKeyParts},
-};
+
+use crate::piv::{PinPolicy, TouchPolicy};
+pub(crate) use sftcrd_key::{KeyAlg, PublicKey, SlotKey};
 
 use crate::PivApplet;
 
@@ -84,287 +79,52 @@ pub(crate) enum KeyMaterial<'a> {
     },
 }
 
-pub(crate) enum PublicKey {
-    Point(Vec<u8>),
-    Rsa { n: Vec<u8>, e: Vec<u8> },
-}
-
-/// A key held in a slot.
-///
-/// An EC key's material is the curve's private scalar — a zeroized
-/// big-endian value, 32 bytes (P-256), 48 (P-384) or 66 (P-521), in
-/// `secret`. An RSA key's material is the key's PKCS#1 ("`RSAPrivateKey`")
-/// DER encoding — the `rsa` crate's `RsaPrivateKey` via `to_pkcs1_der`,
-/// modulus, private exponent and the prime factors — and the card keeps
-/// only that byte string, deserializing it for each use (the raw GA sign
-/// and `public_inner` both read it).
-// read by slot GA (T3) and GET METADATA (T5).
-pub(crate) enum SlotKey {
-    EccP256(elliptic_curve::SecretKey<p256::NistP256>),
-    EccP384(elliptic_curve::SecretKey<p384::NistP384>),
-    EccP521(elliptic_curve::SecretKey<p521::NistP521>),
-    Rsa(RsaBits, rsa::PrivateKey),
-}
-
-impl SlotKey {
-    pub(crate) fn generate(alg: KeyAlg) -> Result<Self, iso7816::Status> {
-        match alg {
-            KeyAlg::EccP256 => Ok(SlotKey::EccP256(
-                elliptic_curve::SecretKey::<p256::NistP256>::generate_from_rng(&mut rand::rng()),
-            )),
-            KeyAlg::EccP384 => Ok(SlotKey::EccP384(
-                elliptic_curve::SecretKey::<p384::NistP384>::generate_from_rng(&mut rand::rng()),
-            )),
-            KeyAlg::EccP521 => Ok(SlotKey::EccP521(
-                elliptic_curve::SecretKey::<p521::NistP521>::generate_from_rng(&mut rand::rng()),
-            )),
+/// Import a PIV [`SlotKey`] from wire [`KeyMaterial`].
+pub(crate) fn import_piv_key(
+    key_alg: KeyAlg,
+    key_material: &KeyMaterial<'_>,
+) -> Result<SlotKey, ()> {
+    match key_material {
+        KeyMaterial::Scalar(scalar) => {
+            let expected_len = match key_alg {
+                KeyAlg::P256 | KeyAlg::Ed25519 | KeyAlg::X25519 => 32,
+                KeyAlg::P384 => 48,
+                KeyAlg::P521 => 66,
+                KeyAlg::Rsa(_) => return Err(()),
+            };
+            if scalar.len() != expected_len {
+                return Err(());
+            }
+            SlotKey::from_ec_scalar(key_alg, scalar, None).map_err(|_| ())
+        }
+        KeyMaterial::Rsa { p, q, dp, dq, n } => match key_alg {
             KeyAlg::Rsa(bits) => {
-                let Ok(key) = rsa::PrivateKey::new(&mut rand::rng(), bits as usize) else {
-                    return Err(iso7816::Status::IncorrectDataParameter);
-                };
-                Ok(Self::Rsa(bits, key))
-            }
-            _ => Err(iso7816::Status::IncorrectDataParameter),
-        }
-    }
-
-    pub(crate) fn alg(&self) -> KeyAlg {
-        match self {
-            SlotKey::EccP256(_) => KeyAlg::EccP256,
-            SlotKey::EccP384(_) => KeyAlg::EccP384,
-            SlotKey::EccP521(_) => KeyAlg::EccP521,
-            SlotKey::Rsa(bits, _) => KeyAlg::Rsa(*bits),
-        }
-    }
-
-    pub(crate) fn public_key(&self) -> PublicKey {
-        match self {
-            SlotKey::EccP256(secret) => {
-                PublicKey::Point(secret.public_key().to_sec1_bytes().to_vec())
-            }
-            SlotKey::EccP384(secret) => {
-                PublicKey::Point(secret.public_key().to_sec1_bytes().to_vec())
-            }
-            SlotKey::EccP521(secret) => {
-                PublicKey::Point(secret.public_key().to_sec1_bytes().to_vec())
-            }
-            SlotKey::Rsa(_, secret) => PublicKey::Rsa {
-                n: secret.n().to_be_bytes().to_vec(),
-                e: secret.e().to_be_bytes_trimmed_vartime().to_vec(),
-            },
-        }
-    }
-
-    /// Sign the specified digest with this key.
-    /// For ECDSA, the host sends the pre-hashed digest, this returns the DER-encoded signature.
-    /// For RSA, runs the raw CRT operation, this returns the pre-encoded `DigestInfo` block.
-    pub(crate) fn sign_prehash(&self, digest: &[u8]) -> Result<Vec<u8>, iso7816::Status> {
-        match self {
-            SlotKey::EccP256(secret_key) => {
-                let Ok(bytes) = p256::FieldBytes::try_from(digest) else {
-                    return Err(iso7816::Status::IncorrectDataParameter);
-                };
-                let sig: ecdsa::Signature<p256::NistP256> = ecdsa::SigningKey::from(secret_key)
-                    .sign_prehash(&bytes)
-                    .map_err(|_| iso7816::Status::IncorrectDataParameter)?;
-                Ok(sig.to_der().to_vec())
-            }
-            SlotKey::EccP384(secret_key) => {
-                let Ok(bytes) = p384::FieldBytes::try_from(digest) else {
-                    return Err(iso7816::Status::IncorrectDataParameter);
-                };
-                let sig: ecdsa::Signature<p384::NistP384> = ecdsa::SigningKey::from(secret_key)
-                    .sign_prehash(&bytes)
-                    .map_err(|_| iso7816::Status::IncorrectDataParameter)?;
-                Ok(sig.to_der().to_vec())
-            }
-            SlotKey::EccP521(secret_key) => {
-                // NOTE: P521 is not part of the PIV standard, so some implementations may require 66 bytes (521 bit) while others accept 64.
-                // Let's accept both, and left-pad 64 bytes to 66.
-                let digest = if digest.len() == 64 {
-                    [&[0x00, 0x00], digest].concat()
-                } else {
-                    digest.to_vec()
-                };
-                let Ok(bytes) = p521::FieldBytes::try_from(digest) else {
-                    return Err(iso7816::Status::IncorrectDataParameter);
-                };
-                let sig: ecdsa::Signature<p521::NistP521> = ecdsa::SigningKey::from(secret_key)
-                    .sign_prehash(&bytes)
-                    .map_err(|_| iso7816::Status::IncorrectDataParameter)?;
-                Ok(sig.to_der().to_vec())
-            }
-            SlotKey::Rsa(_, key) => {
-                use rsa::BoxedUint;
-                use rsa::hazmat::rsa_decrypt;
-                use rsa::traits::PublicKeyParts;
-
-                let n = key.n().to_be_bytes();
-                if digest.len() != n.len() {
-                    return Err(iso7816::Status::IncorrectDataParameter);
+                let modulus_len = bits.modulus_bytes();
+                let half = modulus_len / 2;
+                if p.len() != half
+                    || q.len() != half
+                    || n.len() != modulus_len
+                    || dp.is_empty()
+                    || dq.is_empty()
+                    || dp.len() > half
+                    || dq.len() > half
+                {
+                    return Err(());
                 }
-
-                let c = BoxedUint::from_be_slice_vartime(digest);
-                if c >= key.n().clone().get() {
-                    return Err(iso7816::Status::IncorrectDataParameter);
-                }
-
-                let Ok(m) = rsa_decrypt::<rand::rngs::SysRng>(None, key, &c) else {
-                    return Err(iso7816::Status::IncorrectDataParameter);
-                };
-
-                // Zero-extend the residue to the full modulus size.
-                let m_be = m.to_be_bytes();
-                let mut out = vec![0u8; n.len()];
-                let offset = n.len() - m_be.len();
-                out[offset..].copy_from_slice(&m_be);
-                Ok(out)
+                SlotKey::from_rsa_components(
+                    bits,
+                    p,
+                    q,
+                    &RSA_EXPONENT.to_be_bytes(),
+                    Some(n),
+                    Some(dp),
+                    Some(dq),
+                )
+                .map_err(|_| ())
             }
-        }
+            _ => Err(()),
+        },
     }
-
-    /// Runs Elliptic-Curve Diffie-Hellman (ECDH) key agreement.
-    /// Returns the raw shared secret bytes.
-    pub(crate) fn ecdh(&self, peer: &[u8]) -> Result<Vec<u8>, iso7816::Status> {
-        match self {
-            SlotKey::EccP256(secret_key) => {
-                let Ok(peer) = elliptic_curve::PublicKey::<p256::NistP256>::from_sec1_bytes(peer)
-                else {
-                    return Err(iso7816::Status::IncorrectDataParameter);
-                };
-                let shared = elliptic_curve::ecdh::diffie_hellman(
-                    secret_key.to_nonzero_scalar(),
-                    peer.as_affine(),
-                );
-                Ok(shared.raw_secret_bytes().to_vec())
-            }
-            SlotKey::EccP384(secret_key) => {
-                let Ok(peer) = elliptic_curve::PublicKey::<p384::NistP384>::from_sec1_bytes(peer)
-                else {
-                    return Err(iso7816::Status::IncorrectDataParameter);
-                };
-                let shared = elliptic_curve::ecdh::diffie_hellman(
-                    secret_key.to_nonzero_scalar(),
-                    peer.as_affine(),
-                );
-                Ok(shared.raw_secret_bytes().to_vec())
-            }
-            SlotKey::EccP521(secret_key) => {
-                let Ok(peer) = elliptic_curve::PublicKey::<p521::NistP521>::from_sec1_bytes(peer)
-                else {
-                    return Err(iso7816::Status::IncorrectDataParameter);
-                };
-                let shared = elliptic_curve::ecdh::diffie_hellman(
-                    secret_key.to_nonzero_scalar(),
-                    peer.as_affine(),
-                );
-                Ok(shared.raw_secret_bytes().to_vec())
-            }
-            SlotKey::Rsa(_, _) => Err(iso7816::Status::IncorrectDataParameter),
-        }
-    }
-}
-
-impl TryFrom<(KeyAlg, KeyMaterial<'_>)> for SlotKey {
-    type Error = ();
-
-    fn try_from((key_alg, key_material): (KeyAlg, KeyMaterial)) -> Result<Self, Self::Error> {
-        match key_material {
-            KeyMaterial::Scalar(scalar) => {
-                let slot_key = match key_alg {
-                    KeyAlg::EccP256 => elliptic_curve::SecretKey::<p256::NistP256>::from_bytes(
-                        &p256::FieldBytes::try_from(scalar).map_err(|_| ())?,
-                    )
-                    .map(SlotKey::EccP256),
-                    KeyAlg::EccP384 => elliptic_curve::SecretKey::<p384::NistP384>::from_bytes(
-                        &p384::FieldBytes::try_from(scalar).map_err(|_| ())?,
-                    )
-                    .map(SlotKey::EccP384),
-                    KeyAlg::EccP521 => elliptic_curve::SecretKey::<p521::NistP521>::from_bytes(
-                        &p521::FieldBytes::try_from(scalar).map_err(|_| ())?,
-                    )
-                    .map(SlotKey::EccP521),
-                    _ => return Err(()),
-                };
-                slot_key.map_err(|_| ())
-            }
-            KeyMaterial::Rsa { p, q, dp, dq, n } => match key_alg {
-                KeyAlg::Rsa(bits) => {
-                    let Some(slot_key) = import_rsa_secret(bits, p, q, dp, dq, n) else {
-                        return Err(());
-                    };
-                    Ok(slot_key)
-                }
-                _ => Err(()),
-            },
-        }
-    }
-}
-
-/// An imported RSA key validated against its modulus size and rebuilt as
-/// the card's PKCS#1 storage form. The on-wire set is the reference
-/// applet's CRT member set — `01 p`, `02 q`, `03 dP`, `04 dQ`, `05 n`:
-/// every component present, `p`/`q` exactly half the modulus size, `n`
-/// the full size, `dP`/`dQ` non-zero and at most half the size,
-/// `p`/`q`/`n` odd and greater than 1, `p != q` and `p * q == n` (checked
-/// numerically with `BigUint`). Stricter than the reference applet, which
-/// does none of this — a broken CRT set would otherwise be stored and fail
-/// on first use. The exponent is assumed to be the PIV standard 65537
-/// (see `RSA_EXPONENT`).
-///
-/// The wire carries the CRT halves but the card stores the full key, so
-/// the private exponent is rebuilt from the primes instead:
-/// `RsaPrivateKey::from_p_q` derives `d = e^{-1} mod lcm(p-1, q-1)`
-/// (NIST SP 800-56B 6.2.1) and the modulus `n = p * q` itself, validates
-/// the full key (`d * e ≡ 1` modulo both prime orders) and precomputes the
-/// CRT exponents `to_pkcs1_der` needs. The on-wire `dP`/`dQ` are then only
-/// checked for consistency with the derived `d` (`d ≡ dP (mod p-1)`,
-/// `d ≡ dQ (mod q-1)`) — a mismatched set is refused, never stored.
-fn import_rsa_secret(
-    bits: RsaBits,
-    p: &[u8],
-    q: &[u8],
-    dp: &[u8],
-    dq: &[u8],
-    n: &[u8],
-) -> Option<SlotKey> {
-    let modulus_len = match bits {
-        RsaBits::Rsa1024 => 128,
-        RsaBits::Rsa2048 => 256,
-        RsaBits::Rsa3072 => 384,
-        RsaBits::Rsa4096 => 512,
-    };
-    let half = modulus_len / 2;
-    if p.len() != half
-        || q.len() != half
-        || n.len() != modulus_len
-        || dp.is_empty()
-        || dq.is_empty()
-        || dp.len() > half
-        || dq.len() > half
-    {
-        return None;
-    }
-    let (p, q) = (
-        BoxedUint::from_be_slice_vartime(p),
-        BoxedUint::from_be_slice_vartime(q),
-    );
-
-    let mut key = rsa::PrivateKey::from_p_q(p, q, BoxedUint::from(RSA_EXPONENT)).ok()?;
-
-    if key.n().clone().get() != BoxedUint::from_be_slice_vartime(n) {
-        return None;
-    }
-
-    key.precompute().ok()?;
-    if key.dp()? != &BoxedUint::from_be_slice_vartime(dp) {
-        return None;
-    }
-    if key.dq()? != &BoxedUint::from_be_slice_vartime(dq) {
-        return None;
-    }
-
-    Some(SlotKey::Rsa(bits, key))
 }
 
 impl Slot {

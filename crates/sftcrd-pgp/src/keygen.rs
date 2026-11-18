@@ -1,18 +1,14 @@
 //! `OpenPGP` Card v3.4 key generation (`0x47`) and key import (`0xDB`, `3FFF`).
 
 use iso7816::Status;
-use rsa::{
-    BoxedUint,
-    traits::{PrivateKeyParts, PublicKeyParts},
-};
 use sftcrd_apdu::CommandView;
 use sftcrd_tlv::{BerLength, BerTag, ValueDecoder, ValueEncoder, tlv_struct};
 
 use crate::{
     PgpApplet, Response,
-    pgp::{GenerateMode, KeySlotId, RsaBits},
+    pgp::{GenerateMode, KeySlotId},
     pin::PwRef,
-    slot::{PublicKey as SlotPublicKey, SlotAlg, SlotKey},
+    slot::{PublicKey as SlotPublicKey, RsaBits, SlotAlg, SlotKey, key_error_to_status},
 };
 
 tlv_struct! {
@@ -150,9 +146,9 @@ impl PgpApplet {
                     Ok(alg) => alg,
                     Err(status) => return status.into(),
                 };
-                let key = match SlotKey::generate(alg) {
+                let key = match SlotKey::generate(alg.into()) {
                     Ok(key) => key,
-                    Err(status) => return status.into(),
+                    Err(ref err) => return key_error_to_status(err).into(),
                 };
                 let resp = match encode_public_key(&key) {
                     Ok(bytes) => bytes,
@@ -260,36 +256,16 @@ fn import_rsa(bits: RsaBits, fields: &KeyImportFields<'_>) -> Result<SlotKey, St
         return Err(Status::IncorrectDataParameter);
     }
 
-    let e_uint = BoxedUint::from_be_slice_vartime(e_bytes);
-    let p_uint = BoxedUint::from_be_slice_vartime(p_bytes);
-    let q_uint = BoxedUint::from_be_slice_vartime(q_bytes);
-
-    let mut key = rsa::PrivateKey::from_p_q(p_uint, q_uint, e_uint)
-        .map_err(|_| Status::IncorrectDataParameter)?;
-    if key.n().to_be_bytes().len() != bits.modulus_bytes() {
-        return Err(Status::IncorrectDataParameter);
-    }
-    key.precompute()
-        .map_err(|_| Status::IncorrectDataParameter)?;
-
-    if let Some(n_bytes) = fields.modulus
-        && (n_bytes.is_empty()
-            || key.n().clone().get() != BoxedUint::from_be_slice_vartime(n_bytes))
-    {
-        return Err(Status::IncorrectDataParameter);
-    }
-    if let Some(dp_bytes) = fields.exp_p
-        && (dp_bytes.is_empty() || key.dp() != Some(&BoxedUint::from_be_slice_vartime(dp_bytes)))
-    {
-        return Err(Status::IncorrectDataParameter);
-    }
-    if let Some(dq_bytes) = fields.exp_q
-        && (dq_bytes.is_empty() || key.dq() != Some(&BoxedUint::from_be_slice_vartime(dq_bytes)))
-    {
-        return Err(Status::IncorrectDataParameter);
-    }
-
-    Ok(SlotKey::Rsa(bits, key))
+    SlotKey::from_rsa_components(
+        bits,
+        p_bytes,
+        q_bytes,
+        e_bytes,
+        fields.modulus,
+        fields.exp_p,
+        fields.exp_q,
+    )
+    .map_err(|ref err| key_error_to_status(err))
 }
 
 fn import_ecc(alg: SlotAlg, fields: &KeyImportFields<'_>) -> Result<SlotKey, Status> {
@@ -308,68 +284,14 @@ fn import_ecc(alg: SlotAlg, fields: &KeyImportFields<'_>) -> Result<SlotKey, Sta
         return Err(Status::IncorrectDataParameter);
     }
 
-    match alg {
-        SlotAlg::P256 => {
-            let secret = elliptic_curve::SecretKey::<p256::NistP256>::from_slice(scalar)
-                .map_err(|_| Status::IncorrectDataParameter)?;
-            if let Some(pub_bytes) = fields.ecc_public
-                && pub_bytes != secret.public_key().to_sec1_bytes().as_ref()
-            {
-                return Err(Status::IncorrectDataParameter);
-            }
-            Ok(SlotKey::P256(secret))
-        }
-        SlotAlg::P384 => {
-            let secret = elliptic_curve::SecretKey::<p384::NistP384>::from_slice(scalar)
-                .map_err(|_| Status::IncorrectDataParameter)?;
-            if let Some(pub_bytes) = fields.ecc_public
-                && pub_bytes != secret.public_key().to_sec1_bytes().as_ref()
-            {
-                return Err(Status::IncorrectDataParameter);
-            }
-            Ok(SlotKey::P384(secret))
-        }
-        SlotAlg::P521 => {
-            let secret = elliptic_curve::SecretKey::<p521::NistP521>::from_slice(scalar)
-                .map_err(|_| Status::IncorrectDataParameter)?;
-            if let Some(pub_bytes) = fields.ecc_public
-                && pub_bytes != secret.public_key().to_sec1_bytes().as_ref()
-            {
-                return Err(Status::IncorrectDataParameter);
-            }
-            Ok(SlotKey::P521(secret))
-        }
-        SlotAlg::Ed25519 => {
-            let seed: [u8; 32] = scalar
-                .try_into()
-                .map_err(|_| Status::IncorrectDataParameter)?;
-            let signing = ed25519_dalek::SigningKey::from_bytes(&seed);
-            if let Some(pub_bytes) = fields.ecc_public
-                && pub_bytes != signing.verifying_key().as_bytes()
-            {
-                return Err(Status::IncorrectDataParameter);
-            }
-            Ok(SlotKey::Ed25519(signing))
-        }
-        SlotAlg::X25519 => {
-            let raw: [u8; 32] = scalar
-                .try_into()
-                .map_err(|_| Status::IncorrectDataParameter)?;
-            let secret = x25519_dalek::StaticSecret::from(raw);
-            if let Some(pub_bytes) = fields.ecc_public
-                && pub_bytes != x25519_dalek::PublicKey::from(&secret).to_bytes().as_slice()
-            {
-                return Err(Status::IncorrectDataParameter);
-            }
-            Ok(SlotKey::X25519(secret))
-        }
-        SlotAlg::Rsa { .. } => Err(Status::IncorrectDataParameter),
-    }
+    SlotKey::from_ec_scalar(alg.into(), scalar, fields.ecc_public)
+        .map_err(|ref err| key_error_to_status(err))
 }
 
 #[cfg(test)]
 mod tests {
     use elliptic_curve::Generate as _;
+    use rsa::traits::{PrivateKeyParts as _, PublicKeyParts as _};
     use keyroost_openpgp::{
         EccPrivateKeyParts, KeyAlg, KeyCrt, PW3_ADMIN, PublicKey, RsaImportFormat,
         RsaPrivateKeyParts, TAG_SECURITY_SUPPORT, generate_key, import_ecc_key,

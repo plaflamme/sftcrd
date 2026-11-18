@@ -73,30 +73,6 @@ impl GenerateMode {
     }
 }
 
-/// Supported RSA modulus bit widths.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-#[repr(u16)]
-pub(crate) enum RsaBits {
-    Rsa2048 = 2048,
-    Rsa3072 = 3072,
-    Rsa4096 = 4096,
-}
-
-impl RsaBits {
-    pub(crate) const fn from_u16(bits: u16) -> Option<Self> {
-        match bits {
-            2048 => Some(Self::Rsa2048),
-            3072 => Some(Self::Rsa3072),
-            4096 => Some(Self::Rsa4096),
-            _ => None,
-        }
-    }
-
-    pub(crate) const fn modulus_bytes(self) -> usize {
-        (self as usize) / 8
-    }
-}
-
 /// ISO/IEC 5218 gender encoding (`5F35`).
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
 #[repr(u8)]

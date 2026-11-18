@@ -5,7 +5,14 @@ use iso7816::Status;
 use sftcrd_apdu::CommandView;
 use sftcrd_tlv::{BerLength, BerTag, ValueDecoder, tlv_struct};
 
-use crate::{PgpApplet, Response, pgp::PsoOp, pin::PwRef, slot::SlotKey};
+use sftcrd_key::{EcdsaFormat, KeyError, RsaSignMode};
+
+use crate::{
+    PgpApplet, Response,
+    pgp::PsoOp,
+    pin::PwRef,
+    slot::{SlotKey, key_error_to_status},
+};
 
 tlv_struct! {
     #[tag_type(BerTag)]
@@ -58,9 +65,9 @@ impl PgpApplet {
         let Some(ref key) = self.data.sig.key else {
             return Status::ConditionsOfUseNotSatisfied.into();
         };
-        let sig = match key.sign(data) {
+        let sig = match key.sign(data, RsaSignMode::Pkcs1v15, EcdsaFormat::Raw) {
             Ok(sig) => sig,
-            Err(status) => return status.into(),
+            Err(ref err) => return key_error_to_status(err).into(),
         };
         self.data.incr_ds_counter();
         if !self.pins.pw1_valid_multiple() {
@@ -79,11 +86,11 @@ impl PgpApplet {
             return Status::ConditionsOfUseNotSatisfied.into();
         };
         let result = match key {
-            SlotKey::Rsa(_, _) => {
+            SlotKey::Rsa(_) => {
                 let Some((&0x00, ciphertext)) = data.split_first() else {
                     return Status::IncorrectDataParameter.into();
                 };
-                key.decrypt_rsa(ciphertext)
+                key.decrypt_rsa_pkcs1v15(ciphertext)
             }
             SlotKey::P256(_) | SlotKey::P384(_) | SlotKey::P521(_) | SlotKey::X25519(_) => {
                 let point = match decode_ecdh_point(data) {
@@ -92,11 +99,11 @@ impl PgpApplet {
                 };
                 key.ecdh(point)
             }
-            SlotKey::Ed25519(_) => Err(Status::ConditionsOfUseNotSatisfied),
+            SlotKey::Ed25519(_) => Err(KeyError::UnsupportedOperation),
         };
         match result {
             Ok(plain) => Response::from_slice(&plain),
-            Err(status) => status.into(),
+            Err(ref err) => key_error_to_status(err).into(),
         }
     }
 
@@ -112,9 +119,9 @@ impl PgpApplet {
         let Some(ref key) = self.data.aut.key else {
             return Status::ConditionsOfUseNotSatisfied.into();
         };
-        match key.sign(cmd.data()) {
+        match key.sign(cmd.data(), RsaSignMode::Pkcs1v15, EcdsaFormat::Raw) {
             Ok(sig) => Response::from_slice(&sig),
-            Err(status) => status.into(),
+            Err(ref err) => key_error_to_status(err).into(),
         }
     }
 }

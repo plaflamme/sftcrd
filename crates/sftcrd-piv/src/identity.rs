@@ -4,11 +4,10 @@
 use crate::constants::VERSION;
 use crate::keygen::PublicKeyResponse;
 use crate::pin::Pin;
-use crate::piv::KeyAlg;
+use crate::piv::PivKeyAlg;
 use crate::piv::PinPolicy;
 use crate::piv::TouchPolicy;
-use crate::slot::KeyOrigin;
-use crate::slot::factory_pin_policy;
+use crate::slot::{KeyOrigin, factory_pin_policy};
 use crate::{PivApplet, Response};
 use sftcrd_tlv::BerLength;
 use sftcrd_tlv::EncodeError;
@@ -69,7 +68,7 @@ impl PivApplet {
             && slot_state.touch_policy == TouchPolicy::Never;
 
         Some(KeyReferenceMetadata {
-            key_alg: key.alg(),
+            key_alg: PivKeyAlg(key.alg()),
             policies: (slot_state.pin_policy, slot_state.touch_policy),
             origin: slot_state.origin,
             public_key: key.public_key().into(),
@@ -100,7 +99,7 @@ tlv_struct! {
     #[length(BerLength)]
     struct KeyReferenceMetadata {
         #[tag(0x01)]
-        key_alg: KeyAlg,
+        key_alg: PivKeyAlg,
 
         #[tag(0x02)]
         policies: (PinPolicy, TouchPolicy),
@@ -436,5 +435,36 @@ mod tests {
         let resp = applet.process(&[0x40, 0xF7, 0x00, 0x80]);
         assert_eq!(resp.data(), Vec::new());
         assert_eq!(resp.status(), iso7816::Status::ClaNotSupported);
+    }
+
+    #[test]
+    fn metadata_reports_ed25519_and_x25519_keys() {
+        let mut applet = unlocked();
+
+        let r = applet.process(&generate_key(
+            Slot::Authentication,
+            KeyAlg::Ed25519.id(),
+            PinPolicy::Default,
+            TouchPolicy::Default,
+        ));
+        assert_eq!(r.status(), Status::Success);
+        let md_ed = metadata(&mut applet, 0x9A);
+        assert_eq!(md_ed.algorithm, Some(KeyAlg::Ed25519.id()));
+        let pub_ed = md_ed.public_key.expect("ed25519 public key");
+        assert_eq!(pub_ed.len(), 2 + 32);
+        assert_eq!(&pub_ed[..2], &[0x86, 0x20]);
+
+        let r = applet.process(&generate_key(
+            Slot::KeyManagement,
+            KeyAlg::X25519.id(),
+            PinPolicy::Default,
+            TouchPolicy::Default,
+        ));
+        assert_eq!(r.status(), Status::Success);
+        let md_x = metadata(&mut applet, 0x9D);
+        assert_eq!(md_x.algorithm, Some(KeyAlg::X25519.id()));
+        let pub_x = md_x.public_key.expect("x25519 public key");
+        assert_eq!(pub_x.len(), 2 + 32);
+        assert_eq!(&pub_x[..2], &[0x86, 0x20]);
     }
 }

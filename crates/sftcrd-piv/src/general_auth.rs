@@ -3,8 +3,9 @@
 //! ECDSA signing and ECDH key agreement of the NIST-curve slots.
 
 use iso7816::Status;
+use sftcrd_key::{EcdsaFormat, RsaSignMode};
 
-use crate::piv::MgmtAlg;
+use crate::piv::{MgmtAlg, PivKeyAlg};
 use crate::{PivApplet, Response};
 use sftcrd_tlv::{BerLength, ValueDecoder, tlv_struct};
 
@@ -85,7 +86,7 @@ impl PivApplet {
         let Some(key) = self.slots[slot].key.as_ref() else {
             return iso7816::Status::IncorrectP1OrP2Parameter.into();
         };
-        if p1 != key.alg().into_u8() {
+        if p1 != PivKeyAlg(key.alg()).into_u8() {
             return iso7816::Status::IncorrectP1OrP2Parameter.into();
         }
         let Ok(request) = GaRequest::decode(body) else {
@@ -99,13 +100,15 @@ impl PivApplet {
             return iso7816::Status::IncorrectP1OrP2Parameter.into();
         };
         match (t.witness, t.challenge, t.exponent) {
-            (None, Some(digest), None) => match key.sign_prehash(digest) {
-                Ok(out) => ga_response(GA_TAG_RESPONSE, &out),
-                Err(status) => status.into(),
-            },
+            (None, Some(digest), None) => {
+                match key.sign(digest, RsaSignMode::Raw, EcdsaFormat::Der) {
+                    Ok(out) => ga_response(GA_TAG_RESPONSE, &out),
+                    Err(_) => iso7816::Status::IncorrectDataParameter.into(),
+                }
+            }
             (None, None, Some(peer)) => match key.ecdh(peer) {
                 Ok(shared) => ga_response(GA_TAG_RESPONSE, &shared),
-                Err(status) => status.into(),
+                Err(_) => iso7816::Status::IncorrectDataParameter.into(),
             },
             _ => iso7816::Status::IncorrectP1OrP2Parameter.into(),
         }
@@ -887,5 +890,66 @@ pub(crate) mod tests {
         // shape.
         let r = applet.process(&[0x00, 0x87, 0x11, 0x9A, 0x04, 0x7C, 0x02, 0x82, 0x00, 0x00]);
         assert_eq!(r.status(), iso7816::Status::IncorrectP1OrP2Parameter);
+    }
+
+    #[test]
+    fn ga_slot_ed25519_sign_and_x25519_ecdh() {
+        let mut applet = PivApplet::new();
+        let ed_signing = ed25519_dalek::SigningKey::from_bytes(&[0x5Au8; 32]);
+        let ed_vk = ed_signing.verifying_key();
+        applet.slots[crate::piv::Slot::CardAuthentication].key =
+            Some(crate::slot::SlotKey::Ed25519(ed_signing));
+
+        let msg = b"piv-ed25519-message";
+        let r = applet.process(&keyroost_piv::general_auth_sign(
+            keyroost_piv::KeyAlg::Ed25519.id(),
+            0x9E,
+            msg,
+        ));
+        assert_eq!(r.status(), iso7816::Status::Success);
+        let sig_bytes = keyroost_piv::parse_general_auth(r.data(), 0x82).expect("82 signature");
+        let sig = ed25519_dalek::Signature::from_slice(sig_bytes).expect("64-byte signature");
+        ed_vk.verify_strict(msg, &sig).expect("valid ed25519 signature");
+
+        // ECDH on Ed25519 slot is refused.
+        let r = applet.process(&keyroost_piv::general_auth_key_agree(
+            keyroost_piv::KeyAlg::Ed25519.id(),
+            0x9E,
+            &[0x11; 32],
+        ));
+        assert_eq!(r.status(), iso7816::Status::IncorrectDataParameter);
+
+        // X25519 ECDH on 9E.
+        let x_secret = x25519_dalek::StaticSecret::from([0x33u8; 32]);
+        let x_pub = x25519_dalek::PublicKey::from(&x_secret);
+        applet.slots[crate::piv::Slot::CardAuthentication].key =
+            Some(crate::slot::SlotKey::X25519(x_secret));
+
+        let eph = x25519_dalek::EphemeralSecret::random_from_rng(&mut rand::rng());
+        let eph_pub = x25519_dalek::PublicKey::from(&eph);
+        let expected = eph.diffie_hellman(&x_pub);
+
+        let r = applet.process(&keyroost_piv::general_auth_key_agree(
+            keyroost_piv::KeyAlg::X25519.id(),
+            0x9E,
+            eph_pub.as_bytes(),
+        ));
+        assert_eq!(r.status(), iso7816::Status::Success);
+        let shared = keyroost_piv::parse_general_auth(r.data(), 0x82).expect("82 shared secret");
+        assert_eq!(shared, expected.as_bytes());
+
+        // Signing on X25519 slot and wrong peer length are refused.
+        let r = applet.process(&keyroost_piv::general_auth_sign(
+            keyroost_piv::KeyAlg::X25519.id(),
+            0x9E,
+            msg,
+        ));
+        assert_eq!(r.status(), iso7816::Status::IncorrectDataParameter);
+        let r = applet.process(&keyroost_piv::general_auth_key_agree(
+            keyroost_piv::KeyAlg::X25519.id(),
+            0x9E,
+            &[0x11; 31],
+        ));
+        assert_eq!(r.status(), iso7816::Status::IncorrectDataParameter);
     }
 }

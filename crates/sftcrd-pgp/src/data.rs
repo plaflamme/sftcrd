@@ -8,9 +8,9 @@ use sftcrd_tlv::{
 
 use crate::{
     PgpApplet, Response,
-    pgp::{AlgoId, Gender, KeySlotId, RsaBits, UifMode},
+    pgp::{AlgoId, Gender, KeySlotId, UifMode},
     pin::{PinState, PwRef},
-    slot::{SlotAlg, SlotKey},
+    slot::{RsaBits, SlotAlg, SlotKey},
 };
 
 /// Historical bytes (`5F52`): category `00`, card service `31 C5`, card

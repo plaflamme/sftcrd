@@ -18,7 +18,7 @@ use toml_example::TomlExample;
 
 use crate::PivApplet;
 use crate::piv::{MgmtAlg, PinPolicy, RsaBits, Slot, TouchPolicy};
-use crate::slot::{KeyOrigin, SlotKey};
+use crate::slot::{KeyAlg, KeyOrigin, SlotKey};
 
 /// Errors that can occur when reading or applying configuration to a PIV applet.
 #[derive(Debug)]
@@ -294,13 +294,15 @@ fn parse_key_origin(s: &str) -> Result<KeyOrigin, ConfigError> {
 /// (e.g. `"p256"`, `"rsa2048"`) or a PEM-encoded private key.
 pub(crate) fn parse_or_generate_slot_key(spec: &str) -> Result<(SlotKey, KeyOrigin), ConfigError> {
     let alg = match spec.trim().to_ascii_lowercase().as_str() {
-        "p256" | "eccp256" | "nistp256" => Some(crate::piv::KeyAlg::EccP256),
-        "p384" | "eccp384" | "nistp384" => Some(crate::piv::KeyAlg::EccP384),
-        "p521" | "eccp521" | "nistp521" => Some(crate::piv::KeyAlg::EccP521),
-        "rsa1024" => Some(crate::piv::KeyAlg::Rsa(RsaBits::Rsa1024)),
-        "rsa2048" => Some(crate::piv::KeyAlg::Rsa(RsaBits::Rsa2048)),
-        "rsa3072" => Some(crate::piv::KeyAlg::Rsa(RsaBits::Rsa3072)),
-        "rsa4096" => Some(crate::piv::KeyAlg::Rsa(RsaBits::Rsa4096)),
+        "p256" | "eccp256" | "nistp256" => Some(KeyAlg::P256),
+        "p384" | "eccp384" | "nistp384" => Some(KeyAlg::P384),
+        "p521" | "eccp521" | "nistp521" => Some(KeyAlg::P521),
+        "ed25519" => Some(KeyAlg::Ed25519),
+        "x25519" => Some(KeyAlg::X25519),
+        "rsa1024" => Some(KeyAlg::Rsa(RsaBits::Rsa1024)),
+        "rsa2048" => Some(KeyAlg::Rsa(RsaBits::Rsa2048)),
+        "rsa3072" => Some(KeyAlg::Rsa(RsaBits::Rsa3072)),
+        "rsa4096" => Some(KeyAlg::Rsa(RsaBits::Rsa4096)),
         _ => None,
     };
 
@@ -315,19 +317,10 @@ pub(crate) fn parse_or_generate_slot_key(spec: &str) -> Result<(SlotKey, KeyOrig
 
 /// Parse a PEM-encoded private key into a `SlotKey`.
 pub(crate) fn parse_pem_key(pem_str: &str) -> Result<SlotKey, ConfigError> {
-    use pem_rfc7468::decode_vec;
-
-    let (label, der) =
-        decode_vec(pem_str.as_bytes()).map_err(|e| ConfigError::PemError(e.to_string()))?;
-
-    match label {
-        "PRIVATE KEY" => parse_pkcs8_der(&der),
-        "RSA PRIVATE KEY" => parse_pkcs1_der(&der),
-        "EC PRIVATE KEY" => parse_sec1_der(&der),
-        other => Err(ConfigError::KeyError(format!(
-            "unsupported PEM type '{other}', expected 'PRIVATE KEY', 'RSA PRIVATE KEY', or 'EC PRIVATE KEY'"
-        ))),
-    }
+    SlotKey::from_pem(pem_str).map_err(|err| match err {
+        sftcrd_key::KeyError::Pem(msg) => ConfigError::PemError(msg),
+        other => ConfigError::KeyError(other.to_string()),
+    })
 }
 
 pub(crate) fn parse_attestation_key(
@@ -349,82 +342,6 @@ pub(crate) fn parse_attestation_key(
             "unsupported PEM type '{other}', expected 'EC PRIVATE KEY'"
         ))),
     }
-}
-
-/// Parse a PKCS#8 DER private key.
-fn parse_pkcs8_der(der: &[u8]) -> Result<SlotKey, ConfigError> {
-    use pkcs8::DecodePrivateKey;
-    use rsa::traits::PublicKeyParts;
-
-    // First try RSA via pkcs8
-    if let Ok(rsa_key) = rsa::PrivateKey::from_pkcs8_der(der) {
-        let bits = match rsa_key.n().bits_precision() {
-            1024 => RsaBits::Rsa1024,
-            2048 => RsaBits::Rsa2048,
-            3072 => RsaBits::Rsa3072,
-            4096 => RsaBits::Rsa4096,
-            bits => {
-                return Err(ConfigError::KeyError(format!(
-                    "unsupported RSA key size {bits} bits (supported: 1024, 2048, 3072, 4096)"
-                )));
-            }
-        };
-        return Ok(SlotKey::Rsa(bits, rsa_key));
-    }
-
-    // Try EC curves P-256, P-384, P-521
-    if let Ok(sk) = elliptic_curve::SecretKey::<p256::NistP256>::from_pkcs8_der(der) {
-        return Ok(SlotKey::EccP256(sk));
-    }
-    if let Ok(sk) = elliptic_curve::SecretKey::<p384::NistP384>::from_pkcs8_der(der) {
-        return Ok(SlotKey::EccP384(sk));
-    }
-    if let Ok(sk) = elliptic_curve::SecretKey::<p521::NistP521>::from_pkcs8_der(der) {
-        return Ok(SlotKey::EccP521(sk));
-    }
-
-    Err(ConfigError::KeyError(
-        "failed to parse PKCS#8 private key as RSA, P-256, P-384, or P-521".to_string(),
-    ))
-}
-
-/// Parse a PKCS#1 DER RSA private key.
-fn parse_pkcs1_der(der: &[u8]) -> Result<SlotKey, ConfigError> {
-    use rsa::pkcs1::DecodeRsaPrivateKey;
-    use rsa::traits::PublicKeyParts;
-
-    let rsa_key = rsa::PrivateKey::from_pkcs1_der(der)
-        .map_err(|e| ConfigError::KeyError(format!("invalid PKCS#1 RSA private key: {e}")))?;
-
-    let bits = match rsa_key.n().bits_precision() {
-        1024 => RsaBits::Rsa1024,
-        2048 => RsaBits::Rsa2048,
-        3072 => RsaBits::Rsa3072,
-        4096 => RsaBits::Rsa4096,
-        bits => {
-            return Err(ConfigError::KeyError(format!(
-                "unsupported RSA key size {bits} bits (supported: 1024, 2048, 3072, 4096)"
-            )));
-        }
-    };
-    Ok(SlotKey::Rsa(bits, rsa_key))
-}
-
-/// Parse a SEC1 DER EC private key.
-fn parse_sec1_der(der: &[u8]) -> Result<SlotKey, ConfigError> {
-    if let Ok(sk) = elliptic_curve::SecretKey::<p256::NistP256>::from_sec1_der(der) {
-        return Ok(SlotKey::EccP256(sk));
-    }
-    if let Ok(sk) = elliptic_curve::SecretKey::<p384::NistP384>::from_sec1_der(der) {
-        return Ok(SlotKey::EccP384(sk));
-    }
-    if let Ok(sk) = elliptic_curve::SecretKey::<p521::NistP521>::from_sec1_der(der) {
-        return Ok(SlotKey::EccP521(sk));
-    }
-
-    Err(ConfigError::KeyError(
-        "failed to parse SEC1 EC private key as P-256, P-384, or P-521".to_string(),
-    ))
 }
 
 /// Parse a PEM-encoded X.509 certificate.
@@ -758,19 +675,19 @@ EwEB/wQFMAMBAf8wCgYIKoZIzj0EAwIDRwAwRAIgbr2Vrt04qfVTfniWYaVIZHUT
     #[test]
     fn parse_p256_pkcs8_key() {
         let key = parse_pem_key(TEST_P256_PKCS8).expect("valid p256 key");
-        assert_eq!(key.alg(), crate::piv::KeyAlg::EccP256);
+        assert_eq!(key.alg(), KeyAlg::P256);
     }
 
     #[test]
     fn parse_p384_sec1_key() {
         let key = parse_pem_key(TEST_P384_SEC1).expect("valid p384 key");
-        assert_eq!(key.alg(), crate::piv::KeyAlg::EccP384);
+        assert_eq!(key.alg(), KeyAlg::P384);
     }
 
     #[test]
     fn parse_rsa2048_pkcs1_key() {
         let key = parse_pem_key(TEST_RSA2048_PKCS1).expect("valid rsa key");
-        assert_eq!(key.alg(), crate::piv::KeyAlg::Rsa(RsaBits::Rsa2048));
+        assert_eq!(key.alg(), KeyAlg::Rsa(RsaBits::Rsa2048));
     }
 
     #[test]
@@ -824,10 +741,7 @@ key = """
         assert_eq!(slot_9a.origin, KeyOrigin::Imported);
         assert_eq!(slot_9a.pin_policy, PinPolicy::Once);
         assert_eq!(slot_9a.touch_policy, TouchPolicy::Never);
-        assert_eq!(
-            slot_9a.key.as_ref().unwrap().alg(),
-            crate::piv::KeyAlg::EccP256
-        );
+        assert_eq!(slot_9a.key.as_ref().unwrap().alg(), KeyAlg::P256);
         assert!(slot_9a.cert.is_some());
 
         // Check slot 9C
@@ -837,7 +751,7 @@ key = """
         assert_eq!(slot_9c.touch_policy, TouchPolicy::Never);
         assert_eq!(
             slot_9c.key.as_ref().unwrap().alg(),
-            crate::piv::KeyAlg::Rsa(RsaBits::Rsa2048)
+            KeyAlg::Rsa(RsaBits::Rsa2048)
         );
     }
 
@@ -900,23 +814,67 @@ key = "rsa1024"
 
         let slot_9a = &applet.slots[Slot::Authentication];
         assert_eq!(slot_9a.origin, KeyOrigin::Generated);
-        assert_eq!(
-            slot_9a.key.as_ref().unwrap().alg(),
-            crate::piv::KeyAlg::EccP256
-        );
+        assert_eq!(slot_9a.key.as_ref().unwrap().alg(), KeyAlg::P256);
 
         let slot_9c = &applet.slots[Slot::Signature];
         assert_eq!(slot_9c.origin, KeyOrigin::Generated);
-        assert_eq!(
-            slot_9c.key.as_ref().unwrap().alg(),
-            crate::piv::KeyAlg::EccP384
-        );
+        assert_eq!(slot_9c.key.as_ref().unwrap().alg(), KeyAlg::P384);
 
         let slot_9d = &applet.slots[Slot::KeyManagement];
         assert_eq!(slot_9d.origin, KeyOrigin::Generated);
         assert_eq!(
             slot_9d.key.as_ref().unwrap().alg(),
-            crate::piv::KeyAlg::Rsa(RsaBits::Rsa1024)
+            KeyAlg::Rsa(RsaBits::Rsa1024)
         );
+    }
+
+    #[test]
+    fn generate_and_parse_ed25519_and_x25519_from_toml() {
+        let ed_pem = "\
+-----BEGIN PRIVATE KEY-----
+MC4CAQAwBQYDK2VwBCIEINTuctv5E1hK1bbY8fdp+K06/nwoy/HU++CXqI9EdVhC
+-----END PRIVATE KEY-----";
+        let x_pem = "\
+-----BEGIN PRIVATE KEY-----
+MC4CAQAwBQYDK2VuBCIEIHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4
+-----END PRIVATE KEY-----";
+
+        let toml = format!(
+            r#"
+[piv.slots.9a]
+key = "ed25519"
+
+[piv.slots.9c]
+key = """
+{ed_pem}
+"""
+
+[piv.slots.9d]
+key = "x25519"
+
+[piv.slots.9e]
+key = """
+{x_pem}
+"""
+"#
+        );
+
+        let applet = PivApplet::from_toml_str(&toml).expect("applet loads ed25519/x25519");
+
+        let slot_9a = &applet.slots[Slot::Authentication];
+        assert_eq!(slot_9a.origin, KeyOrigin::Generated);
+        assert_eq!(slot_9a.key.as_ref().unwrap().alg(), KeyAlg::Ed25519);
+
+        let slot_9c = &applet.slots[Slot::Signature];
+        assert_eq!(slot_9c.origin, KeyOrigin::Imported);
+        assert_eq!(slot_9c.key.as_ref().unwrap().alg(), KeyAlg::Ed25519);
+
+        let slot_9d = &applet.slots[Slot::KeyManagement];
+        assert_eq!(slot_9d.origin, KeyOrigin::Generated);
+        assert_eq!(slot_9d.key.as_ref().unwrap().alg(), KeyAlg::X25519);
+
+        let slot_9e = &applet.slots[Slot::CardAuthentication];
+        assert_eq!(slot_9e.origin, KeyOrigin::Imported);
+        assert_eq!(slot_9e.key.as_ref().unwrap().alg(), KeyAlg::X25519);
     }
 }

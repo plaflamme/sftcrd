@@ -1,6 +1,7 @@
 [workspace]
 members = [
     "crates/sftcrd-apdu",
+    "crates/sftcrd-key",
     "crates/sftcrd-tlv",
     "crates/sftcrd-piv",
     "crates/sftcrd-pgp",
@@ -32,6 +33,7 @@ rand = "0.10"
 rsa = { version = "0.10", features = ["hazmat", "pkcs1v15"] }
 serde = { version = "1.0", features = ["derive"] }
 sftcrd-apdu = { path = "crates/sftcrd-apdu" }
+sftcrd-key = { path = "crates/sftcrd-key" }
 sftcrd-piv = { path = "crates/sftcrd-piv" }
 sftcrd-tlv = { path = "crates/sftcrd-tlv" }
 sha2 = "0.11"

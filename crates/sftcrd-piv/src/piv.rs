@@ -125,65 +125,51 @@ impl MgmtAlg {
     }
 }
 
-/// RSA key size in bits.
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub enum RsaBits {
-    Rsa1024 = 1024,
-    Rsa2048 = 2048,
-    Rsa3072 = 3072,
-    Rsa4096 = 4096,
-}
+pub use sftcrd_key::RsaBits;
 
-/// Asymmetric key algorithm
+/// PIV wire-format wrapper for [`sftcrd_key::KeyAlg`].
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub enum KeyAlg {
-    Rsa(RsaBits),
-    EccP256,
-    EccP384,
-    EccP521,
-    Ed25519,
-    X25519,
-}
+pub struct PivKeyAlg(pub sftcrd_key::KeyAlg);
 
-impl KeyAlg {
+impl PivKeyAlg {
     pub(crate) fn from_u8(value: u8) -> Option<Self> {
         match value {
-            0x06 => Some(Self::Rsa(RsaBits::Rsa1024)),
-            0x07 => Some(Self::Rsa(RsaBits::Rsa2048)),
-            0x05 => Some(Self::Rsa(RsaBits::Rsa3072)),
-            0x16 => Some(Self::Rsa(RsaBits::Rsa4096)),
-            0x11 => Some(Self::EccP256),
-            0x14 => Some(Self::EccP384),
-            0x15 => Some(Self::EccP521),
-            0xE0 => Some(Self::Ed25519),
-            0xE1 => Some(Self::X25519),
+            0x06 => Some(Self(sftcrd_key::KeyAlg::Rsa(RsaBits::Rsa1024))),
+            0x07 => Some(Self(sftcrd_key::KeyAlg::Rsa(RsaBits::Rsa2048))),
+            0x05 => Some(Self(sftcrd_key::KeyAlg::Rsa(RsaBits::Rsa3072))),
+            0x16 => Some(Self(sftcrd_key::KeyAlg::Rsa(RsaBits::Rsa4096))),
+            0x11 => Some(Self(sftcrd_key::KeyAlg::P256)),
+            0x14 => Some(Self(sftcrd_key::KeyAlg::P384)),
+            0x15 => Some(Self(sftcrd_key::KeyAlg::P521)),
+            0xE0 => Some(Self(sftcrd_key::KeyAlg::Ed25519)),
+            0xE1 => Some(Self(sftcrd_key::KeyAlg::X25519)),
             _ => None,
         }
     }
 
     pub(crate) fn into_u8(self) -> u8 {
-        match self {
-            KeyAlg::Rsa(RsaBits::Rsa1024) => 0x06,
-            KeyAlg::Rsa(RsaBits::Rsa2048) => 0x07,
-            KeyAlg::Rsa(RsaBits::Rsa3072) => 0x05,
-            KeyAlg::Rsa(RsaBits::Rsa4096) => 0x16,
-            KeyAlg::EccP256 => 0x11,
-            KeyAlg::EccP384 => 0x14,
-            KeyAlg::EccP521 => 0x15,
-            KeyAlg::Ed25519 => 0xE0,
-            KeyAlg::X25519 => 0xE1,
+        match self.0 {
+            sftcrd_key::KeyAlg::Rsa(RsaBits::Rsa1024) => 0x06,
+            sftcrd_key::KeyAlg::Rsa(RsaBits::Rsa2048) => 0x07,
+            sftcrd_key::KeyAlg::Rsa(RsaBits::Rsa3072) => 0x05,
+            sftcrd_key::KeyAlg::Rsa(RsaBits::Rsa4096) => 0x16,
+            sftcrd_key::KeyAlg::P256 => 0x11,
+            sftcrd_key::KeyAlg::P384 => 0x14,
+            sftcrd_key::KeyAlg::P521 => 0x15,
+            sftcrd_key::KeyAlg::Ed25519 => 0xE0,
+            sftcrd_key::KeyAlg::X25519 => 0xE1,
         }
     }
 }
 
-impl ValueDecoder<'_> for KeyAlg {
+impl ValueDecoder<'_> for PivKeyAlg {
     fn decode(bytes: &[u8]) -> Result<Self, sftcrd_tlv::DecodeError> {
         u8::decode(bytes)
-            .and_then(|value| KeyAlg::from_u8(value).ok_or(sftcrd_tlv::DecodeError::InvalidValue))
+            .and_then(|value| Self::from_u8(value).ok_or(sftcrd_tlv::DecodeError::InvalidValue))
     }
 }
 
-impl ValueEncoder for KeyAlg {
+impl ValueEncoder for PivKeyAlg {
     fn length(&self) -> usize {
         1
     }

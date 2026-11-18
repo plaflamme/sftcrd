@@ -24,13 +24,11 @@ use elliptic_curve::Generate;
 
 use crate::piv::Defaultable;
 use crate::piv::Slot;
-use crate::piv::{KeyAlg, PinPolicy, TouchPolicy};
+use crate::piv::{PinPolicy, PivKeyAlg, TouchPolicy};
 
 use crate::PivApplet;
 use crate::Response;
-use crate::slot::KeyOrigin;
-use crate::slot::PublicKey;
-use crate::slot::{KeyMaterial, SlotKey};
+use crate::slot::{KeyAlg, KeyMaterial, KeyOrigin, PublicKey, SlotKey, import_piv_key};
 use sftcrd_tlv::tlv_struct;
 use sftcrd_tlv::{BerLength, ValueDecoder, ValueEncoder};
 
@@ -105,7 +103,7 @@ impl PivApplet {
         // replacement, and a stale attestation CA would certify the wrong
         // key. The policy request is ignored: the self-signed certificate
         // keeps the reference applet's fixed policy bytes.
-        if command.p2 == 0xF9 && ctrl.alg != KeyAlg::EccP256 {
+        if command.p2 == 0xF9 && ctrl.alg.0 != KeyAlg::P256 {
             // The `F9` attestation key is P-256 only, not a slot of the
             // 24-slot table.
             return iso7816::Status::IncorrectDataParameter.into();
@@ -136,9 +134,8 @@ impl PivApplet {
         let Some(slot) = Slot::from_u8(command.p2) else {
             return iso7816::Status::IncorrectP1OrP2Parameter.into();
         };
-        let slot_key = match SlotKey::generate(ctrl.alg) {
-            Ok(slot_key) => slot_key,
-            Err(status) => return status.into(),
+        let Ok(slot_key) = SlotKey::generate(ctrl.alg.0) else {
+            return iso7816::Status::IncorrectDataParameter.into();
         };
 
         let response = GenerateResponse {
@@ -177,20 +174,18 @@ impl PivApplet {
         let Some(index) = crate::piv::Slot::from_u8(command.p2) else {
             return iso7816::Status::IncorrectP1OrP2Parameter.into();
         };
-        let Some(alg @ (KeyAlg::EccP256 | KeyAlg::EccP384 | KeyAlg::EccP521 | KeyAlg::Rsa(_))) =
-            KeyAlg::from_u8(command.p1)
-        else {
+        let Some(alg) = PivKeyAlg::from_u8(command.p1) else {
             return iso7816::Status::IncorrectDataParameter.into();
         };
         let Ok(import) = ImportTemplate::decode(command.data()) else {
             return iso7816::Status::IncorrectDataParameter.into();
         };
 
-        let Ok(key_material) = import.key_material(alg) else {
+        let Ok(key_material) = import.key_material(alg.0) else {
             return iso7816::Status::IncorrectDataParameter.into();
         };
 
-        let Ok(slot_key) = SlotKey::try_from((alg, key_material)) else {
+        let Ok(slot_key) = import_piv_key(alg.0, &key_material) else {
             return iso7816::Status::IncorrectDataParameter.into();
         };
 
@@ -262,7 +257,7 @@ tlv_struct! {
     #[derive(Debug, PartialEq)]
     pub struct Control {
         #[tag(0x80)]
-        alg: KeyAlg,
+        alg: PivKeyAlg,
         #[tag(0xAA)]
         pin_policy: Option<Defaultable<PinPolicy>>,
         #[tag(0xAB)]
@@ -648,8 +643,8 @@ mod tests {
 
         let slot = &app.slots[crate::piv::Slot::Authentication];
         let key = slot.key.as_ref().expect("the imported key");
-        assert_eq!(key.alg(), KeyAlg::EccP256);
-        let SlotKey::EccP256(secret) = key else {
+        assert_eq!(key.alg(), KeyAlg::P256);
+        let SlotKey::P256(secret) = key else {
             panic!("invalid slot key")
         };
         assert_eq!(secret.to_bytes().to_vec(), &scalar[..]);
@@ -676,11 +671,11 @@ mod tests {
         );
 
         let mut app = unlocked();
-        // Non-P-256 algorithm ids.
+        // Non-matching / unknown algorithm ids for a 32-byte P-256 scalar.
         for alg in [
             keyroost_piv::KeyAlg::Rsa3072.id(),
             keyroost_piv::KeyAlg::EccP384.id(),
-            keyroost_piv::KeyAlg::Ed25519.id(),
+            0x99,
         ] {
             assert_eq!(
                 app.process(&import_apdu(alg, 0x9A, &ec_body(&scalar, None, None)))
@@ -873,7 +868,7 @@ mod tests {
             .key
             .as_ref()
             .expect("the generated key");
-        let SlotKey::Rsa(_, stored) = key else {
+        let SlotKey::Rsa(stored) = key else {
             panic!("invalid slot key")
         };
         assert_eq!(stored.n().to_be_bytes().to_vec(), n);
@@ -914,7 +909,7 @@ mod tests {
                 .key
                 .as_ref()
                 .expect("the imported key");
-            let SlotKey::Rsa(_, stored) = key else {
+            let SlotKey::Rsa(stored) = key else {
                 panic!("invalid slot key")
             };
             assert_eq!(stored.n().to_be_bytes().to_vec(), host.n);
@@ -1049,7 +1044,7 @@ mod tests {
         let source = &app.slots[crate::piv::Slot::Signature];
         let dest = &app.slots[crate::piv::Slot::retired(1).expect("retired slot 1")];
         assert!(source.key.is_none(), "the source keeps no key");
-        let Some(SlotKey::EccP256(secret)) = &dest.key else {
+        let Some(SlotKey::P256(secret)) = &dest.key else {
             panic!("invalid slot key")
         };
         assert_eq!(secret.to_bytes().as_slice(), &scalar);
@@ -1180,11 +1175,11 @@ mod tests {
         );
         let source = &app.slots[crate::piv::Slot::Signature];
         let dest = &app.slots[crate::piv::Slot::KeyManagement];
-        let Some(SlotKey::EccP256(source_secret)) = &source.key else {
+        let Some(SlotKey::P256(source_secret)) = &source.key else {
             panic!("invalid slot key")
         };
         assert_eq!(source_secret.to_bytes().as_slice(), &scalar);
-        let Some(SlotKey::EccP256(dest_secret)) = &dest.key else {
+        let Some(SlotKey::P256(dest_secret)) = &dest.key else {
             panic!("invalid slot key")
         };
         assert_eq!(dest_secret.to_bytes().as_slice(), &other);
@@ -1219,7 +1214,7 @@ mod tests {
                 .as_ref()
                 .expect("a key")
                 .alg(),
-            KeyAlg::EccP384
+            KeyAlg::P384
         );
 
         // 9D: P-521, a 133-byte point on the curve.
@@ -1237,7 +1232,7 @@ mod tests {
                 .as_ref()
                 .expect("a key")
                 .alg(),
-            KeyAlg::EccP521
+            KeyAlg::P521
         );
     }
 
@@ -1267,7 +1262,7 @@ mod tests {
                 .as_ref()
                 .expect("a key")
                 .alg(),
-            KeyAlg::EccP384
+            KeyAlg::P384
         );
         assert_eq!(
             app.slots[crate::piv::Slot::Authentication].origin,
@@ -1319,7 +1314,7 @@ mod tests {
                 .as_ref()
                 .expect("a key")
                 .alg(),
-            KeyAlg::EccP521
+            KeyAlg::P521
         );
         assert_eq!(
             app.slots[crate::piv::Slot::retired(1).expect("retired slot 1")].origin,
@@ -1389,5 +1384,92 @@ mod tests {
         }
         // Nothing landed in 9C.
         assert!(app.slots[crate::piv::Slot::Signature].key.is_none());
+    }
+
+    #[test]
+    fn generate_and_import_ed25519_and_x25519() {
+        let mut app = unlocked();
+
+        // Generate Ed25519 in 9A.
+        let r = app.process(&gen_apdu_for(
+            keyroost_piv::Slot::Authentication,
+            keyroost_piv::KeyAlg::Ed25519,
+        ));
+        assert_eq!(r.status(), iso7816::Status::Success);
+        let ed_pub = point_of(&r);
+        assert_eq!(ed_pub.len(), 32);
+        assert_eq!(
+            app.slots[crate::piv::Slot::Authentication]
+                .key
+                .as_ref()
+                .expect("ed25519 key")
+                .alg(),
+            KeyAlg::Ed25519
+        );
+
+        // Generate X25519 in 9D.
+        let r = app.process(&gen_apdu_for(
+            keyroost_piv::Slot::KeyManagement,
+            keyroost_piv::KeyAlg::X25519,
+        ));
+        assert_eq!(r.status(), iso7816::Status::Success);
+        let x_pub = point_of(&r);
+        assert_eq!(x_pub.len(), 32);
+        assert_eq!(
+            app.slots[crate::piv::Slot::KeyManagement]
+                .key
+                .as_ref()
+                .expect("x25519 key")
+                .alg(),
+            KeyAlg::X25519
+        );
+
+        // Import Ed25519 into 9C and X25519 into 9E.
+        let ed_seed = [0x42u8; 32];
+        assert_eq!(
+            app.process(&import_apdu(
+                keyroost_piv::KeyAlg::Ed25519.id(),
+                0x9C,
+                &ec_body(&ed_seed, None, None),
+            ))
+            .status(),
+            iso7816::Status::Success
+        );
+        assert_eq!(
+            app.slots[crate::piv::Slot::Signature]
+                .key
+                .as_ref()
+                .expect("imported ed25519")
+                .alg(),
+            KeyAlg::Ed25519
+        );
+
+        let x_secret = [0x24u8; 32];
+        assert_eq!(
+            app.process(&import_apdu(
+                keyroost_piv::KeyAlg::X25519.id(),
+                0x9E,
+                &ec_body(&x_secret, None, None),
+            ))
+            .status(),
+            iso7816::Status::Success
+        );
+        assert_eq!(
+            app.slots[crate::piv::Slot::CardAuthentication]
+                .key
+                .as_ref()
+                .expect("imported x25519")
+                .alg(),
+            KeyAlg::X25519
+        );
+
+        // Wrong scalar length (31 bytes) is refused for both.
+        for alg in [keyroost_piv::KeyAlg::Ed25519, keyroost_piv::KeyAlg::X25519] {
+            assert_eq!(
+                app.process(&import_apdu(alg.id(), 0x9A, &ec_body(&[0x11; 31], None, None)))
+                    .status(),
+                iso7816::Status::IncorrectDataParameter
+            );
+        }
     }
 }

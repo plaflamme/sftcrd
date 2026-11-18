@@ -1,0 +1,24 @@
+[package]
+name = "sftcrd-key"
+version = "0.1.0"
+edition = "2024"
+description = "Protocol-agnostic asymmetric slot keys and cryptographic operations for sftcrd applets."
+
+[dependencies]
+ecdsa = { workspace = true }
+ed25519-dalek = { workspace = true }
+elliptic-curve = { workspace = true }
+p256 = { workspace = true }
+p384 = { workspace = true }
+p521 = { workspace = true }
+pem-rfc7468 = { workspace = true }
+pkcs8 = { workspace = true }
+rand = { workspace = true }
+rsa = { workspace = true }
+x25519-dalek = { workspace = true }
+x509-cert = { workspace = true }
+
+[dev-dependencies]
+
+[lints]
+workspace = true

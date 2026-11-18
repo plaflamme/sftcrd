@@ -18,10 +18,9 @@ use std::str::FromStr;
 
 use elliptic_curve::Generate;
 use p256::ecdsa::SigningKey;
-use rsa::pkcs8::EncodePublicKey;
 use x509_cert::builder::{Builder, Profile};
 use x509_cert::der::asn1::OctetString;
-use x509_cert::der::{Decode, Encode};
+use x509_cert::der::Encode;
 use x509_cert::ext::Extension;
 use x509_cert::ext::pkix::{BasicConstraints, KeyUsage, KeyUsages};
 use x509_cert::spki::ObjectIdentifier;
@@ -29,7 +28,6 @@ use x509_cert::time::Validity;
 
 use crate::constants::VERSION;
 use crate::piv::{PinPolicy, TouchPolicy};
-use crate::slot::SlotKey;
 use crate::{PivApplet, Response};
 
 const OID_YUBICO_FIRMWARE: ObjectIdentifier = ObjectIdentifier::new_unwrap("1.3.6.1.4.1.41482.3.3");
@@ -90,7 +88,7 @@ impl PivApplet {
         };
         let pin_policy = self.slots[slot].pin_policy;
         let touch_policy = self.slots[slot].touch_policy;
-        let Some(spki) = target_public_key(key) else {
+        let Some(spki) = key.to_spki() else {
             return iso7816::Status::KeyReferenceNotFound.into();
         };
         let Some(cert) = self.attestation.cert.as_ref() else {
@@ -112,27 +110,6 @@ impl PivApplet {
             return iso7816::Status::ConditionsOfUseNotSatisfied.into();
         };
         der.into()
-    }
-}
-
-/// The slot key's public material as the host's SPKI builder takes it: the
-/// key algorithm and the `PublicKey` variant — the EC curve's uncompressed
-/// point, or the RSA modulus and public exponent.
-fn target_public_key(key: &SlotKey) -> Option<x509_cert::SubjectPublicKeyInfo> {
-    match key {
-        SlotKey::EccP256(secret_key) => {
-            x509_cert::SubjectPublicKeyInfo::from_key(&secret_key.public_key()).ok()
-        }
-        SlotKey::EccP384(secret_key) => {
-            x509_cert::SubjectPublicKeyInfo::from_key(&secret_key.public_key()).ok()
-        }
-        SlotKey::EccP521(secret_key) => {
-            x509_cert::SubjectPublicKeyInfo::from_key(&secret_key.public_key()).ok()
-        }
-        SlotKey::Rsa(_, private_key) => {
-            let der = private_key.to_public_key().to_public_key_der().ok()?;
-            x509_cert::SubjectPublicKeyInfo::from_der(&der.to_vec()).ok()
-        }
     }
 }
 
@@ -286,9 +263,11 @@ mod tests {
 
     use super::*;
     use crate::general_auth::tests::mgmt_handshake;
-    use crate::piv::KeyAlg;
+    use crate::slot::SlotKey;
     use ecdsa::signature::hazmat::PrehashVerifier;
     use elliptic_curve::sec1::ToSec1Point;
+    use sftcrd_key::KeyAlg;
+    use x509_cert::der::Decode;
     use iso7816::Status;
     use sha2::Digest;
     use x509_cert::builder::Builder;
@@ -307,8 +286,8 @@ mod tests {
     fn attest_answers_a_certificate_for_a_generated_key() {
         let mut applet = PivApplet::new();
         let slot = &mut applet.slots[crate::piv::Slot::Authentication];
-        let slot_key = SlotKey::generate(KeyAlg::EccP256).expect("can generate key");
-        let (key, signing_key) = if let SlotKey::EccP256(key) = &slot_key {
+        let slot_key = SlotKey::generate(KeyAlg::P256).expect("can generate key");
+        let (key, signing_key) = if let SlotKey::P256(key) = &slot_key {
             (key.clone(), ecdsa::SigningKey::from(key))
         } else {
             todo!()

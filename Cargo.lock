@@ -1069,6 +1069,24 @@ dependencies = [
 ]
 
 [[package]]
+name = "sftcrd-key"
+version = "0.1.0"
+dependencies = [
+ "ecdsa",
+ "ed25519-dalek",
+ "elliptic-curve",
+ "p256",
+ "p384",
+ "p521",
+ "pem-rfc7468",
+ "pkcs8",
+ "rand",
+ "rsa",
+ "x25519-dalek",
+ "x509-cert",
+]
+
+[[package]]
 name = "sftcrd-pgp"
 version = "0.1.0"
 dependencies = [
@@ -1086,6 +1104,7 @@ dependencies = [
  "rand",
  "rsa",
  "sftcrd-apdu",
+ "sftcrd-key",
  "sftcrd-tlv",
  "tracing",
  "x25519-dalek",
@@ -1101,6 +1120,7 @@ dependencies = [
  "cipher",
  "des",
  "ecdsa",
+ "ed25519-dalek",
  "elliptic-curve",
  "figment",
  "hex",
@@ -1115,10 +1135,12 @@ dependencies = [
  "rsa",
  "serde",
  "sftcrd-apdu",
+ "sftcrd-key",
  "sftcrd-tlv",
  "sha2",
  "toml-example",
  "tracing",
+ "x25519-dalek",
  "x509-cert",
  "zeroize",
 ]

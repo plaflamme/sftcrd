@@ -18,6 +18,7 @@ p521 = { workspace = true }
 rand = { workspace = true }
 rsa = { workspace = true }
 sftcrd-apdu = { workspace = true }
+sftcrd-key = { workspace = true }
 sftcrd-tlv = { workspace = true }
 tracing = { workspace = true }
 x25519-dalek = { workspace = true }
