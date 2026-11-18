@@ -11,7 +11,7 @@ let
     builtins.listToAttrs (
       map
         (test: {
-          name = "${suite}-${test}";
+          name = "vm-${suite}-${test}";
           value = pkgs.testers.runNixOSTest {
 
             name = "${suite}-${test}";

@@ -6,7 +6,7 @@ on:
   pull_request:
 
 jobs:
-  check:
+  build:
     strategy:
       fail-fast: false
       matrix:
@@ -31,13 +31,71 @@ jobs:
           name: sftcrd
           authToken: "${{ secrets.CACHIX_AUTH_TOKEN }}"
       - run: nix build
-      - run: nix flake check
+      - name: run non-vm checks
+        run: |
+          set -Eeu
+          checks=$(nix flake show --json | jq -r '.checks["${{ matrix.system }}"] | keys | map(select(startswith("vm-") | not) | ".#checks.${{ matrix.system }}." + .) | join(" ")')
+          if [ -n "$checks" ]; then
+            nix build -L $checks
+          fi
 
-  # aggregate the result of both matrix jobs to allow branch protection to point at a specific job
+  check-matrix:
+    runs-on: ubuntu-latest
+    outputs:
+      matrix: ${{ steps.set-matrix.outputs.matrix }}
+    steps:
+      - uses: actions/checkout@v7
+      - uses: cachix/install-nix-action@v31
+        with:
+          nix_path: nixpkgs=channel:nixos-unstable
+          extra_nix_config: |
+            experimental-features = nix-command flakes
+      - name: compute vm checks to use as a matrix
+        id: set-matrix
+        run: |
+          set -Eeu
+          matrix="$(nix flake show --all-systems --json | jq -cr '
+            .checks | to_entries | map(
+              .key as $sys |
+              ({
+                "x86_64-linux": "ubuntu-26.04",
+                "aarch64-linux": "ubuntu-26.04-arm",
+                "aarch64-darwin": "macos-latest"
+              }[$sys]) as $runner |
+              .value | keys | map(select(startswith("vm-")) | {system: $sys, check: ., "runs-on": $runner})
+            ) | add
+          ')"
+          echo "matrix=${matrix}" >> "$GITHUB_OUTPUT"
+
+  check:
+    needs:
+      - build
+      - check-matrix
+    strategy:
+      fail-fast: false
+      matrix:
+        include: ${{ fromJson(needs.check-matrix.outputs.matrix) }}
+    runs-on: ${{ matrix.runs-on }}
+    steps:
+      - uses: actions/checkout@v7
+      - uses: cachix/install-nix-action@v31
+        with:
+          nix_path: nixpkgs=channel:nixos-unstable
+          extra_nix_config: |
+            experimental-features = nix-command flakes
+      - uses: cachix/cachix-action@v17
+        with:
+          name: sftcrd
+          authToken: "${{ secrets.CACHIX_AUTH_TOKEN }}"
+      - run: nix build -L '.#checks.${{ matrix.system }}.${{ matrix.check }}'
+
+  # aggregate the result of all matrix jobs to allow branch protection to point at a specific job
   checks-status:
     if: always()
     runs-on: ubuntu-latest
     needs:
+      - build
+      - check-matrix
       - check
     steps:
     - run: ${{!contains(needs.*.result, 'failure')}}
