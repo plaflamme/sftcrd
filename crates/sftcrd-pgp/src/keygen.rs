@@ -87,6 +87,7 @@ tlv_struct! {
 tlv_struct! {
     #[tag_type(BerTag)]
     #[length(BerLength)]
+    #[header_list]
     struct KeyImportFields<'a> {
         #[tag(0x91)]
         exp: Option<&'a [u8]>,

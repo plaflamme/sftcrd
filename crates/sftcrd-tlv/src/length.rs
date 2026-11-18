@@ -130,7 +130,34 @@ impl Length for BerLength {
 
 #[cfg(test)]
 mod tests {
-    use crate::{BerLength, Length, error::EncodeError};
+    use crate::{BerLength, DecodeError, Length, error::EncodeError};
+
+    #[test]
+    fn test_ber_length_decode() {
+        // short form
+        assert_eq!(BerLength::decode(&[0x7F, 0x00]), Ok((0x7F, 1)));
+        // indefinite form (unsupported)
+        assert_eq!(
+            BerLength::decode(&[0x80, 0x00]),
+            Err(DecodeError::InvalidLength)
+        );
+        // variable form
+        assert_eq!(BerLength::decode(&[0x81, 0x00]), Ok((0, 2)));
+        assert_eq!(BerLength::decode(&[0x82, 0x01, 0x00]), Ok((0x0100, 3)));
+        assert_eq!(
+            BerLength::decode(&[0x88, 0x01, 0x02, 0x03, 0x04, 0x05, 0x06, 0x07, 0x08]),
+            Ok((0x0102_0304_0506_0708, 9))
+        );
+        assert_eq!(
+            BerLength::decode(&[0x89, 0x01, 0x02, 0x03, 0x04, 0x05, 0x06, 0x07, 0x08, 0x09]),
+            Err(DecodeError::InvalidLength)
+        );
+        assert_eq!(BerLength::decode(&[0x81]), Err(DecodeError::BufferUnderrun));
+        assert_eq!(
+            BerLength::decode(&[0x82, 0x01]),
+            Err(DecodeError::BufferUnderrun)
+        );
+    }
 
     #[test]
     fn test_ber_length() {
