@@ -26,19 +26,19 @@ const EXTENDED_CAPABILITIES: [u8; 10] =
 const DEFAULT_ALGO_ATTR: [u8; 6] = [AlgoId::Rsa as u8, 0x08, 0x00, 0x00, 0x20, 0x00];
 
 /// Default User Interaction Flag (`D6`/`D7`/`D8`): off (`00`), button present (`20`).
-const DEFAULT_UIF: [u8; 2] = [UifMode::Off as u8, 0x20];
+pub(crate) const DEFAULT_UIF: [u8; 2] = [UifMode::Off as u8, 0x20];
 
 // Supported curve OIDs (bare OID body, without 0x06 + length)
-const OID_ED25519: &[u8] = &[0x2B, 0x06, 0x01, 0x04, 0x01, 0xDA, 0x47, 0x0F, 0x01];
-const OID_X25519: &[u8] = &[0x2B, 0x06, 0x01, 0x04, 0x01, 0x97, 0x55, 0x01, 0x05, 0x01];
-const OID_NIST_P256: &[u8] = &[0x2A, 0x86, 0x48, 0xCE, 0x3D, 0x03, 0x01, 0x07];
-const OID_NIST_P384: &[u8] = &[0x2B, 0x81, 0x04, 0x00, 0x22];
-const OID_NIST_P521: &[u8] = &[0x2B, 0x81, 0x04, 0x00, 0x23];
+pub(crate) const OID_ED25519: &[u8] = &[0x2B, 0x06, 0x01, 0x04, 0x01, 0xDA, 0x47, 0x0F, 0x01];
+pub(crate) const OID_X25519: &[u8] = &[0x2B, 0x06, 0x01, 0x04, 0x01, 0x97, 0x55, 0x01, 0x05, 0x01];
+pub(crate) const OID_NIST_P256: &[u8] = &[0x2A, 0x86, 0x48, 0xCE, 0x3D, 0x03, 0x01, 0x07];
+pub(crate) const OID_NIST_P384: &[u8] = &[0x2B, 0x81, 0x04, 0x00, 0x22];
+pub(crate) const OID_NIST_P521: &[u8] = &[0x2B, 0x81, 0x04, 0x00, 0x23];
 
-const MAX_NAME_LEN: usize = 39;
-const MAX_LANGUAGE_LEN: usize = 8;
-const MAX_URL_LEN: usize = 2048;
-const MAX_LOGIN_DATA_LEN: usize = 2048;
+pub(crate) const MAX_NAME_LEN: usize = 39;
+pub(crate) const MAX_LANGUAGE_LEN: usize = 8;
+pub(crate) const MAX_URL_LEN: usize = 2048;
+pub(crate) const MAX_LOGIN_DATA_LEN: usize = 2048;
 
 /// Per-slot metadata and key material stored on the card (algorithm attributes,
 /// fingerprints, generation timestamp, User Interaction Flag, and asymmetric key).

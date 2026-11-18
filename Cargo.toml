@@ -36,6 +36,7 @@ sftcrd-apdu = { path = "crates/sftcrd-apdu" }
 sftcrd-key = { path = "crates/sftcrd-key" }
 sftcrd-piv = { path = "crates/sftcrd-piv" }
 sftcrd-tlv = { path = "crates/sftcrd-tlv" }
+sha1 = "0.11"
 sha2 = "0.11"
 toml-example = "0.17"
 tracing = "0.1"

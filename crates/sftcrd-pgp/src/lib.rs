@@ -7,6 +7,7 @@
 #![forbid(unsafe_code)]
 
 mod auth;
+pub mod config;
 mod constants;
 mod data;
 mod keygen;
@@ -14,6 +15,8 @@ mod pgp;
 mod pin;
 mod pso;
 mod slot;
+
+pub use config::{ConfigError, PgpConfig, SlotConfig};
 
 use data::CardData;
 use iso7816::{Instruction, Status};
