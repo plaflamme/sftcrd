@@ -451,9 +451,8 @@ mod tests {
     use keyroost_openpgp::{
         EccPrivateKeyParts, KeyAlg, KeyCrt, PW3_ADMIN, PublicKey, RsaImportFormat,
         RsaPrivateKeyParts, TAG_SECURITY_SUPPORT, generate_key, import_ecc_key,
-        import_ecc_key_chained, import_rsa_key, import_rsa_key_chained,
-        parse_generated_public_key, parse_signature_counter, put_algorithm_attributes,
-        read_public_key, verify,
+        import_ecc_key_chained, import_rsa_key, import_rsa_key_chained, parse_generated_public_key,
+        parse_signature_counter, put_algorithm_attributes, read_public_key, verify,
     };
 
     use super::*;
@@ -683,9 +682,14 @@ mod tests {
         let verify_apdu = verify(PW3_ADMIN, b"12345678");
         let auth_attrs = KeyAlg::Rsa2048.attributes(KeyCrt::Auth).unwrap();
         let attr_apdu = put_algorithm_attributes(KeyCrt::Auth, &auth_attrs);
-        let chained =
-            import_rsa_key_chained(KeyCrt::Auth, &parts, RsaImportFormat::CrtWithModulus, 32, 254)
-                .unwrap();
+        let chained = import_rsa_key_chained(
+            KeyCrt::Auth,
+            &parts,
+            RsaImportFormat::CrtWithModulus,
+            32,
+            254,
+        )
+        .unwrap();
         assert!(chained.len() > 1);
         let mut apdus: Vec<&[u8]> = vec![&verify_apdu, &attr_apdu];
         apdus.extend(chained.iter().map(Vec::as_slice));
@@ -693,7 +697,9 @@ mod tests {
             assert_eq!(resp, [0x90, 0x00]);
         }
         let PublicKey::Rsa { modulus, .. } = parse_generated_public_key(
-            dispatch_applet.process(&read_public_key(KeyCrt::Auth)).data(),
+            dispatch_applet
+                .process(&read_public_key(KeyCrt::Auth))
+                .data(),
         )
         .unwrap() else {
             panic!("expected RSA public key");
@@ -707,8 +713,7 @@ mod tests {
             dp: &bad_dp,
             ..parts
         };
-        let bad_apdu =
-            import_rsa_key(KeyCrt::Sign, &bad_parts, RsaImportFormat::Crt, 32).unwrap();
+        let bad_apdu = import_rsa_key(KeyCrt::Sign, &bad_parts, RsaImportFormat::Crt, 32).unwrap();
         assert_eq!(
             applet.process(&bad_apdu).status(),
             Status::IncorrectDataParameter
@@ -746,7 +751,9 @@ mod tests {
             assert_eq!(resp, [0x90, 0x00]);
         }
         let PublicKey::Ecc { point } = parse_generated_public_key(
-            dispatch_applet.process(&read_public_key(KeyCrt::Sign)).data(),
+            dispatch_applet
+                .process(&read_public_key(KeyCrt::Sign))
+                .data(),
         )
         .unwrap() else {
             panic!("expected ECC public key");

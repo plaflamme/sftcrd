@@ -28,9 +28,9 @@ pub struct PgpApplet {
     /// Full 16-byte `OpenPGP` Card AID.
     aid: [u8; 16],
     /// PIN secrets, retry counters, and session verification flags.
-    pub(crate) pins: PinState,
+    pins: PinState,
     /// Persistent cardholder and key-slot metadata.
-    pub(crate) data: CardData,
+    data: CardData,
     /// Whether `TERMINATE DF` (`0xE6`) has put the applet in termination state.
     terminated: bool,
 }
