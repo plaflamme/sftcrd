@@ -22,11 +22,13 @@ use std::net::{TcpListener, TcpStream};
 use std::path::PathBuf;
 use std::process::ExitCode;
 
-use clap::Parser;
+use clap::{Parser, Subcommand};
 use tracing::{info, trace, warn};
 use tracing_subscriber::EnvFilter;
 
+use sftcrd::CardConfig;
 use sftcrd_piv::PivApplet;
+use toml_example::TomlExample;
 
 /// The ATR of a `YubiKey` 5.7
 const DEFAULT_ATR: &str = "3BFD1300008131FE158073C021C057597562694B657940";
@@ -59,10 +61,27 @@ struct Args {
     /// Path to a TOML configuration file to initialize the card state.
     #[arg(short, long)]
     config: Option<PathBuf>,
+
+    #[command(subcommand)]
+    command: Option<Command>,
+}
+
+#[derive(Subcommand, Debug, Clone)]
+enum Command {
+    /// Print the reference TOML configuration wrapped in a Markdown code block.
+    #[command(hide = true)]
+    ConfigReference,
 }
 
 fn main() -> ExitCode {
     let args = Args::parse();
+
+    if let Some(Command::ConfigReference) = args.command {
+        println!("```toml");
+        println!("{}", CardConfig::toml_example());
+        println!("```");
+        return ExitCode::SUCCESS;
+    }
 
     tracing_subscriber::fmt()
         .with_env_filter(

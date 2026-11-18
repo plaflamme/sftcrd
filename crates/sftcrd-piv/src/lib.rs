@@ -35,7 +35,7 @@ use pin::Pin;
 use sftcrd_apdu::CommandView;
 
 pub use crate::slot::Slots;
-pub use config::{CardConfig, ConfigError, MgmtKeyConfig, PinConfig, PivConfig, SlotConfig};
+pub use config::{ConfigError, MgmtKeyConfig, PinConfig, PivConfig, SlotConfig};
 pub use sftcrd_apdu::{Response, Trace, YubicoInstruction};
 
 /// A PIV applet instance: the card side of NIST SP 800-73-4.
@@ -132,10 +132,6 @@ impl apdu_app::App for PivApplet {
 }
 
 impl PivApplet {
-    pub fn print() {
-        use toml_example::TomlExample;
-        println!("{}", CardConfig::toml_example());
-    }
     /// A factory-fresh applet: the default PIN/PUK with full retry counters,
     /// nothing verified, the [`DEFAULT_SERIAL`] serial.
     #[must_use]

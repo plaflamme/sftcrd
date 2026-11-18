@@ -67,10 +67,10 @@
               let
                 craneLib = config.rust-project.crane-lib;
                 src = config.rust-project.src;
-                sftcrd-piv = config.packages.sftcrd-piv;
+                sftcrd = config.packages.sftcrd;
               in
               {
-                default = config.packages.sftcrd;
+                default = sftcrd;
                 sftcrd-debug = craneLib.buildPackage (
                   config.rust-project.crates.sftcrd.crane.args
                   // {
@@ -80,7 +80,7 @@
                   }
                 );
 
-                docs = pkgs.callPackage ./nix/docs.nix { inherit optionsDoc sftcrd-piv; };
+                docs = pkgs.callPackage ./nix/docs.nix { inherit optionsDoc sftcrd; };
               };
 
             checks =

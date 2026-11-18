@@ -1053,8 +1053,11 @@ dependencies = [
  "hex",
  "iso7816",
  "keyroost-piv",
+ "serde",
+ "sftcrd-pgp",
  "sftcrd-piv",
  "sftcrd-tlv",
+ "toml-example",
  "tracing",
  "tracing-subscriber",
 ]

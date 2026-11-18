@@ -1,7 +1,7 @@
 {
   pkgs,
   optionsDoc,
-  sftcrd-piv,
+  sftcrd,
   ...
 }:
 let
@@ -22,7 +22,7 @@ pkgs.stdenv.mkDerivation {
     mkdir -p input
     cp -r ./docs/* input
 
-    ${sftcrd-piv}/bin/sftcrd-config-reference > input/config-reference.md
+    ${sftcrd}/bin/sftcrd config-reference > input/config-reference.md
 
     # Run NDG directly on the generated options.json
     # This will output a structured, complete HTML document set

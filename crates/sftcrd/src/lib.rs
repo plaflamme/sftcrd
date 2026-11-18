@@ -14,4 +14,23 @@
 //!
 //! The PIV applet implementation lives in the [`sftcrd_piv`] crate.
 
+use serde::Deserialize;
+use sftcrd_pgp::PgpConfig;
+use sftcrd_piv::PivConfig;
 pub use sftcrd_piv::{DEFAULT_SERIAL, PivApplet};
+use toml_example::TomlExample;
+
+/// Top-level card configuration holding applet namespaces.
+#[derive(TomlExample, Debug, Deserialize, Default, Clone)]
+#[serde(deny_unknown_fields)]
+pub struct CardConfig {
+    /// Card serial number.
+    #[toml_example(default = 87_654_321, require)]
+    pub serial: Option<u32>,
+    /// PIV applet configuration.
+    #[toml_example(nesting, require)]
+    pub piv: Option<PivConfig>,
+    /// `OpenPGP` Card applet configuration.
+    #[toml_example(nesting, require)]
+    pub pgp: Option<PgpConfig>,
+}

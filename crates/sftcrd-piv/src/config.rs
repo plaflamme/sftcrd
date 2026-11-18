@@ -74,18 +74,6 @@ impl From<figment::Error> for ConfigError {
     }
 }
 
-/// Top-level card configuration holding applet namespaces.
-#[derive(TomlExample, Debug, Deserialize, Default, Clone)]
-#[serde(deny_unknown_fields)]
-pub struct CardConfig {
-    /// Card serial number.
-    #[toml_example(default = 87654321, require)]
-    pub serial: Option<u32>,
-    /// PIV applet configuration.
-    #[toml_example(nesting, require)]
-    pub piv: Option<PivConfig>,
-}
-
 /// Configuration for the PIV applet.
 #[derive(TomlExample, Debug, Deserialize, Default, Clone)]
 #[serde(deny_unknown_fields)]

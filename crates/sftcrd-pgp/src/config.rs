@@ -668,21 +668,32 @@ U+YErUxH46LD3Jz+qlYG5o7XmP78qnA5pFhePHaBykZ7mfw1w/Y=
 
         // Verify configured PW1 and PW3 (defaults should fail)
         assert_ne!(
-            applet.process(&keyroost_openpgp::verify(PW1_SIGN, b"123456")).status(),
+            applet
+                .process(&keyroost_openpgp::verify(PW1_SIGN, b"123456"))
+                .status(),
             Status::Success
         );
         assert_eq!(
-            applet.process(&keyroost_openpgp::verify(PW1_SIGN, b"654321")).status(),
+            applet
+                .process(&keyroost_openpgp::verify(PW1_SIGN, b"654321"))
+                .status(),
             Status::Success
         );
         assert_eq!(
-            applet.process(&keyroost_openpgp::verify(PW3_ADMIN, b"87654321")).status(),
+            applet
+                .process(&keyroost_openpgp::verify(PW3_ADMIN, b"87654321"))
+                .status(),
             Status::Success
         );
 
         // Verify pw1_valid_multiple
         assert!(applet.pw1_valid_multiple());
-        let pw_status = parse_pw_status(applet.process(&keyroost_openpgp::get_data(TAG_PW_STATUS)).data()).unwrap();
+        let pw_status = parse_pw_status(
+            applet
+                .process(&keyroost_openpgp::get_data(TAG_PW_STATUS))
+                .data(),
+        )
+        .unwrap();
         assert!(pw_status.pw1_valid_multiple);
 
         // Verify RC unblocks PW1
@@ -690,7 +701,9 @@ U+YErUxH46LD3Jz+qlYG5o7XmP78qnA5pFhePHaBykZ7mfw1w/Y=
             let _ = applet.process(&keyroost_openpgp::verify(PW1_SIGN, b"wrong!"));
         }
         assert_eq!(
-            applet.process(&keyroost_openpgp::verify(PW1_SIGN, b"654321")).status(),
+            applet
+                .process(&keyroost_openpgp::verify(PW1_SIGN, b"654321"))
+                .status(),
             Status::OperationBlocked
         );
         let mut rrc_apdu = vec![0x00, 0x2C, 0x00, PW1_SIGN, 14];
@@ -698,7 +711,9 @@ U+YErUxH46LD3Jz+qlYG5o7XmP78qnA5pFhePHaBykZ7mfw1w/Y=
         rrc_apdu.extend_from_slice(b"112233");
         assert_eq!(applet.process(&rrc_apdu).status(), Status::Success);
         assert_eq!(
-            applet.process(&keyroost_openpgp::verify(PW1_SIGN, b"112233")).status(),
+            applet
+                .process(&keyroost_openpgp::verify(PW1_SIGN, b"112233"))
+                .status(),
             Status::Success
         );
 
@@ -713,7 +728,9 @@ U+YErUxH46LD3Jz+qlYG5o7XmP78qnA5pFhePHaBykZ7mfw1w/Y=
             b"https://example.com/jane.asc"
         );
         assert_eq!(
-            applet.process(&keyroost_openpgp::get_data(TAG_LOGIN_DATA)).data(),
+            applet
+                .process(&keyroost_openpgp::get_data(TAG_LOGIN_DATA))
+                .data(),
             b"jdoe"
         );
     }
@@ -726,7 +743,9 @@ U+YErUxH46LD3Jz+qlYG5o7XmP78qnA5pFhePHaBykZ7mfw1w/Y=
         "#;
         let mut applet = PgpApplet::from_toml_str(toml).unwrap();
         assert_eq!(
-            applet.process(&keyroost_openpgp::verify(PW1_SIGN, b"abcdef")).status(),
+            applet
+                .process(&keyroost_openpgp::verify(PW1_SIGN, b"abcdef"))
+                .status(),
             Status::Success
         );
         let ch_resp = applet.process(&keyroost_openpgp::get_data(TAG_CARDHOLDER_RELATED_DATA));
@@ -769,13 +788,17 @@ U+YErUxH46LD3Jz+qlYG5o7XmP78qnA5pFhePHaBykZ7mfw1w/Y=
         assert_eq!(gen_sig, 1_700_000_000);
         assert_ne!(app.fingerprint_sig, [0u8; 20]);
         assert_eq!(
-            applet.process(&keyroost_openpgp::get_data(TAG_UIF_SIG)).data(),
+            applet
+                .process(&keyroost_openpgp::get_data(TAG_UIF_SIG))
+                .data(),
             &[0x01, 0x20]
         );
 
         // Verify Ed25519 signature via PSO:CDS
         assert_eq!(
-            applet.process(&keyroost_openpgp::verify(PW1_SIGN, b"123456")).status(),
+            applet
+                .process(&keyroost_openpgp::verify(PW1_SIGN, b"123456"))
+                .status(),
             Status::Success
         );
         let sig_resp = applet.process(&pso_compute_signature(b"hello-openpgp"));
@@ -796,13 +819,17 @@ U+YErUxH46LD3Jz+qlYG5o7XmP78qnA5pFhePHaBykZ7mfw1w/Y=
         assert!(gen_aut > 0);
         assert_ne!(app.fingerprint_aut, [0u8; 20]);
         assert_eq!(
-            applet.process(&keyroost_openpgp::get_data(TAG_UIF_AUT)).data(),
+            applet
+                .process(&keyroost_openpgp::get_data(TAG_UIF_AUT))
+                .data(),
             &[0x02, 0x20]
         );
 
         // Verify P-384 INTERNAL AUTHENTICATE works
         assert_eq!(
-            applet.process(&keyroost_openpgp::verify(PW1_OTHER, b"123456")).status(),
+            applet
+                .process(&keyroost_openpgp::verify(PW1_OTHER, b"123456"))
+                .status(),
             Status::Success
         );
         let auth_resp = applet.process(&keyroost_openpgp::internal_authenticate(&[0x42u8; 48]));
@@ -842,7 +869,9 @@ U+YErUxH46LD3Jz+qlYG5o7XmP78qnA5pFhePHaBykZ7mfw1w/Y=
         assert_eq!(gen_aut, 1_700_000_000);
         assert_ne!(app.fingerprint_aut, [0u8; 20]);
         assert_eq!(
-            applet.process(&keyroost_openpgp::get_data(TAG_UIF_DEC)).data(),
+            applet
+                .process(&keyroost_openpgp::get_data(TAG_UIF_DEC))
+                .data(),
             &[0x00, 0x20]
         );
     }
@@ -861,7 +890,9 @@ U+YErUxH46LD3Jz+qlYG5o7XmP78qnA5pFhePHaBykZ7mfw1w/Y=
         "#;
         let mut applet = PgpApplet::from_toml_str(toml).unwrap();
         assert_eq!(
-            applet.process(&keyroost_openpgp::verify(PW1_SIGN, b"123456")).status(),
+            applet
+                .process(&keyroost_openpgp::verify(PW1_SIGN, b"123456"))
+                .status(),
             Status::Success
         );
         let sig_resp = applet.process(&pso_compute_signature(&[0x30; 32]));
@@ -877,7 +908,9 @@ U+YErUxH46LD3Jz+qlYG5o7XmP78qnA5pFhePHaBykZ7mfw1w/Y=
         let mut applet = PgpApplet::from_toml_file(&path).unwrap();
         let _ = std::fs::remove_file(&path);
         assert_eq!(
-            applet.process(&keyroost_openpgp::verify(PW1_SIGN, b"999999")).status(),
+            applet
+                .process(&keyroost_openpgp::verify(PW1_SIGN, b"999999"))
+                .status(),
             Status::Success
         );
     }
