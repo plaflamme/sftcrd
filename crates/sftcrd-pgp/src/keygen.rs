@@ -284,6 +284,17 @@ fn import_ecc(alg: SlotAlg, fields: &KeyImportFields<'_>) -> Result<SlotKey, Sta
         return Err(Status::IncorrectDataParameter);
     }
 
+    // OpenPGP Card v3.4 sends Curve25519/X25519 private scalars in big-endian
+    // byte order, while x25519-dalek expects little-endian.
+    if alg == SlotAlg::X25519 {
+        let mut le_scalar: [u8; 32] = scalar
+            .try_into()
+            .map_err(|_| Status::IncorrectDataParameter)?;
+        le_scalar.reverse();
+        return SlotKey::from_ec_scalar(alg.into(), &le_scalar, fields.ecc_public)
+            .map_err(|ref err| key_error_to_status(err));
+    }
+
     SlotKey::from_ec_scalar(alg.into(), scalar, fields.ecc_public)
         .map_err(|ref err| key_error_to_status(err))
 }
@@ -655,7 +666,8 @@ mod tests {
         set_slot_alg(&mut applet, KeyCrt::Decrypt, KeyAlg::X25519);
         let x_secret = x25519_dalek::StaticSecret::random_from_rng(&mut rand::rng());
         let x_pub = x25519_dalek::PublicKey::from(&x_secret).to_bytes();
-        let x_raw = x_secret.to_bytes();
+        let mut x_raw = x_secret.to_bytes();
+        x_raw.reverse();
         let apdu_x = import_ecc_key(
             KeyCrt::Decrypt,
             &EccPrivateKeyParts {

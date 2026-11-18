@@ -89,7 +89,7 @@
                   inherit nixosModule keyroostctl;
                 };
               in
-              { } // import ./nix/checks/piv.nix ctx;
+              import ./nix/checks ctx;
 
             devShells.default = config.devShells.rust;
           };

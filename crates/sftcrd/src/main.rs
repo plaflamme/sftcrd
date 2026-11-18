@@ -23,11 +23,12 @@ use std::path::PathBuf;
 use std::process::ExitCode;
 
 use clap::{Parser, Subcommand};
+use figment::Figment;
+use figment::providers::{Format, Toml};
 use tracing::{info, trace, warn};
 use tracing_subscriber::EnvFilter;
 
-use sftcrd::CardConfig;
-use sftcrd_piv::PivApplet;
+use sftcrd::{CardConfig, DEFAULT_SERIAL, PgpApplet, PivApplet};
 use toml_example::TomlExample;
 
 /// The ATR of a `YubiKey` 5.7
@@ -128,11 +129,21 @@ fn serve_connection(
     atr: &[u8],
     config_path: Option<&std::path::Path>,
 ) -> io::Result<()> {
-    // The card: the applet instance
-    let mut applet = match config_path {
-        Some(path) => PivApplet::from_toml_file(path)
-            .map_err(|e| io::Error::new(io::ErrorKind::InvalidData, e.to_string()))?,
-        None => PivApplet::new(),
+    // The card: the PIV and OpenPGP applet instances
+    let (mut piv_applet, mut pgp_applet) = match config_path {
+        Some(path) => {
+            let card_config: CardConfig = Figment::new()
+                .merge(Toml::file(path))
+                .extract()
+                .map_err(|e| io::Error::new(io::ErrorKind::InvalidData, e.to_string()))?;
+            let serial = card_config.serial.unwrap_or(DEFAULT_SERIAL);
+            let piv = PivApplet::from_config(&card_config.piv.unwrap_or_default(), serial)
+                .map_err(|e| io::Error::new(io::ErrorKind::InvalidData, e.to_string()))?;
+            let pgp = PgpApplet::from_config(&card_config.pgp.unwrap_or_default(), serial)
+                .map_err(|e| io::Error::new(io::ErrorKind::InvalidData, e.to_string()))?;
+            (piv, pgp)
+        }
+        None => (PivApplet::new(), PgpApplet::new()),
     };
     let mut power_on = false;
 
@@ -191,7 +202,7 @@ fn serve_connection(
                 }
             }
 
-            let response = match dispatch.poll(&mut [&mut applet]) {
+            let response = match dispatch.poll(&mut [&mut piv_applet, &mut pgp_applet]) {
                 Some(iso7816::Interface::Contact) => contact_requester.take_response(),
                 Some(iso7816::Interface::Contactless) => unreachable!("contactless is unused"),
                 None => continue,

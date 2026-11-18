@@ -16,6 +16,7 @@
 
 use serde::Deserialize;
 use sftcrd_pgp::PgpConfig;
+pub use sftcrd_pgp::PgpApplet;
 use sftcrd_piv::PivConfig;
 pub use sftcrd_piv::{DEFAULT_SERIAL, PivApplet};
 use toml_example::TomlExample;

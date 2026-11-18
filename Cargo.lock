@@ -1050,6 +1050,7 @@ version = "0.1.0"
 dependencies = [
  "apdu-dispatch",
  "clap",
+ "figment",
  "hex",
  "iso7816",
  "keyroost-piv",

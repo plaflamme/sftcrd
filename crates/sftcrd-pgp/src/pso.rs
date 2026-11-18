@@ -46,6 +46,26 @@ fn decode_ecdh_point(data: &[u8]) -> Result<&[u8], Status> {
     Ok(req.cipher_do.public_key.point)
 }
 
+fn sign_pgp(key: &SlotKey, data: &[u8]) -> Result<Vec<u8>, KeyError> {
+    let field_len = match key {
+        SlotKey::P256(_) => Some(32),
+        SlotKey::P384(_) => Some(48),
+        SlotKey::P521(_) => Some(66),
+        _ => None,
+    };
+    // OpenPGP Card v3.4 allows signing hashes shorter than the ECDSA curve
+    // field size (e.g. SHA-256 with P-384/P-521) by left-padding with zeros.
+    if let Some(len) = field_len
+        && !data.is_empty()
+        && data.len() < len
+    {
+        let mut padded = vec![0u8; len];
+        padded[len - data.len()..].copy_from_slice(data);
+        return key.sign(&padded, RsaSignMode::Pkcs1v15, EcdsaFormat::Raw);
+    }
+    key.sign(data, RsaSignMode::Pkcs1v15, EcdsaFormat::Raw)
+}
+
 impl PgpApplet {
     /// `PERFORM SECURITY OPERATION` (`0x2A`): dispatch `PSO:CDS` (`9E 9A`) and
     /// `PSO:DECIPHER` (`80 86`).
@@ -65,7 +85,7 @@ impl PgpApplet {
         let Some(ref key) = self.data.sig.key else {
             return Status::ConditionsOfUseNotSatisfied.into();
         };
-        let sig = match key.sign(data, RsaSignMode::Pkcs1v15, EcdsaFormat::Raw) {
+        let sig = match sign_pgp(key, data) {
             Ok(sig) => sig,
             Err(ref err) => return key_error_to_status(err).into(),
         };
@@ -119,7 +139,7 @@ impl PgpApplet {
         let Some(ref key) = self.data.aut.key else {
             return Status::ConditionsOfUseNotSatisfied.into();
         };
-        match key.sign(cmd.data(), RsaSignMode::Pkcs1v15, EcdsaFormat::Raw) {
+        match sign_pgp(key, cmd.data()) {
             Ok(sig) => Response::from_slice(&sig),
             Err(ref err) => key_error_to_status(err).into(),
         }
