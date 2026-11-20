@@ -2,6 +2,7 @@
 pub enum EncodeError {
     BufferUnderrun,
     InvalidLength,
+    InvalidValue,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]

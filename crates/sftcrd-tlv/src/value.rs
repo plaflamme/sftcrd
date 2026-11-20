@@ -1,44 +1,76 @@
 use crate::error::EncodeError;
 
-use super::DecodeError;
+use super::{DecodeError, Decoder, Encoder};
 
-/// Implemented by values for reading them out of TLV byte buffers.
-pub trait ValueDecoder<'a>
-where
-    Self: Sized,
-{
+/// Implemented by types that can be decoded from a [`Decoder`] (either a TLV stream / raw bytes
+/// or an ISO/IEC 7816-4 header list).
+pub trait Decode<'a>: Sized {
+    /// Decodes `Self` from the provided [`Decoder`].
+    ///
+    /// # Errors
+    ///
+    /// Returns [`DecodeError`] if decoding fails or the decoder mode is incompatible with `Self`.
+    fn decode(decoder: Decoder<'a>) -> Result<Self, DecodeError>;
+}
+
+/// Implemented by types that can be encoded into an [`Encoder`] (either a TLV stream / raw bytes
+/// or an ISO/IEC 7816-4 header list).
+pub trait Encode {
+    /// Encodes `self` into the provided [`Encoder`].
+    ///
+    /// # Errors
+    ///
+    /// Returns [`EncodeError`] if encoding fails or the encoder mode is incompatible with `Self`.
+    fn encode(&self, encoder: &mut Encoder<'_>) -> Result<(), EncodeError>;
+
+    /// Returns the encoded byte length of `self` in standard TLV mode.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`EncodeError`] if measuring fails.
+    fn encoded_length(&self) -> Result<usize, EncodeError> {
+        Encoder::measure_tlv(self)
+    }
+}
+
+/// Implemented by leaf values that decode from a raw byte slice.
+///
+/// Any type implementing `DecodeValue<'a>` automatically implements [`Decode<'a>`].
+pub trait DecodeValue<'a>: Sized {
     /// Decodes a value from the provided bytes.
     ///
     /// # Errors
     ///
     /// Returns an error when there are not enough bytes to decode a value ([`DecodeError::BufferUnderrun`])
     /// or if the encoded value is invalid ([`DecodeError::InvalidValue`]).
-    fn decode(bytes: &'a [u8]) -> Result<Self, DecodeError>;
+    fn decode_bytes(bytes: &'a [u8]) -> Result<Self, DecodeError>;
 }
 
-/// Implemented by structs decoded from an ISO/IEC 7816-4 header list
-/// (a `(template, values)` pair of sibling TLVs, such as `OpenPGP` `7F48` + `5F48`).
-pub trait HeaderListDecoder<'a>: Sized {
-    /// Decodes `Self` from a tag-length `template` and flat `values` buffer.
+impl<'a, T: DecodeValue<'a>> Decode<'a> for T {
+    fn decode(decoder: Decoder<'a>) -> Result<Self, DecodeError> {
+        Self::decode_bytes(decoder.into_bytes()?)
+    }
+}
+
+/// Implemented by leaf values that encode into a raw byte slice.
+///
+/// Any type implementing `EncodeValue` automatically implements [`Encode`].
+pub trait EncodeValue {
+    /// Returns the encoded byte length of `self`.
+    fn length(&self) -> usize;
+
+    /// Writes the value into `buf`, which is guaranteed to have length `self.length()`.
     ///
     /// # Errors
     ///
-    /// Returns [`DecodeError`] if the template or values are malformed or a required field is missing.
-    fn decode_header_list(template: &'a [u8], values: &'a [u8]) -> Result<Self, DecodeError>;
+    /// Returns an error if the buffer is not large enough or if the value cannot be encoded safely.
+    fn encode_bytes(&self, buf: &mut [u8]) -> Result<(), EncodeError>;
 }
 
-/// Implemented by structs encoded as an ISO/IEC 7816-4 header list
-/// (a `(template, values)` pair of sibling TLVs).
-pub trait HeaderListEncoder {
-    /// Returns the encoded `(template_len, values_len)` byte lengths.
-    fn header_list_lengths(&self) -> (usize, usize);
-
-    /// Encodes `self` into a `(template, values)` byte-vector pair.
-    ///
-    /// # Errors
-    ///
-    /// Returns [`EncodeError`] if any tag, length, or value fails to encode.
-    fn encode_header_list(&self) -> Result<(Vec<u8>, Vec<u8>), EncodeError>;
+impl<T: EncodeValue> Encode for T {
+    fn encode(&self, encoder: &mut Encoder<'_>) -> Result<(), EncodeError> {
+        encoder.write_value(self)
+    }
 }
 
 /// Implemented by values that know they encode to a constant number of bytes.
@@ -46,8 +78,8 @@ pub trait ConstLength {
     const LENGTH: usize;
 }
 
-impl ValueDecoder<'_> for bool {
-    fn decode(bytes: &[u8]) -> Result<Self, DecodeError> {
+impl DecodeValue<'_> for bool {
+    fn decode_bytes(bytes: &[u8]) -> Result<Self, DecodeError> {
         if let [byte] = bytes {
             match byte {
                 0x00 => Ok(false),
@@ -64,8 +96,8 @@ impl ConstLength for bool {
     const LENGTH: usize = 1;
 }
 
-impl ValueDecoder<'_> for u8 {
-    fn decode(bytes: &[u8]) -> Result<Self, DecodeError> {
+impl DecodeValue<'_> for u8 {
+    fn decode_bytes(bytes: &[u8]) -> Result<Self, DecodeError> {
         if let [byte] = bytes {
             Ok(*byte)
         } else {
@@ -78,8 +110,8 @@ impl ConstLength for u8 {
     const LENGTH: usize = 1;
 }
 
-impl ValueDecoder<'_> for u16 {
-    fn decode(bytes: &[u8]) -> Result<Self, DecodeError> {
+impl DecodeValue<'_> for u16 {
+    fn decode_bytes(bytes: &[u8]) -> Result<Self, DecodeError> {
         if let [msb, lsb] = bytes {
             Ok(u16::from_be_bytes([*msb, *lsb]))
         } else {
@@ -92,8 +124,8 @@ impl ConstLength for u16 {
     const LENGTH: usize = 2;
 }
 
-impl ValueDecoder<'_> for u32 {
-    fn decode(bytes: &[u8]) -> Result<Self, DecodeError> {
+impl DecodeValue<'_> for u32 {
+    fn decode_bytes(bytes: &[u8]) -> Result<Self, DecodeError> {
         let Ok(arr): Result<[u8; 4], _> = bytes.try_into() else {
             return Err(DecodeError::BufferUnderrun);
         };
@@ -105,11 +137,11 @@ impl ConstLength for u32 {
     const LENGTH: usize = 4;
 }
 
-impl<'a, T, const N: usize> ValueDecoder<'a> for [T; N]
+impl<'a, T, const N: usize> DecodeValue<'a> for [T; N]
 where
-    T: ValueDecoder<'a> + ConstLength,
+    T: DecodeValue<'a> + ConstLength,
 {
-    fn decode(bytes: &'a [u8]) -> Result<Self, DecodeError> {
+    fn decode_bytes(bytes: &'a [u8]) -> Result<Self, DecodeError> {
         if bytes.len() < N * T::LENGTH {
             return Err(DecodeError::BufferUnderrun);
         }
@@ -118,7 +150,7 @@ where
         }
         let mut items = Vec::with_capacity(N);
         for chunk in bytes.chunks_exact(T::LENGTH) {
-            items.push(T::decode(chunk)?);
+            items.push(T::decode_bytes(chunk)?);
         }
         items.try_into().map_err(|_| DecodeError::BufferUnderrun)
     }
@@ -127,170 +159,138 @@ where
 impl<T: ConstLength, const N: usize> ConstLength for [T; N] {
     const LENGTH: usize = N * T::LENGTH;
 }
-impl ValueDecoder<'_> for Vec<u8> {
-    fn decode(bytes: &[u8]) -> Result<Self, DecodeError> {
+
+impl DecodeValue<'_> for Vec<u8> {
+    fn decode_bytes(bytes: &[u8]) -> Result<Self, DecodeError> {
         Ok(Vec::from(bytes))
     }
 }
 
-impl<'a> ValueDecoder<'a> for &'a [u8] {
-    fn decode(bytes: &'a [u8]) -> Result<Self, DecodeError> {
+impl<'a> DecodeValue<'a> for &'a [u8] {
+    fn decode_bytes(bytes: &'a [u8]) -> Result<Self, DecodeError> {
         Ok(bytes)
     }
 }
 
-impl<'a, A, B> ValueDecoder<'a> for (A, B)
+impl<'a, A, B> DecodeValue<'a> for (A, B)
 where
-    A: ValueDecoder<'a> + ConstLength,
-    B: ValueDecoder<'a>,
+    A: DecodeValue<'a> + ConstLength,
+    B: DecodeValue<'a>,
 {
-    fn decode(bytes: &'a [u8]) -> Result<Self, DecodeError> {
-        let (left, right) = bytes.split_at(A::LENGTH);
-        Ok((A::decode(left)?, B::decode(right)?))
+    fn decode_bytes(bytes: &'a [u8]) -> Result<Self, DecodeError> {
+        let (left, right) = bytes
+            .split_at_checked(A::LENGTH)
+            .ok_or(DecodeError::BufferUnderrun)?;
+        Ok((A::decode_bytes(left)?, B::decode_bytes(right)?))
     }
 }
 
-/// Implemented by values for writing them into TLV byte buffers.
-pub trait ValueEncoder {
-    fn length(&self) -> usize;
-
-    /// Writes the value in the provided buffer.
-    ///
-    /// # Errors
-    ///
-    /// Returns an error if the buffer is not large enough or if the value cannot be encoded safely.
-    fn encode(&self, buf: &mut [u8]) -> Result<(), EncodeError>;
-
-    /// Encodes the value to a newly allocated buffer and returns it.
-    ///
-    /// # Errors
-    ///
-    /// Returns an error if the buffer is not large enough or if the value cannot be encoded safely.
-    fn encode_top_level(&self) -> Result<Vec<u8>, EncodeError> {
-        let mut value = vec![0; self.length()];
-        self.encode(&mut value)?;
-        Ok(value)
-    }
-}
-
-impl ValueEncoder for bool {
+impl EncodeValue for bool {
     fn length(&self) -> usize {
         1
     }
 
-    fn encode(&self, buf: &mut [u8]) -> Result<(), EncodeError> {
+    fn encode_bytes(&self, buf: &mut [u8]) -> Result<(), EncodeError> {
+        if buf.is_empty() {
+            return Err(EncodeError::BufferUnderrun);
+        }
         buf[0] = u8::from(*self);
         Ok(())
     }
 }
 
-impl ValueEncoder for u8 {
+impl EncodeValue for u8 {
     fn length(&self) -> usize {
         1
     }
 
-    fn encode(&self, buf: &mut [u8]) -> Result<(), EncodeError> {
+    fn encode_bytes(&self, buf: &mut [u8]) -> Result<(), EncodeError> {
+        if buf.is_empty() {
+            return Err(EncodeError::BufferUnderrun);
+        }
         buf[0] = *self;
         Ok(())
     }
 }
 
-impl ValueEncoder for u16 {
+impl EncodeValue for u16 {
     fn length(&self) -> usize {
         2
     }
 
-    fn encode(&self, buf: &mut [u8]) -> Result<(), EncodeError> {
+    fn encode_bytes(&self, buf: &mut [u8]) -> Result<(), EncodeError> {
+        if buf.len() != 2 {
+            return Err(EncodeError::BufferUnderrun);
+        }
         buf.copy_from_slice(&self.to_be_bytes());
         Ok(())
     }
 }
 
-impl ValueEncoder for u32 {
+impl EncodeValue for u32 {
     fn length(&self) -> usize {
         4
     }
 
-    fn encode(&self, buf: &mut [u8]) -> Result<(), EncodeError> {
+    fn encode_bytes(&self, buf: &mut [u8]) -> Result<(), EncodeError> {
+        if buf.len() != 4 {
+            return Err(EncodeError::BufferUnderrun);
+        }
         buf.copy_from_slice(&self.to_be_bytes());
         Ok(())
     }
 }
 
-impl<T: ValueEncoder, const N: usize> ValueEncoder for [T; N] {
-    fn length(&self) -> usize {
-        self.iter().map(ValueEncoder::length).sum()
-    }
-
-    fn encode(&self, buf: &mut [u8]) -> Result<(), EncodeError> {
-        let mut offset = 0;
+impl<T: Encode, const N: usize> Encode for [T; N] {
+    fn encode(&self, encoder: &mut Encoder<'_>) -> Result<(), EncodeError> {
         for item in self {
-            let len = item.length();
-            if offset + len > buf.len() {
-                return Err(EncodeError::BufferUnderrun);
-            }
-            item.encode(&mut buf[offset..offset + len])?;
-            offset += len;
+            item.encode(encoder)?;
         }
         Ok(())
     }
 }
 
-impl ValueEncoder for &[u8] {
+impl EncodeValue for &[u8] {
     fn length(&self) -> usize {
         self.len()
     }
 
-    fn encode(&self, buf: &mut [u8]) -> Result<(), EncodeError> {
+    fn encode_bytes(&self, buf: &mut [u8]) -> Result<(), EncodeError> {
+        if buf.len() != self.len() {
+            return Err(EncodeError::BufferUnderrun);
+        }
         buf.copy_from_slice(self);
         Ok(())
     }
 }
 
-impl ValueEncoder for Vec<u8> {
+impl EncodeValue for Vec<u8> {
     fn length(&self) -> usize {
         self.len()
     }
 
-    fn encode(&self, buf: &mut [u8]) -> Result<(), EncodeError> {
+    fn encode_bytes(&self, buf: &mut [u8]) -> Result<(), EncodeError> {
+        if buf.len() != self.len() {
+            return Err(EncodeError::BufferUnderrun);
+        }
         buf.copy_from_slice(self);
         Ok(())
     }
 }
 
-impl<T> ValueEncoder for Option<T>
-where
-    T: ValueEncoder,
-{
-    fn length(&self) -> usize {
-        match self {
-            None => 0,
-            Some(v) => v.length(),
-        }
-    }
-
-    fn encode(&self, buf: &mut [u8]) -> Result<(), EncodeError> {
-        match self {
-            None => (),
-            Some(v) => v.encode(buf)?,
+impl<T: Encode> Encode for Option<T> {
+    fn encode(&self, encoder: &mut Encoder<'_>) -> Result<(), EncodeError> {
+        if let Some(v) = self {
+            v.encode(encoder)?;
         }
         Ok(())
     }
 }
 
-impl<A, B> ValueEncoder for (A, B)
-where
-    A: ValueEncoder,
-    B: ValueEncoder,
-{
-    fn length(&self) -> usize {
-        self.0.length() + self.1.length()
-    }
-
-    fn encode(&self, buf: &mut [u8]) -> Result<(), EncodeError> {
-        self.0.encode(&mut buf[0..self.0.length()])?;
-        self.1.encode(&mut buf[self.0.length()..])?;
-        Ok(())
+impl<A: Encode, B: Encode> Encode for (A, B) {
+    fn encode(&self, encoder: &mut Encoder<'_>) -> Result<(), EncodeError> {
+        self.0.encode(encoder)?;
+        self.1.encode(encoder)
     }
 }
 
@@ -301,24 +301,44 @@ mod tests {
     #[test]
     fn test_fixed_array_and_u32_codec() {
         let arr: [[u8; 2]; 3] = [[0x01, 0x02], [0x03, 0x04], [0x05, 0x06]];
-        let encoded = arr.encode_top_level().unwrap();
+        let encoded = Encoder::encode_tlv(&arr).unwrap();
         assert_eq!(encoded, [0x01, 0x02, 0x03, 0x04, 0x05, 0x06]);
-        assert_eq!(<[[u8; 2]; 3]>::decode(&encoded), Ok(arr));
+        assert_eq!(Decoder::decode_tlv::<[[u8; 2]; 3]>(&encoded), Ok(arr));
         assert_eq!(
-            <[[u8; 2]; 3]>::decode(&[0x01, 0x02, 0x03]),
+            Decoder::decode_tlv::<[[u8; 2]; 3]>(&[0x01, 0x02, 0x03]),
             Err(DecodeError::BufferUnderrun)
         );
         assert_eq!(
-            <[[u8; 2]; 3]>::decode(&[0x01, 0x02, 0x03, 0x04, 0x05, 0x06, 0x07]),
+            Decoder::decode_tlv::<[[u8; 2]; 3]>(&[0x01, 0x02, 0x03, 0x04, 0x05, 0x06, 0x07]),
             Err(DecodeError::InvalidValue)
         );
 
         let nums: [u32; 2] = [0x0102_0304, 0xAABB_CCDD];
-        let encoded_nums = nums.encode_top_level().unwrap();
+        let encoded_nums = Encoder::encode_tlv(&nums).unwrap();
         assert_eq!(
             encoded_nums,
             [0x01, 0x02, 0x03, 0x04, 0xAA, 0xBB, 0xCC, 0xDD]
         );
-        assert_eq!(<[u32; 2]>::decode(&encoded_nums), Ok(nums));
+        assert_eq!(Decoder::decode_tlv::<[u32; 2]>(&encoded_nums), Ok(nums));
+    }
+
+    #[test]
+    fn test_leaf_rejects_header_list() {
+        assert_eq!(
+            Decoder::decode_header_list::<u8>(&[0x01, 0x01], &[0x42]),
+            Err(DecodeError::InvalidValue)
+        );
+        assert_eq!(
+            Encoder::encode_header_list(&0x42u8),
+            Err(EncodeError::InvalidValue)
+        );
+        assert_eq!(
+            Decoder::decode_header_list::<&[u8]>(&[0x01, 0x01], &[0x42]),
+            Err(DecodeError::InvalidValue)
+        );
+        assert_eq!(
+            Encoder::encode_header_list(&[0x42u8].as_slice()),
+            Err(EncodeError::InvalidValue)
+        );
     }
 }

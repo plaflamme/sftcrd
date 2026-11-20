@@ -1,6 +1,5 @@
-/// Declarative macro to generate a struct and corresponding [`crate::ValueDecoder`] /
-/// [`crate::ValueEncoder`] implementations (or [`crate::HeaderListDecoder`] /
-/// [`crate::HeaderListEncoder`] when marked with `#[header_list]`).
+/// Declarative macro to generate a struct and corresponding [`crate::Decode`] /
+/// [`crate::Encode`] implementations.
 ///
 /// # Examples
 ///
@@ -42,8 +41,8 @@
 /// }
 /// ```
 ///
-/// Paired ISO/IEC 7816-4 header list (`#[header_list]` on the inner struct,
-/// `#[header_list(tpl_tag, val_tag)]` on the enclosing struct's field):
+/// Paired ISO/IEC 7816-4 header list (`#[header_list(tpl_tag, val_tag)]` on the
+/// enclosing struct's field):
 ///
 /// ```
 /// use sftcrd_tlv::{BerLength, BerTag, tlv_struct};
@@ -52,7 +51,6 @@
 ///     #[derive(Debug, PartialEq)]
 ///     #[tag_type(BerTag)]
 ///     #[length(BerLength)]
-///     #[header_list]
 ///     struct KeyFields<'a> {
 ///         #[tag(0x91)]
 ///         exp: &'a [u8],
@@ -85,7 +83,6 @@ macro_rules! tlv_struct {
         $crate::__tlv_parse_attrs!(
             tag_type: [ $crate::U8Tag ],
             length: [ $crate::U8Length ],
-            mode: [ tlv ],
             impl_lt: [ $lt ],
             struct_lt: [ $lt ],
             retained: [],
@@ -103,7 +100,6 @@ macro_rules! tlv_struct {
         $crate::__tlv_parse_attrs!(
             tag_type: [ $crate::U8Tag ],
             length: [ $crate::U8Length ],
-            mode: [ tlv ],
             impl_lt: [ 'a ],
             struct_lt: [],
             retained: [],
@@ -112,14 +108,13 @@ macro_rules! tlv_struct {
     };
 }
 
-/// Internal helper: munches struct attributes (`#[tag_type]`, `#[length]`, `#[header_list]`).
+/// Internal helper: munches struct attributes (`#[tag_type]`, `#[length]`).
 #[doc(hidden)]
 #[macro_export]
 macro_rules! __tlv_parse_attrs {
     (
         tag_type: [ $($tag_ty:tt)* ],
         length: [ $($len:tt)* ],
-        mode: [ $mode:ident ],
         impl_lt: [ $impl_lt:lifetime ],
         struct_lt: [ $($struct_lt:lifetime)? ],
         retained: [ $($retained:tt)* ],
@@ -128,7 +123,6 @@ macro_rules! __tlv_parse_attrs {
         $crate::__tlv_parse_attrs!(
             tag_type: [ $($tag_ty)* ],
             length: [ $len_ty ],
-            mode: [ $mode ],
             impl_lt: [ $impl_lt ],
             struct_lt: [ $($struct_lt)? ],
             retained: [ $($retained)* ],
@@ -139,7 +133,6 @@ macro_rules! __tlv_parse_attrs {
     (
         tag_type: [ $($tag_ty:tt)* ],
         length: [ $($len:tt)* ],
-        mode: [ $mode:ident ],
         impl_lt: [ $impl_lt:lifetime ],
         struct_lt: [ $($struct_lt:lifetime)? ],
         retained: [ $($retained:tt)* ],
@@ -148,7 +141,6 @@ macro_rules! __tlv_parse_attrs {
         $crate::__tlv_parse_attrs!(
             tag_type: [ $new_tag_ty ],
             length: [ $($len)* ],
-            mode: [ $mode ],
             impl_lt: [ $impl_lt ],
             struct_lt: [ $($struct_lt)? ],
             retained: [ $($retained)* ],
@@ -159,27 +151,6 @@ macro_rules! __tlv_parse_attrs {
     (
         tag_type: [ $($tag_ty:tt)* ],
         length: [ $($len:tt)* ],
-        mode: [ $mode:ident ],
-        impl_lt: [ $impl_lt:lifetime ],
-        struct_lt: [ $($struct_lt:lifetime)? ],
-        retained: [ $($retained:tt)* ],
-        input: [ #[header_list] $($rest:tt)* ]
-    ) => {
-        $crate::__tlv_parse_attrs!(
-            tag_type: [ $($tag_ty)* ],
-            length: [ $($len)* ],
-            mode: [ header_list ],
-            impl_lt: [ $impl_lt ],
-            struct_lt: [ $($struct_lt)? ],
-            retained: [ $($retained)* ],
-            input: [ $($rest)* ]
-        );
-    };
-
-    (
-        tag_type: [ $($tag_ty:tt)* ],
-        length: [ $($len:tt)* ],
-        mode: [ $mode:ident ],
         impl_lt: [ $impl_lt:lifetime ],
         struct_lt: [ $($struct_lt:lifetime)? ],
         retained: [ $($retained:tt)* ],
@@ -188,7 +159,6 @@ macro_rules! __tlv_parse_attrs {
         $crate::__tlv_parse_attrs!(
             tag_type: [ $($tag_ty)* ],
             length: [ $($len)* ],
-            mode: [ $mode ],
             impl_lt: [ $impl_lt ],
             struct_lt: [ $($struct_lt)? ],
             retained: [ $($retained)* #[$($attr)*] ],
@@ -199,7 +169,6 @@ macro_rules! __tlv_parse_attrs {
     (
         tag_type: [ $tag_ty:path ],
         length: [ $len_ty:ty ],
-        mode: [ $mode:ident ],
         impl_lt: [ $impl_lt:lifetime ],
         struct_lt: [ $($struct_lt:lifetime)? ],
         retained: [ $($retained:tt)* ],
@@ -208,7 +177,6 @@ macro_rules! __tlv_parse_attrs {
         $crate::__tlv_parse_fields!(
             tag_type: [ $tag_ty ],
             length: [ $len_ty ],
-            mode: [ $mode ],
             impl_lt: [ $impl_lt ],
             struct_lt: [ $($struct_lt)? ],
             header: [ $($retained)* $vis struct $name $(<$struct_lt>)? ],
@@ -227,7 +195,6 @@ macro_rules! __tlv_parse_fields {
     (
         tag_type: [ $tag_ty:path ],
         length: [ $len_ty:ty ],
-        mode: [ $mode:ident ],
         impl_lt: [ $impl_lt:lifetime ],
         struct_lt: [ $($struct_lt:lifetime)? ],
         header: [ $($header:tt)* ],
@@ -243,7 +210,6 @@ macro_rules! __tlv_parse_fields {
         $crate::__tlv_parse_fields!(
             tag_type: [ $tag_ty ],
             length: [ $len_ty ],
-            mode: [ $mode ],
             impl_lt: [ $impl_lt ],
             struct_lt: [ $($struct_lt)? ],
             header: [ $($header)* ],
@@ -260,7 +226,6 @@ macro_rules! __tlv_parse_fields {
     (
         tag_type: [ $tag_ty:path ],
         length: [ $len_ty:ty ],
-        mode: [ $mode:ident ],
         impl_lt: [ $impl_lt:lifetime ],
         struct_lt: [ $($struct_lt:lifetime)? ],
         header: [ $($header:tt)* ],
@@ -276,7 +241,6 @@ macro_rules! __tlv_parse_fields {
         $crate::__tlv_parse_fields!(
             tag_type: [ $tag_ty ],
             length: [ $len_ty ],
-            mode: [ $mode ],
             impl_lt: [ $impl_lt ],
             struct_lt: [ $($struct_lt)? ],
             header: [ $($header)* ],
@@ -293,7 +257,6 @@ macro_rules! __tlv_parse_fields {
     (
         tag_type: [ $tag_ty:path ],
         length: [ $len_ty:ty ],
-        mode: [ $mode:ident ],
         impl_lt: [ $impl_lt:lifetime ],
         struct_lt: [ $($struct_lt:lifetime)? ],
         header: [ $($header:tt)* ],
@@ -309,7 +272,6 @@ macro_rules! __tlv_parse_fields {
         $crate::__tlv_parse_fields!(
             tag_type: [ $tag_ty ],
             length: [ $len_ty ],
-            mode: [ $mode ],
             impl_lt: [ $impl_lt ],
             struct_lt: [ $($struct_lt)? ],
             header: [ $($header)* ],
@@ -326,7 +288,6 @@ macro_rules! __tlv_parse_fields {
     (
         tag_type: [ $tag_ty:path ],
         length: [ $len_ty:ty ],
-        mode: [ $mode:ident ],
         impl_lt: [ $impl_lt:lifetime ],
         struct_lt: [ $($struct_lt:lifetime)? ],
         header: [ $($header:tt)* ],
@@ -342,7 +303,6 @@ macro_rules! __tlv_parse_fields {
         $crate::__tlv_parse_fields!(
             tag_type: [ $tag_ty ],
             length: [ $len_ty ],
-            mode: [ $mode ],
             impl_lt: [ $impl_lt ],
             struct_lt: [ $($struct_lt)? ],
             header: [ $($header)* ],
@@ -355,11 +315,10 @@ macro_rules! __tlv_parse_fields {
         );
     };
 
-    // Base Case: emit struct definition and dispatch to the selected codec generator
+    // Base Case: emit struct definition and codec implementations
     (
         tag_type: [ $tag_ty:path ],
         length: [ $len_ty:ty ],
-        mode: [ $mode:ident ],
         impl_lt: [ $impl_lt:lifetime ],
         struct_lt: [ $($struct_lt:lifetime)? ],
         header: [ $(#[$meta:meta])* $vis:vis struct $name:ident $(<$lt_header:lifetime>)? ],
@@ -383,8 +342,7 @@ macro_rules! __tlv_parse_fields {
             )*
         }
 
-        $crate::__tlv_emit_impls!(
-            mode: [ $mode ],
+        $crate::__tlv_impl_codec!(
             tag_type: [ $tag_ty ],
             length: [ $len_ty ],
             impl_lt: [ $impl_lt ],
@@ -396,53 +354,7 @@ macro_rules! __tlv_parse_fields {
     };
 }
 
-/// Internal helper: dispatches to `__tlv_impl_codec!` or `__tlv_impl_header_list!`.
-#[doc(hidden)]
-#[macro_export]
-macro_rules! __tlv_emit_impls {
-    (
-        mode: [ tlv ],
-        tag_type: [ $tag_ty:path ],
-        length: [ $len_ty:ty ],
-        impl_lt: [ $impl_lt:lifetime ],
-        struct_lt: [ $($struct_lt:lifetime)? ],
-        name: [ $name:ident ],
-        tlv_fields: [ $($tlv:tt)* ],
-        hl_fields: [ $($hl:tt)* ]
-    ) => {
-        $crate::__tlv_impl_codec!(
-            tag_type: [ $tag_ty ],
-            length: [ $len_ty ],
-            impl_lt: [ $impl_lt ],
-            struct_lt: [ $($struct_lt)? ],
-            name: [ $name ],
-            tlv_fields: [ $($tlv)* ],
-            hl_fields: [ $($hl)* ]
-        );
-    };
-
-    (
-        mode: [ header_list ],
-        tag_type: [ $tag_ty:path ],
-        length: [ $len_ty:ty ],
-        impl_lt: [ $impl_lt:lifetime ],
-        struct_lt: [ $($struct_lt:lifetime)? ],
-        name: [ $name:ident ],
-        tlv_fields: [ $($tlv:tt)* ],
-        hl_fields: []
-    ) => {
-        $crate::__tlv_impl_header_list!(
-            tag_type: [ $tag_ty ],
-            length: [ $len_ty ],
-            impl_lt: [ $impl_lt ],
-            struct_lt: [ $($struct_lt)? ],
-            name: [ $name ],
-            tlv_fields: [ $($tlv)* ]
-        );
-    };
-}
-
-/// Internal helper: implements `ValueDecoder` and `ValueEncoder` for `tlv_struct!`.
+/// Internal helper: implements `Decode` and `Encode` for `tlv_struct!`.
 #[doc(hidden)]
 #[macro_export]
 macro_rules! __tlv_impl_codec {
@@ -455,15 +367,15 @@ macro_rules! __tlv_impl_codec {
         tlv_fields: [ $( ( $kind:ident, $tag:expr, $tlv_name:ident, $tlv_ty:ty ) )* ],
         hl_fields: [ $( ( $tpl_tag:expr, $val_tag:expr, $hl_name:ident, $hl_ty:ty ) )* ]
     ) => {
-        impl <$impl_lt> $crate::ValueDecoder<$impl_lt> for $name $(<$struct_lt>)? {
-            fn decode(input: &$impl_lt [u8]) -> Result<Self, $crate::DecodeError> {
+        impl <$impl_lt> $crate::Decode<$impl_lt> for $name $(<$struct_lt>)? {
+            fn decode(decoder: $crate::Decoder<$impl_lt>) -> Result<Self, $crate::DecodeError> {
                 $( $crate::__tlv_field!(@init $kind, $tlv_name, $tlv_ty); )*
                 $(
                     let mut $hl_name: (Option<&$impl_lt [u8]>, Option<&$impl_lt [u8]>) =
                         (None, None);
                 )*
 
-                for entry in $crate::Decoder::new(input).into_iter_tags::<$tag_ty, $len_ty>() {
+                for entry in decoder.into_iter_tags::<$tag_ty, $len_ty>() {
                     let (tag, value_bytes) = entry?;
                     match tag {
                         $(
@@ -496,124 +408,28 @@ macro_rules! __tlv_impl_codec {
                             let (tpl, vals) = $hl_name;
                             let tpl = tpl.ok_or($crate::DecodeError::MissingRequiredField)?;
                             let vals = vals.ok_or($crate::DecodeError::MissingRequiredField)?;
-                            <$hl_ty as $crate::HeaderListDecoder>::decode_header_list(tpl, vals)?
+                            $crate::Decoder::decode_header_list::<$hl_ty>(tpl, vals)?
                         },
                     )*
                 })
             }
         }
 
-        impl <$impl_lt> $crate::ValueEncoder for $name $(<$struct_lt>)? {
-            fn length(&self) -> usize {
-                let mut length = 0;
-                $(
-                    for value in $crate::__tlv_field!(@as_slice $kind, &self.$tlv_name) {
-                        let value_len = <$tlv_ty as $crate::ValueEncoder>::length(value);
-                        let length_len = <$len_ty as $crate::Length>::length(value_len) as usize;
-                        let tag_length = $crate::Tag::length(&$tag_ty($tag));
-                        length += tag_length + length_len + value_len;
-                    }
-                )*
-                $(
-                    let (tpl_len, val_len) =
-                        <$hl_ty as $crate::HeaderListEncoder>::header_list_lengths(&self.$hl_name);
-                    length += $crate::Tag::length(&$tag_ty($tpl_tag))
-                        + <$len_ty as $crate::Length>::length(tpl_len) as usize
-                        + tpl_len
-                        + $crate::Tag::length(&$tag_ty($val_tag))
-                        + <$len_ty as $crate::Length>::length(val_len) as usize
-                        + val_len;
-                )*
-                length
-            }
-
-            fn encode(&self, buf: &mut [u8]) -> Result<(), $crate::EncodeError> {
-                let mut encoder = $crate::Encoder::new(buf);
+        impl <$impl_lt> $crate::Encode for $name $(<$struct_lt>)? {
+            fn encode(&self, encoder: &mut $crate::Encoder<'_>) -> Result<(), $crate::EncodeError> {
                 $(
                     for value in $crate::__tlv_field!(@as_slice $kind, &self.$tlv_name) {
                         encoder.write_tlv::<$tag_ty, $len_ty, $tlv_ty>(&$tag_ty($tag), value)?;
                     }
                 )*
                 $(
-                    let (tpl, vals) =
-                        <$hl_ty as $crate::HeaderListEncoder>::encode_header_list(&self.$hl_name)?;
-                    encoder.write_tlv::<$tag_ty, $len_ty, Vec<u8>>(&$tag_ty($tpl_tag), &tpl)?;
-                    encoder.write_tlv::<$tag_ty, $len_ty, Vec<u8>>(&$tag_ty($val_tag), &vals)?;
+                    encoder.write_header_list::<$tag_ty, $len_ty, $hl_ty>(
+                        &$tag_ty($tpl_tag),
+                        &$tag_ty($val_tag),
+                        &self.$hl_name,
+                    )?;
                 )*
                 Ok(())
-            }
-        }
-    };
-}
-
-/// Internal helper: implements `HeaderListDecoder` and `HeaderListEncoder` for
-/// structs tagged with `#[header_list]`.
-#[doc(hidden)]
-#[macro_export]
-macro_rules! __tlv_impl_header_list {
-    (
-        tag_type: [ $tag_ty:path ],
-        length: [ $len_ty:ty ],
-        impl_lt: [ $impl_lt:lifetime ],
-        struct_lt: [ $($struct_lt:lifetime)? ],
-        name: [ $name:ident ],
-        tlv_fields: [ $( ( $kind:ident, $tag:expr, $tlv_name:ident, $tlv_ty:ty ) )* ]
-    ) => {
-        impl <$impl_lt> $crate::HeaderListDecoder<$impl_lt> for $name $(<$struct_lt>)? {
-            fn decode_header_list(
-                template: &$impl_lt [u8],
-                values: &$impl_lt [u8],
-            ) -> Result<Self, $crate::DecodeError> {
-                $( $crate::__tlv_field!(@init $kind, $tlv_name, $tlv_ty); )*
-
-                for entry in $crate::decode_header_list::<$tag_ty, $len_ty>(template, values) {
-                    let (tag, value_bytes) = entry?;
-                    match tag {
-                        $(
-                            $tag_ty($tag) => {
-                                $crate::__tlv_field!(@decode $kind, $tlv_name, $tlv_ty, value_bytes);
-                            }
-                        )*
-                        _ => return Err($crate::DecodeError::InvalidTag),
-                    }
-                }
-
-                Ok(Self {
-                    $( $tlv_name: $crate::__tlv_field!(@unwrap $kind, $tlv_name), )*
-                })
-            }
-        }
-
-        impl <$impl_lt> $crate::HeaderListEncoder for $name $(<$struct_lt>)? {
-            fn header_list_lengths(&self) -> (usize, usize) {
-                let mut tpl_len = 0;
-                let mut val_len = 0;
-                $(
-                    for value in $crate::__tlv_field!(@as_slice $kind, &self.$tlv_name) {
-                        let v_len = <$tlv_ty as $crate::ValueEncoder>::length(value);
-                        let l_len = <$len_ty as $crate::Length>::length(v_len) as usize;
-                        let t_len = $crate::Tag::length(&$tag_ty($tag));
-                        tpl_len += t_len + l_len;
-                        val_len += v_len;
-                    }
-                )*
-                (tpl_len, val_len)
-            }
-
-            fn encode_header_list(&self) -> Result<(Vec<u8>, Vec<u8>), $crate::EncodeError> {
-                let (tpl_len, val_len) = self.header_list_lengths();
-                let mut template = vec![0u8; tpl_len];
-                let mut values = vec![0u8; val_len];
-                let mut tpl_enc = $crate::Encoder::new(&mut template);
-                let mut val_enc = $crate::Encoder::new(&mut values);
-                $(
-                    for value in $crate::__tlv_field!(@as_slice $kind, &self.$tlv_name) {
-                        let v_len = <$tlv_ty as $crate::ValueEncoder>::length(value);
-                        tpl_enc.write_tag_length::<$tag_ty, $len_ty>(&$tag_ty($tag), v_len)?;
-                        val_enc.write_value::<$tlv_ty>(value)?;
-                    }
-                )*
-                Ok((template, values))
             }
         }
     };
@@ -631,13 +447,13 @@ macro_rules! __tlv_field {
     };
 
     (@decode rep, $field_name:ident, $parse_ty:ty, $value_bytes:ident) => {
-        $field_name.push(<$parse_ty as $crate::ValueDecoder>::decode($value_bytes)?);
+        $field_name.push($crate::Decoder::decode_tlv::<$parse_ty>($value_bytes)?);
     };
     (@decode $kind:ident, $field_name:ident, $parse_ty:ty, $value_bytes:ident) => {
         if $field_name.is_some() {
             return Err($crate::DecodeError::DuplicateTag);
         }
-        $field_name = Some(<$parse_ty as $crate::ValueDecoder>::decode($value_bytes)?);
+        $field_name = Some($crate::Decoder::decode_tlv::<$parse_ty>($value_bytes)?);
     };
 
     (@unwrap req, $field_name:ident) => {
@@ -663,10 +479,7 @@ macro_rules! __tlv_field {
 
 #[cfg(test)]
 mod tests {
-    use crate::{
-        BerLength, BerTag, DecodeError, HeaderListDecoder, HeaderListEncoder, U16Tag, ValueDecoder,
-        ValueEncoder,
-    };
+    use crate::{BerLength, BerTag, DecodeError, Decoder, Encode, Encoder, U16Tag};
 
     #[test]
     fn test_tlv_struct_default() {
@@ -682,7 +495,7 @@ mod tests {
             }
         }
         assert_eq!(
-            Packet::decode(&[0x01, 0x01, 0xFF, 0x02, 0x02, 0xFF, 0xFE]),
+            Decoder::decode_tlv::<Packet>(&[0x01, 0x01, 0xFF, 0x02, 0x02, 0xFF, 0xFE]),
             Ok(Packet {
                 version: 0xFF,
                 payload_len: 0xFFFE,
@@ -690,39 +503,39 @@ mod tests {
             })
         );
         assert_eq!(
-            Packet::decode(&[0x01, 0x01, 0xFF, 0x02, 0x02, 0xFF, 0xFE, 0x04, 0x00]),
+            Decoder::decode_tlv::<Packet>(&[0x01, 0x01, 0xFF, 0x02, 0x02, 0xFF, 0xFE, 0x04, 0x00]),
             Err(DecodeError::InvalidTag)
         );
         assert_eq!(
-            Packet::decode(&[0x01, 0x01, 0xFF, 0x02, 0x02, 0xFF, 0xFE, 0x01, 0x01, 0xFF]),
+            Decoder::decode_tlv::<Packet>(&[
+                0x01, 0x01, 0xFF, 0x02, 0x02, 0xFF, 0xFE, 0x01, 0x01, 0xFF
+            ]),
             Err(DecodeError::DuplicateTag)
         );
         assert_eq!(
-            Packet::decode(&[0x01, 0x01]),
+            Decoder::decode_tlv::<Packet>(&[0x01, 0x01]),
             Err(DecodeError::BufferUnderrun)
         );
         assert_eq!(
-            Packet::decode(&[0x01, 0x01, 0xFF]),
+            Decoder::decode_tlv::<Packet>(&[0x01, 0x01, 0xFF]),
             Err(DecodeError::MissingRequiredField)
         );
 
         // encode
         assert_eq!(
-            Packet {
+            Encoder::encode_tlv(&Packet {
                 version: 0xFF,
                 payload_len: 0xFFFE,
                 opt: None
-            }
-            .encode_top_level(),
+            }),
             Ok(vec![0x01, 0x01, 0xFF, 0x02, 0x02, 0xFF, 0xFE])
         );
         assert_eq!(
-            Packet {
+            Encoder::encode_tlv(&Packet {
                 version: 0xFF,
                 payload_len: 0xFFFE,
                 opt: Some(0xFDFC)
-            }
-            .encode_top_level(),
+            }),
             Ok(vec![
                 0x01, 0x01, 0xFF, 0x02, 0x02, 0xFF, 0xFE, 0x03, 0x02, 0xFD, 0xFC
             ])
@@ -742,18 +555,17 @@ mod tests {
             }
         }
         assert_eq!(
-            Packet::decode(&[0x01, 0x01, 0x01, 0xFF, 0x01, 0x02, 0x01, 0xFE]),
+            Decoder::decode_tlv::<Packet>(&[0x01, 0x01, 0x01, 0xFF, 0x01, 0x02, 0x01, 0xFE]),
             Ok(Packet {
                 version: 0xFF,
                 payload_len: 0xFE,
             })
         );
         assert_eq!(
-            Packet {
+            Encoder::encode_tlv(&Packet {
                 version: 0xFF,
                 payload_len: 0xFE,
-            }
-            .encode_top_level(),
+            }),
             Ok(vec![0x01, 0x01, 0x01, 0xFF, 0x01, 0x02, 0x01, 0xFE])
         );
     }
@@ -788,11 +600,11 @@ mod tests {
             key: Some(vec![0x86, 0x00]),
             fingerprints: Some(&[0xAA]),
         };
-        assert_eq!(Packet::decode(&bytes), Ok(packet));
+        assert_eq!(Decoder::decode_tlv::<Packet>(&bytes), Ok(packet));
 
         // decoding in a different order works
         assert_eq!(
-            Packet::decode(&[0x5F, 0x52, 0x01, 0x00, 0x4F, 0x01, 0xD2]),
+            Decoder::decode_tlv::<Packet>(&[0x5F, 0x52, 0x01, 0x00, 0x4F, 0x01, 0xD2]),
             Ok(Packet {
                 aid: &[0xD2],
                 historical: Some(&[0x00]),
@@ -808,9 +620,9 @@ mod tests {
             key: Some(vec![0x86, 0x00]),
             fingerprints: Some(&[0xAA]),
         };
-        assert_eq!(packet.length(), 16);
+        assert_eq!(packet.encoded_length(), Ok(16));
         assert_eq!(
-            packet.encode_top_level(),
+            Encoder::encode_tlv(&packet),
             Ok(vec![
                 0x4F, 0x02, 0xD2, 0x76, 0x5F, 0x52, 0x01, 0x00, 0x7F, 0x49, 0x02, 0x86, 0x00, 0xC5,
                 0x01, 0xAA,
@@ -819,17 +631,17 @@ mod tests {
 
         // unknown 2-byte tag
         assert_eq!(
-            Packet::decode(&[0x4F, 0x00, 0x5F, 0x2D, 0x00]),
+            Decoder::decode_tlv::<Packet>(&[0x4F, 0x00, 0x5F, 0x2D, 0x00]),
             Err(DecodeError::InvalidTag)
         );
         // duplicate 2-byte tag
         assert_eq!(
-            Packet::decode(&[0x4F, 0x00, 0x5F, 0x52, 0x00, 0x5F, 0x52, 0x00]),
+            Decoder::decode_tlv::<Packet>(&[0x4F, 0x00, 0x5F, 0x52, 0x00, 0x5F, 0x52, 0x00]),
             Err(DecodeError::DuplicateTag)
         );
         // truncated multi-byte tag
         assert_eq!(
-            Packet::decode(&[0x4F, 0x00, 0x5F]),
+            Decoder::decode_tlv::<Packet>(&[0x4F, 0x00, 0x5F]),
             Err(DecodeError::BufferUnderrun)
         );
     }
@@ -847,21 +659,21 @@ mod tests {
             }
         }
         assert_eq!(
-            Packet::decode(&[0x01, 0x01, 0xFF, 0x02, 0x81, 0x01, 0xFE]),
+            Decoder::decode_tlv::<Packet>(&[0x01, 0x01, 0xFF, 0x02, 0x81, 0x01, 0xFE]),
             Ok(Packet {
                 version: 0xFF,
                 payload_len: vec![0xFE],
             })
         );
         assert_eq!(
-            Packet::decode(&[0x01, 0x01, 0xFF, 0x02, 0x82, 0x00, 0x01, 0xFE]),
+            Decoder::decode_tlv::<Packet>(&[0x01, 0x01, 0xFF, 0x02, 0x82, 0x00, 0x01, 0xFE]),
             Ok(Packet {
                 version: 0xFF,
                 payload_len: vec![0xFE],
             })
         );
         assert_eq!(
-            Packet::decode(&[0x01, 0x01, 0xFF, 0x02, 0x80, 0xFE, 0x00, 0x00]),
+            Decoder::decode_tlv::<Packet>(&[0x01, 0x01, 0xFF, 0x02, 0x80, 0xFE, 0x00, 0x00]),
             Err(DecodeError::InvalidLength)
         );
     }
@@ -879,21 +691,21 @@ mod tests {
             }
         }
         assert_eq!(
-            Packet::decode(&[0x01, 0x01, 0xFF, 0x02, 0x81, 0x01, 0xFE]),
+            Decoder::decode_tlv::<Packet>(&[0x01, 0x01, 0xFF, 0x02, 0x81, 0x01, 0xFE]),
             Ok(Packet {
                 version: 0xFF,
                 payload_len: &[0xFE],
             })
         );
         assert_eq!(
-            Packet::decode(&[0x01, 0x01, 0xFF, 0x02, 0x82, 0x00, 0x01, 0xFE]),
+            Decoder::decode_tlv::<Packet>(&[0x01, 0x01, 0xFF, 0x02, 0x82, 0x00, 0x01, 0xFE]),
             Ok(Packet {
                 version: 0xFF,
                 payload_len: &[0xFE],
             })
         );
         assert_eq!(
-            Packet::decode(&[0x01, 0x01, 0xFF, 0x02, 0x80, 0xFE, 0x00, 0x00]),
+            Decoder::decode_tlv::<Packet>(&[0x01, 0x01, 0xFF, 0x02, 0x80, 0xFE, 0x00, 0x00]),
             Err(DecodeError::InvalidLength)
         );
     }
@@ -916,7 +728,7 @@ mod tests {
             sig: vec![vec![0xAA], vec![0xBB, 0xCC]],
             dec: vec![0x0102, 0x0304],
         };
-        let encoded = packet.encode_top_level().unwrap();
+        let encoded = Encoder::encode_tlv(&packet).unwrap();
         assert_eq!(
             encoded,
             [
@@ -924,9 +736,9 @@ mod tests {
                 0x04
             ]
         );
-        assert_eq!(RepeatedPacket::decode(&encoded), Ok(packet));
+        assert_eq!(Decoder::decode_tlv::<RepeatedPacket>(&encoded), Ok(packet));
         assert_eq!(
-            RepeatedPacket::decode(&[]),
+            Decoder::decode_tlv::<RepeatedPacket>(&[]),
             Ok(RepeatedPacket {
                 sig: Vec::new(),
                 dec: Vec::new(),
@@ -940,7 +752,6 @@ mod tests {
             #[derive(Debug, PartialEq)]
             #[tag_type(BerTag)]
             #[length(BerLength)]
-            #[header_list]
             struct KeyHeaderList<'a> {
                 #[tag(0x91)]
                 e: &'a [u8],
@@ -971,7 +782,7 @@ mod tests {
                 n: None,
             },
         };
-        let encoded = outer.encode_top_level().unwrap();
+        let encoded = Encoder::encode_tlv(&outer).unwrap();
         let mut expected_vals = vec![0x01, 0x00, 0x01];
         expected_vals.extend_from_slice(&[0xAA; 128]);
         let mut expected_encoded = vec![
@@ -980,37 +791,43 @@ mod tests {
             0x5F, 0x48, 0x81, 0x83, // values header (3 + 128 = 131 = 0x83)
         ];
         expected_encoded.extend_from_slice(&expected_vals);
-        assert_eq!(outer.length(), expected_encoded.len());
+        assert_eq!(outer.encoded_length(), Ok(expected_encoded.len()));
         assert_eq!(encoded, expected_encoded);
-        assert_eq!(OuterHeaderList::decode(&encoded), Ok(outer));
+        assert_eq!(
+            Decoder::decode_tlv::<OuterHeaderList>(&encoded),
+            Ok(outer)
+        );
 
-        // Direct HeaderListDecoder / HeaderListEncoder
-        let (tpl, vals) = KeyHeaderList {
+        // Direct Decoder::decode_header_list / Encoder::encode_header_list
+        let key = KeyHeaderList {
             e: &[0x01, 0x00, 0x01],
             p: &[0xAA; 128],
             n: None,
-        }
-        .encode_header_list()
-        .unwrap();
+        };
+        let (tpl, vals) = Encoder::encode_header_list(&key).unwrap();
         assert_eq!(tpl, [0x91, 0x03, 0x92, 0x81, 0x80]);
         assert_eq!(vals, expected_vals);
+
+        // Same struct also decodes/encodes as standard TLV
+        let tlv_encoded = Encoder::encode_tlv(&key).unwrap();
+        assert_eq!(Decoder::decode_tlv::<KeyHeaderList>(&tlv_encoded), Ok(key));
 
         let mut extra = vals.clone();
         extra.push(0x00);
         assert_eq!(
-            KeyHeaderList::decode_header_list(&tpl, &extra),
+            Decoder::decode_header_list::<KeyHeaderList>(&tpl, &extra),
             Err(DecodeError::InvalidLength)
         );
         assert_eq!(
-            KeyHeaderList::decode_header_list(&tpl, &vals[..10]),
+            Decoder::decode_header_list::<KeyHeaderList>(&tpl, &vals[..10]),
             Err(DecodeError::BufferUnderrun)
         );
         assert_eq!(
-            KeyHeaderList::decode_header_list(&[0x99, 0x01], &[0x00]),
+            Decoder::decode_header_list::<KeyHeaderList>(&[0x99, 0x01], &[0x00]),
             Err(DecodeError::InvalidTag)
         );
         assert_eq!(
-            KeyHeaderList::decode_header_list(&[0x91, 0x01], &[0x03]),
+            Decoder::decode_header_list::<KeyHeaderList>(&[0x91, 0x01], &[0x03]),
             Err(DecodeError::MissingRequiredField)
         );
     }
