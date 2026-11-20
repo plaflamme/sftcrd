@@ -29,17 +29,21 @@ use crate::piv::{PinPolicy, PivKeyAlg, TouchPolicy};
 use crate::PivApplet;
 use crate::Response;
 use crate::slot::{KeyAlg, KeyMaterial, KeyOrigin, PublicKey, SlotKey, import_piv_key};
-use sftcrd_tlv::{BerLength, Decode, Encode, tlv_struct};
+use sftcrd_tlv::{BerLength, Decode, Encode, tlv_enum, tlv_struct};
 
-tlv_struct! {
+tlv_enum! {
     #[length(BerLength)]
-    pub(crate) struct PublicKeyResponse {
-        #[tag(0x86)]
-        point: Option<Vec<u8>>,
-        #[tag(0x81)]
-        n: Option<Vec<u8>>,
-        #[tag(0x82)]
-        e: Option<Vec<u8>>,
+    pub(crate) enum PublicKeyResponse {
+        Ec {
+            #[tag(0x86)]
+            point: Vec<u8>,
+        },
+        Rsa {
+            #[tag(0x81)]
+            n: Vec<u8>,
+            #[tag(0x82)]
+            e: Vec<u8>,
+        },
     }
 }
 
@@ -55,16 +59,8 @@ tlv_struct! {
 impl From<PublicKey> for PublicKeyResponse {
     fn from(value: PublicKey) -> Self {
         match value {
-            PublicKey::Point(pt) => PublicKeyResponse {
-                point: Some(pt),
-                n: None,
-                e: None,
-            },
-            PublicKey::Rsa { n, e } => PublicKeyResponse {
-                point: None,
-                n: Some(n),
-                e: Some(e),
-            },
+            PublicKey::Point(point) => Self::Ec { point },
+            PublicKey::Rsa { n, e } => Self::Rsa { n, e },
         }
     }
 }
@@ -188,12 +184,13 @@ impl PivApplet {
             return iso7816::Status::IncorrectDataParameter.into();
         };
 
+        let (pin_policy, touch_policy) = import.policies();
         self.commit_slot_key(
             index,
             slot_key,
             KeyOrigin::Imported,
-            import.pin_policy,
-            import.touch_policy,
+            pin_policy,
+            touch_policy,
         );
         iso7816::Status::Success.into()
     }
@@ -264,56 +261,61 @@ tlv_struct! {
     }
 }
 
-tlv_struct! {
-    struct ImportTemplate<'a> {
-        #[tag(0x01)]
-        p: Option<&'a [u8]>,
-        #[tag(0x02)]
-        q: Option<&'a [u8]>,
-        #[tag(0x03)]
-        dp: Option<&'a [u8]>,
-        #[tag(0x04)]
-        dq: Option<&'a [u8]>,
-        #[tag(0x05)]
-        n: Option<&'a [u8]>,
-        #[tag(0x06)]
-        scalar: Option<&'a [u8]>,
-        #[tag(0xAA)]
-        pin_policy: Option<Defaultable<PinPolicy>>,
-        #[tag(0xAB)]
-        touch_policy: Option<Defaultable<TouchPolicy>>,
+tlv_enum! {
+    enum ImportTemplate<'a> {
+        Rsa {
+            #[tag(0x01)]
+            p: &'a [u8],
+            #[tag(0x02)]
+            q: &'a [u8],
+            #[tag(0x03)]
+            dp: &'a [u8],
+            #[tag(0x04)]
+            dq: &'a [u8],
+            #[tag(0x05)]
+            n: &'a [u8],
+            #[tag(0xAA)]
+            pin_policy: Option<Defaultable<PinPolicy>>,
+            #[tag(0xAB)]
+            touch_policy: Option<Defaultable<TouchPolicy>>,
+        },
+        Ec {
+            #[tag(0x06)]
+            scalar: &'a [u8],
+            #[tag(0xAA)]
+            pin_policy: Option<Defaultable<PinPolicy>>,
+            #[tag(0xAB)]
+            touch_policy: Option<Defaultable<TouchPolicy>>,
+        },
     }
 }
 
-impl ImportTemplate<'_> {
-    fn key_material(&self, key_alg: KeyAlg) -> Result<KeyMaterial<'_>, ()> {
-        let key_material = if matches!(key_alg, KeyAlg::Rsa(_)) {
-            // The EC scalar must not sneak in alongside the CRT set.
-            if self.scalar.is_some() {
-                return Err(());
+impl<'a> ImportTemplate<'a> {
+    fn policies(&self) -> (Option<Defaultable<PinPolicy>>, Option<Defaultable<TouchPolicy>>) {
+        match self {
+            Self::Rsa {
+                pin_policy,
+                touch_policy,
+                ..
             }
-            match (self.p, self.q, self.dp, self.dq, self.n) {
-                (Some(p), Some(q), Some(dp), Some(dq), Some(n)) => {
-                    KeyMaterial::Rsa { p, q, dp, dq, n }
-                }
-                _ => return Err(()),
+            | Self::Ec {
+                pin_policy,
+                touch_policy,
+                ..
+            } => (*pin_policy, *touch_policy),
+        }
+    }
+
+    fn key_material(&self, key_alg: KeyAlg) -> Result<KeyMaterial<'a>, ()> {
+        match (self, key_alg) {
+            (Self::Rsa { p, q, dp, dq, n, .. }, KeyAlg::Rsa(_)) => {
+                Ok(KeyMaterial::Rsa { p, q, dp, dq, n })
             }
-        } else {
-            // The RSA components must not sneak in alongside the scalar.
-            if self.p.is_some()
-                || self.q.is_some()
-                || self.dp.is_some()
-                || self.dq.is_some()
-                || self.n.is_some()
-            {
-                return Err(());
+            (Self::Ec { scalar, .. }, alg) if !matches!(alg, KeyAlg::Rsa(_)) => {
+                Ok(KeyMaterial::Scalar(scalar))
             }
-            let Some(scalar) = self.scalar else {
-                return Err(());
-            };
-            KeyMaterial::Scalar(scalar)
-        };
-        Ok(key_material)
+            _ => Err(()),
+        }
     }
 }
 

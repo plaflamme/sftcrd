@@ -2,7 +2,7 @@
 
 use iso7816::Status;
 use sftcrd_apdu::CommandView;
-use sftcrd_tlv::{BerLength, BerTag, Decode, Encode, tlv_struct};
+use sftcrd_tlv::{BerLength, BerTag, Decode, Encode, tlv_enum, tlv_struct};
 
 use crate::{
     PgpApplet, Response,
@@ -11,16 +11,20 @@ use crate::{
     slot::{PublicKey as SlotPublicKey, RsaBits, SlotAlg, SlotKey, key_error_to_status},
 };
 
-tlv_struct! {
+tlv_enum! {
     #[tag_type(BerTag)]
     #[length(BerLength)]
-    struct PublicKeyTemplate {
-        #[tag(0x86)]
-        point: Option<Vec<u8>>,
-        #[tag(0x81)]
-        modulus: Option<Vec<u8>>,
-        #[tag(0x82)]
-        exponent: Option<Vec<u8>>,
+    enum PublicKeyTemplate {
+        Ec {
+            #[tag(0x86)]
+            point: Vec<u8>,
+        },
+        Rsa {
+            #[tag(0x81)]
+            modulus: Vec<u8>,
+            #[tag(0x82)]
+            exponent: Vec<u8>,
+        },
     }
 }
 
@@ -36,15 +40,10 @@ tlv_struct! {
 impl From<SlotPublicKey> for PublicKeyTemplate {
     fn from(value: SlotPublicKey) -> Self {
         match value {
-            SlotPublicKey::Point(pt) => Self {
-                point: Some(pt),
-                modulus: None,
-                exponent: None,
-            },
-            SlotPublicKey::Rsa { n, e } => Self {
-                point: None,
-                modulus: Some(n),
-                exponent: Some(e),
+            SlotPublicKey::Point(point) => Self::Ec { point },
+            SlotPublicKey::Rsa { n, e } => Self::Rsa {
+                modulus: n,
+                exponent: e,
             },
         }
     }
@@ -58,29 +57,35 @@ fn encode_public_key(key: &SlotKey) -> Result<Vec<u8>, Status> {
     .map_err(|_| Status::MemoryFailure)
 }
 
-tlv_struct! {
+tlv_enum! {
     #[tag_type(BerTag)]
     #[length(BerLength)]
-    struct ControlReferenceTemplate<'a> {
-        #[tag(0xB6)]
-        sig: Option<&'a [u8]>,
-        #[tag(0xB8)]
-        dec: Option<&'a [u8]>,
-        #[tag(0xA4)]
-        aut: Option<&'a [u8]>,
+    enum ControlReferenceTemplate<'a> {
+        Sig {
+            #[tag(0xB6)]
+            value: &'a [u8],
+        },
+        Dec {
+            #[tag(0xB8)]
+            value: &'a [u8],
+        },
+        Aut {
+            #[tag(0xA4)]
+            value: &'a [u8],
+        },
     }
 }
 
 tlv_struct! {
     #[tag_type(BerTag)]
     #[length(BerLength)]
-    struct KeyImportFields<'a> {
+    struct RsaImportFields<'a> {
         #[tag(0x91)]
-        exp: Option<&'a [u8]>,
+        exp: &'a [u8],
         #[tag(0x92)]
-        prime_p_or_scalar: &'a [u8],
+        prime_p: &'a [u8],
         #[tag(0x93)]
-        prime_q: Option<&'a [u8]>,
+        prime_q: &'a [u8],
         #[tag(0x94)]
         crt_u: Option<&'a [u8]>,
         #[tag(0x95)]
@@ -89,23 +94,45 @@ tlv_struct! {
         exp_q: Option<&'a [u8]>,
         #[tag(0x97)]
         modulus: Option<&'a [u8]>,
-        #[tag(0x99)]
-        ecc_public: Option<&'a [u8]>,
     }
 }
 
-tlv_struct! {
+tlv_enum! {
     #[tag_type(BerTag)]
     #[length(BerLength)]
-    struct ExtendedHeaderList<'a> {
-        #[tag(0xB6)]
-        sig: Option<&'a [u8]>,
-        #[tag(0xB8)]
-        dec: Option<&'a [u8]>,
-        #[tag(0xA4)]
-        aut: Option<&'a [u8]>,
-        #[header_list(0x7F48, 0x5F48)]
-        fields: KeyImportFields<'a>,
+    enum KeyImportFields<'a> {
+        Rsa(RsaImportFields<'a>),
+        Ecc {
+            #[tag(0x92)]
+            scalar: &'a [u8],
+            #[tag(0x99)]
+            public: Option<&'a [u8]>,
+        },
+    }
+}
+
+tlv_enum! {
+    #[tag_type(BerTag)]
+    #[length(BerLength)]
+    enum ExtendedHeaderList<'a> {
+        Sig {
+            #[tag(0xB6)]
+            crt: &'a [u8],
+            #[header_list(0x7F48, 0x5F48)]
+            fields: KeyImportFields<'a>,
+        },
+        Dec {
+            #[tag(0xB8)]
+            crt: &'a [u8],
+            #[header_list(0x7F48, 0x5F48)]
+            fields: KeyImportFields<'a>,
+        },
+        Aut {
+            #[tag(0xA4)]
+            crt: &'a [u8],
+            #[header_list(0x7F48, 0x5F48)]
+            fields: KeyImportFields<'a>,
+        },
     }
 }
 
@@ -194,15 +221,21 @@ impl PgpApplet {
         let Ok(body) = PutDataOddBody::decode_tlv(data) else {
             return Err(Status::IncorrectDataParameter);
         };
-        let ehl = body.header_list;
-        let slot_id = resolve_crt(ehl.sig, ehl.dec, ehl.aut)?;
+        let (slot_id, fields) = match body.header_list {
+            ExtendedHeaderList::Sig { crt: [], fields } => (KeySlotId::Sig, fields),
+            ExtendedHeaderList::Dec { crt: [], fields } => (KeySlotId::Dec, fields),
+            ExtendedHeaderList::Aut { crt: [], fields } => (KeySlotId::Aut, fields),
+            _ => return Err(Status::IncorrectDataParameter),
+        };
 
         let alg = self.data.slot(slot_id).slot_alg()?;
-        let key = match alg {
-            SlotAlg::Rsa { n_bits, .. } => import_rsa(n_bits, &ehl.fields)?,
-            SlotAlg::P256 | SlotAlg::P384 | SlotAlg::P521 | SlotAlg::Ed25519 | SlotAlg::X25519 => {
-                import_ecc(alg, &ehl.fields)?
-            }
+        let key = match (alg, fields) {
+            (SlotAlg::Rsa { n_bits, .. }, KeyImportFields::Rsa(rsa)) => import_rsa(n_bits, &rsa)?,
+            (
+                SlotAlg::P256 | SlotAlg::P384 | SlotAlg::P521 | SlotAlg::Ed25519 | SlotAlg::X25519,
+                KeyImportFields::Ecc { scalar, public },
+            ) => import_ecc(alg, scalar, public)?,
+            _ => return Err(Status::IncorrectDataParameter),
         };
 
         self.data.slot_mut(slot_id).key = Some(key);
@@ -213,40 +246,22 @@ impl PgpApplet {
     }
 }
 
-fn resolve_crt(
-    sig: Option<&[u8]>,
-    dec: Option<&[u8]>,
-    aut: Option<&[u8]>,
-) -> Result<KeySlotId, Status> {
-    match (sig, dec, aut) {
-        (Some([]), None, None) => Ok(KeySlotId::Sig),
-        (None, Some([]), None) => Ok(KeySlotId::Dec),
-        (None, None, Some([])) => Ok(KeySlotId::Aut),
+fn parse_crt(data: &[u8]) -> Result<KeySlotId, Status> {
+    match ControlReferenceTemplate::decode_tlv(data) {
+        Ok(ControlReferenceTemplate::Sig { value: [] }) => Ok(KeySlotId::Sig),
+        Ok(ControlReferenceTemplate::Dec { value: [] }) => Ok(KeySlotId::Dec),
+        Ok(ControlReferenceTemplate::Aut { value: [] }) => Ok(KeySlotId::Aut),
         _ => Err(Status::IncorrectDataParameter),
     }
 }
 
-fn parse_crt(data: &[u8]) -> Result<KeySlotId, Status> {
-    let Ok(crt) = ControlReferenceTemplate::decode_tlv(data) else {
-        return Err(Status::IncorrectDataParameter);
-    };
-    resolve_crt(crt.sig, crt.dec, crt.aut)
-}
-
-fn import_rsa(bits: RsaBits, fields: &KeyImportFields<'_>) -> Result<SlotKey, Status> {
-    if fields.ecc_public.is_some() {
-        return Err(Status::IncorrectDataParameter);
-    }
-    let (Some(e_bytes), Some(q_bytes)) = (fields.exp, fields.prime_q) else {
-        return Err(Status::IncorrectDataParameter);
-    };
-    let p_bytes = fields.prime_p_or_scalar;
-    if e_bytes.is_empty() || p_bytes.is_empty() || q_bytes.is_empty() {
+fn import_rsa(bits: RsaBits, fields: &RsaImportFields<'_>) -> Result<SlotKey, Status> {
+    if fields.exp.is_empty() || fields.prime_p.is_empty() || fields.prime_q.is_empty() {
         return Err(Status::IncorrectDataParameter);
     }
 
     let half = bits.modulus_bytes() / 2;
-    if p_bytes.len() > half || q_bytes.len() > half {
+    if fields.prime_p.len() > half || fields.prime_q.len() > half {
         return Err(Status::IncorrectDataParameter);
     }
     if let Some(u_bytes) = fields.crt_u
@@ -257,9 +272,9 @@ fn import_rsa(bits: RsaBits, fields: &KeyImportFields<'_>) -> Result<SlotKey, St
 
     SlotKey::from_rsa_components(
         bits,
-        p_bytes,
-        q_bytes,
-        e_bytes,
+        fields.prime_p,
+        fields.prime_q,
+        fields.exp,
         fields.modulus,
         fields.exp_p,
         fields.exp_q,
@@ -267,19 +282,8 @@ fn import_rsa(bits: RsaBits, fields: &KeyImportFields<'_>) -> Result<SlotKey, St
     .map_err(|ref err| key_error_to_status(err))
 }
 
-fn import_ecc(alg: SlotAlg, fields: &KeyImportFields<'_>) -> Result<SlotKey, Status> {
-    if fields.exp.is_some()
-        || fields.prime_q.is_some()
-        || fields.crt_u.is_some()
-        || fields.exp_p.is_some()
-        || fields.exp_q.is_some()
-        || fields.modulus.is_some()
-    {
-        return Err(Status::IncorrectDataParameter);
-    }
-
-    let scalar = fields.prime_p_or_scalar;
-    if scalar.is_empty() || fields.ecc_public.is_some_and(<[u8]>::is_empty) {
+fn import_ecc(alg: SlotAlg, scalar: &[u8], public: Option<&[u8]>) -> Result<SlotKey, Status> {
+    if scalar.is_empty() || public.is_some_and(<[u8]>::is_empty) {
         return Err(Status::IncorrectDataParameter);
     }
 
@@ -290,12 +294,11 @@ fn import_ecc(alg: SlotAlg, fields: &KeyImportFields<'_>) -> Result<SlotKey, Sta
             .try_into()
             .map_err(|_| Status::IncorrectDataParameter)?;
         le_scalar.reverse();
-        return SlotKey::from_ec_scalar(alg.into(), &le_scalar, fields.ecc_public)
+        return SlotKey::from_ec_scalar(alg.into(), &le_scalar, public)
             .map_err(|ref err| key_error_to_status(err));
     }
 
-    SlotKey::from_ec_scalar(alg.into(), scalar, fields.ecc_public)
-        .map_err(|ref err| key_error_to_status(err))
+    SlotKey::from_ec_scalar(alg.into(), scalar, public).map_err(|ref err| key_error_to_status(err))
 }
 
 #[cfg(test)]
