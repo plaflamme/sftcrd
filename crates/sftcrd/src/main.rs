@@ -98,6 +98,14 @@ fn main() -> ExitCode {
         }
     };
 
+    let (mut piv_applet, mut pgp_applet) = match init_applets(args.config.as_deref()) {
+        Ok(applets) => applets,
+        Err(e) => {
+            tracing::error!("cannot initialize card state: {e}");
+            return ExitCode::FAILURE;
+        }
+    };
+
     // We are the vpicc listener: vpcd is configured in connect mode and
     // dials us.
     let listener = match TcpListener::bind((args.host.as_str(), args.port)) {
@@ -114,7 +122,7 @@ fn main() -> ExitCode {
         match listener.accept() {
             Ok((stream, addr)) => {
                 info!(%addr, "vpcd connected");
-                if let Err(e) = serve_connection(stream, &atr, args.config.as_deref()) {
+                if let Err(e) = serve_connection(stream, &atr, &mut piv_applet, &mut pgp_applet) {
                     warn!("connection with {addr} failed: {e}");
                 }
             }
@@ -123,14 +131,9 @@ fn main() -> ExitCode {
     }
 }
 
-/// Serve one vpcd connection until it drops.
-fn serve_connection(
-    mut stream: TcpStream,
-    atr: &[u8],
-    config_path: Option<&std::path::Path>,
-) -> io::Result<()> {
-    // The card: the PIV and OpenPGP applet instances
-    let (mut piv_applet, mut pgp_applet) = match config_path {
+/// Initialize the PIV and `OpenPGP` applets from an optional TOML config file.
+fn init_applets(config_path: Option<&std::path::Path>) -> io::Result<(PivApplet, PgpApplet)> {
+    match config_path {
         Some(path) => {
             let card_config: CardConfig = Figment::new()
                 .merge(Toml::file(path))
@@ -141,10 +144,19 @@ fn serve_connection(
                 .map_err(|e| io::Error::new(io::ErrorKind::InvalidData, e.to_string()))?;
             let pgp = PgpApplet::from_config(&card_config.pgp.unwrap_or_default(), serial)
                 .map_err(|e| io::Error::new(io::ErrorKind::InvalidData, e.to_string()))?;
-            (piv, pgp)
+            Ok((piv, pgp))
         }
-        None => (PivApplet::new(), PgpApplet::new()),
-    };
+        None => Ok((PivApplet::new(), PgpApplet::new())),
+    }
+}
+
+/// Serve one vpcd connection until it drops.
+fn serve_connection(
+    mut stream: TcpStream,
+    atr: &[u8],
+    piv_applet: &mut PivApplet,
+    pgp_applet: &mut PgpApplet,
+) -> io::Result<()> {
     let mut power_on = false;
 
     let contact = apdu_dispatch::interchanges::Channel::new();
@@ -202,7 +214,7 @@ fn serve_connection(
                 }
             }
 
-            let response = match dispatch.poll(&mut [&mut piv_applet, &mut pgp_applet]) {
+            let response = match dispatch.poll(&mut [piv_applet, pgp_applet]) {
                 Some(iso7816::Interface::Contact) => contact_requester.take_response(),
                 Some(iso7816::Interface::Contactless) => unreachable!("contactless is unused"),
                 None => continue,
@@ -239,4 +251,91 @@ fn write_msg(w: &mut impl Write, payload: &[u8]) -> io::Result<()> {
     w.write_all(&len.to_be_bytes())?;
     w.write_all(payload)?;
     w.flush()
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::thread;
+
+    const SW_OK: [u8; 2] = [0x90, 0x00];
+    const OPENPGP_SELECT: &[u8] = &[
+        0x00, 0xA4, 0x04, 0x00, 0x06, 0xD2, 0x76, 0x00, 0x01, 0x24, 0x01,
+    ];
+
+    fn send_apdu(stream: &mut TcpStream, apdu: &[u8]) -> Vec<u8> {
+        write_msg(stream, apdu).expect("write APDU");
+        read_msg(stream)
+            .expect("read response")
+            .expect("non-empty response")
+    }
+
+    #[test]
+    fn state_persists_across_connections() {
+        let listener = TcpListener::bind("127.0.0.1:0").expect("bind loopback");
+        let addr = listener.local_addr().expect("local addr");
+        let atr = hex::decode(DEFAULT_ATR).expect("valid default ATR");
+
+        let server = thread::spawn(move || {
+            let (mut piv_applet, mut pgp_applet) = init_applets(None).expect("init applets");
+            for _ in 0..2 {
+                let (stream, _) = listener.accept().expect("accept");
+                serve_connection(stream, &atr, &mut piv_applet, &mut pgp_applet)
+                    .expect("serve connection");
+            }
+        });
+
+        // Connection 1: mutate both PIV and OpenPGP applet state.
+        {
+            let mut client = TcpStream::connect(addr).expect("connect 1");
+            write_msg(&mut client, &[CTRL_POWER_ON]).expect("power on");
+
+            // Select PIV and change PIN from 123456 to 654321.
+            let resp = send_apdu(&mut client, &keyroost_piv::select());
+            assert!(resp.ends_with(&SW_OK), "PIV select failed: {resp:02X?}");
+
+            let resp = send_apdu(
+                &mut client,
+                &keyroost_piv::change_reference(0x80, b"123456", b"654321")
+                    .expect("change_reference apdu"),
+            );
+            assert_eq!(resp, SW_OK);
+
+            // Select OpenPGP and fail PW1 verification once (retries 3 -> 2).
+            let resp = send_apdu(&mut client, OPENPGP_SELECT);
+            assert!(resp.ends_with(&SW_OK), "PGP select failed: {resp:02X?}");
+
+            let wrong_pw1 = [
+                0x00, 0x20, 0x00, 0x81, 0x06, b'0', b'0', b'0', b'0', b'0', b'0',
+            ];
+            let resp = send_apdu(&mut client, &wrong_pw1);
+            assert_eq!(resp, [0x63, 0xC2]);
+        }
+
+        // Connection 2: verify mutations from connection 1 are still present.
+        {
+            let mut client = TcpStream::connect(addr).expect("connect 2");
+            write_msg(&mut client, &[CTRL_POWER_ON]).expect("power on");
+
+            // PIV PIN must still be 654321.
+            let resp = send_apdu(&mut client, &keyroost_piv::select());
+            assert!(resp.ends_with(&SW_OK), "PIV select failed: {resp:02X?}");
+
+            let resp = send_apdu(
+                &mut client,
+                &keyroost_piv::verify_pin(b"654321").expect("verify_pin apdu"),
+            );
+            assert_eq!(resp, SW_OK);
+
+            // OpenPGP PW1 retry counter must still be 2.
+            let resp = send_apdu(&mut client, OPENPGP_SELECT);
+            assert!(resp.ends_with(&SW_OK), "PGP select failed: {resp:02X?}");
+
+            let check_pw1_retries = [0x00, 0x20, 0x00, 0x81];
+            let resp = send_apdu(&mut client, &check_pw1_retries);
+            assert_eq!(resp, [0x63, 0xC2]);
+        }
+
+        server.join().expect("server thread");
+    }
 }

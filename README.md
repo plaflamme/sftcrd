@@ -24,7 +24,7 @@
 - **Declarative Initial State**: Pre-populate keys, certificates, PINs, serial number, and policies from a TOML file or NixOS configuration.
 
 > [!NOTE]
-> Card state is held **in memory per `vpcd` connection**. Reconnecting or restarting `vpcd` re-initializes the card from the `--config` file (or factory defaults).
+> Card state is held **in memory for the lifetime of the `sftcrd` process** and persists across `vpcd` connections. Restarting `sftcrd` re-initializes the card from the `--config` file (or factory defaults).
 
 ### Factory Defaults
 
