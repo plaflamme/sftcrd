@@ -68,9 +68,26 @@
                 craneLib = config.rust-project.crane-lib;
                 src = config.rust-project.src;
                 sftcrd = config.packages.sftcrd;
+                rustdoc = craneLib.cargoDoc (
+                  config.rust-project.crates.sftcrd.crane.args
+                  // {
+                    inherit src;
+                    pname = "sftcrd-rustdoc";
+                    cargoArtifacts = craneLib.buildDepsOnly (
+                      config.rust-project.crates.sftcrd.crane.args
+                      // {
+                        inherit src;
+                        pname = "sftcrd-rustdoc-deps";
+                      }
+                    );
+                    cargoDocExtraArgs = "--workspace --no-deps";
+                    RUSTDOCFLAGS = "-Z unstable-options --enable-index-page";
+                  }
+                );
               in
               {
                 default = sftcrd;
+                inherit rustdoc;
                 sftcrd-debug = craneLib.buildPackage (
                   config.rust-project.crates.sftcrd.crane.args
                   // {
@@ -80,7 +97,9 @@
                   }
                 );
 
-                docs = pkgs.callPackage ./nix/docs.nix { inherit optionsDoc sftcrd; };
+                docs = pkgs.callPackage ./nix/docs.nix {
+                  inherit optionsDoc sftcrd rustdoc;
+                };
               };
 
             checks =

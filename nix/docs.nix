@@ -2,6 +2,7 @@
   pkgs,
   optionsDoc,
   sftcrd,
+  rustdoc,
   ...
 }:
 let
@@ -37,5 +38,6 @@ pkgs.stdenv.mkDerivation {
   installPhase = ''
     mkdir -p $out
     cp -r dist/* $out/
+    cp -r ${rustdoc}/share/doc $out/rustdoc
   '';
 }

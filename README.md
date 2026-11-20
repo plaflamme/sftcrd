@@ -1,6 +1,7 @@
 # sftcrd
 
 [![check](https://github.com/plaflamme/sftcrd/actions/workflows/check.yaml/badge.svg)](https://github.com/plaflamme/sftcrd/actions/workflows/check.yaml)
+[![rustdoc](https://img.shields.io/badge/docs-rustdoc-blue)](https://plaflamme.github.io/sftcrd/rustdoc/index.html)
 
 `sftcrd` (*sftcard*) is a pure-Rust software implementation of a [Smart Card](https://en.wikipedia.org/wiki/Smart_card) designed to make testing software that relies on smart cards easier. It connects to PC/SC via the [VSmartCard](https://github.com/frankmorgner/vsmartcard) (`vpcd`) protocol and can run either as a NixOS service or as a standalone binary.
 
