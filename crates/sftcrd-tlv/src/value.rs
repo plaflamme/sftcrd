@@ -10,7 +10,7 @@ pub trait Decode<'a>: Sized {
     /// # Errors
     ///
     /// Returns [`DecodeError`] if decoding fails or the decoder mode is incompatible with `Self`.
-    fn decode(decoder: Decoder<'a>) -> Result<Self, DecodeError>;
+    fn decode(decoder: &Decoder<'a>) -> Result<Self, DecodeError>;
 
     /// Decodes `Self` from a standard TLV stream or raw byte slice.
     ///
@@ -83,8 +83,8 @@ pub trait DecodeValue<'a>: Sized {
 }
 
 impl<'a, T: DecodeValue<'a>> Decode<'a> for T {
-    fn decode(decoder: Decoder<'a>) -> Result<Self, DecodeError> {
-        Self::decode_bytes(decoder.into_bytes()?)
+    fn decode(decoder: &Decoder<'a>) -> Result<Self, DecodeError> {
+        Self::decode_bytes(decoder.as_bytes()?)
     }
 }
 

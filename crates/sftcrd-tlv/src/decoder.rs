@@ -81,7 +81,7 @@ impl<'a> Decoder<'a> {
     ///
     /// Returns [`DecodeError`] if decoding fails.
     pub fn decode_tlv<V: Decode<'a>>(buf: &'a [u8]) -> Result<V, DecodeError> {
-        V::decode(Self::new(buf))
+        V::decode(&Self::new(buf))
     }
 
     /// Decodes `V` from an ISO/IEC 7816-4 header-list `(template, values)` pair.
@@ -93,24 +93,24 @@ impl<'a> Decoder<'a> {
         template: &'a [u8],
         values: &'a [u8],
     ) -> Result<V, DecodeError> {
-        V::decode(Self::header_list(template, values))
+        V::decode(&Self::header_list(template, values))
     }
 
-    /// Consumes the decoder and returns the underlying byte slice.
+    /// Returns the underlying byte slice if the decoder is in standard TLV/raw mode.
     ///
     /// # Errors
     ///
     /// Returns [`DecodeError::InvalidValue`] if the decoder is in header-list mode.
-    pub(crate) fn into_bytes(self) -> Result<&'a [u8], DecodeError> {
+    pub(crate) fn as_bytes(&self) -> Result<&'a [u8], DecodeError> {
         match self.0 {
             DecoderKind::Bytes(bytes) => Ok(bytes),
             DecoderKind::HeaderList { .. } => Err(DecodeError::InvalidValue),
         }
     }
 
-    /// Consumes the decoder and returns an iterator over `(tag, value_slice)` entries.
+    /// Returns an iterator over `(tag, value_slice)` entries starting from the beginning.
     #[must_use]
-    pub fn into_iter_tags<T: Tag, L: Length>(self) -> TagIter<'a, T, L> {
+    pub fn iter_tags<T: Tag, L: Length>(&self) -> TagIter<'a, T, L> {
         match self.0 {
             DecoderKind::Bytes(buf) => TagIter(TagIterKind::Tlv {
                 cursor: SliceCursor::new(buf),
@@ -216,10 +216,10 @@ mod test {
     }
 
     #[test]
-    fn test_into_bytes_rejects_header_list() {
-        assert_eq!(Decoder::new(&[0x01, 0x02]).into_bytes(), Ok(&[0x01, 0x02][..]));
+    fn test_as_bytes_rejects_header_list() {
+        assert_eq!(Decoder::new(&[0x01, 0x02]).as_bytes(), Ok(&[0x01, 0x02][..]));
         assert_eq!(
-            Decoder::header_list(&[0x01, 0x01], &[0x02]).into_bytes(),
+            Decoder::header_list(&[0x01, 0x01], &[0x02]).as_bytes(),
             Err(DecodeError::InvalidValue)
         );
     }

@@ -185,6 +185,27 @@ macro_rules! __tlv_parse_attrs {
             remaining: [ $($fields)* ]
         );
     };
+
+    (
+        tag_type: [ $tag_ty:path ],
+        length: [ $len_ty:ty ],
+        impl_lt: [ $impl_lt:lifetime ],
+        struct_lt: [ $($enum_lt:lifetime)? ],
+        retained: [ $($retained:tt)* ],
+        input: [ $vis:vis enum $name:ident $(<$ignore_lt:lifetime>)? { $($variants:tt)* } ]
+    ) => {
+        $crate::__tlv_enum_parse_variants!(
+            tag_type: [ $tag_ty ],
+            length: [ $len_ty ],
+            impl_lt: [ $impl_lt ],
+            enum_lt: [ $($enum_lt)? ],
+            header: [ $($retained)* $vis enum $name $(<$enum_lt>)? ],
+            name: [ $name ],
+            variant_defs: [],
+            decode_variants: [],
+            remaining: [ $($variants)* ]
+        );
+    };
 }
 
 /// Internal helper: munches struct fields, separating normal TLV fields from header-list fields.
@@ -354,6 +375,65 @@ macro_rules! __tlv_parse_fields {
     };
 }
 
+/// Internal helper: decodes a set of TLV and header-list fields from `$decoder` into `$ctor { ... }`.
+#[doc(hidden)]
+#[macro_export]
+macro_rules! __tlv_decode_fields {
+    (
+        tag_type: [ $tag_ty:path ],
+        length: [ $len_ty:ty ],
+        impl_lt: [ $impl_lt:lifetime ],
+        decoder: $decoder:ident,
+        ctor: [ $($ctor:tt)+ ],
+        tlv_fields: [ $( ( $kind:ident, $tag:expr, $tlv_name:ident, $tlv_ty:ty ) )* ],
+        hl_fields: [ $( ( $tpl_tag:expr, $val_tag:expr, $hl_name:ident, $hl_ty:ty ) )* ]
+    ) => {{
+        $( $crate::__tlv_field!(@init $kind, $tlv_name, $tlv_ty); )*
+        $(
+            let mut $hl_name: (Option<&$impl_lt [u8]>, Option<&$impl_lt [u8]>) =
+                (None, None);
+        )*
+
+        for entry in $decoder.iter_tags::<$tag_ty, $len_ty>() {
+            let (tag, value_bytes) = entry?;
+            match tag {
+                $(
+                    $tag_ty($tag) => {
+                        $crate::__tlv_field!(@decode $kind, $tlv_name, $tlv_ty, value_bytes);
+                    }
+                )*
+                $(
+                    $tag_ty($tpl_tag) => {
+                        if $hl_name.0.is_some() {
+                            return Err($crate::DecodeError::DuplicateTag);
+                        }
+                        $hl_name.0 = Some(value_bytes);
+                    }
+                    $tag_ty($val_tag) => {
+                        if $hl_name.1.is_some() {
+                            return Err($crate::DecodeError::DuplicateTag);
+                        }
+                        $hl_name.1 = Some(value_bytes);
+                    }
+                )*
+                _ => return Err($crate::DecodeError::InvalidTag),
+            }
+        }
+
+        Ok($($ctor)+ {
+            $( $tlv_name: $crate::__tlv_field!(@unwrap $kind, $tlv_name), )*
+            $(
+                $hl_name: {
+                    let (tpl, vals) = $hl_name;
+                    let tpl = tpl.ok_or($crate::DecodeError::MissingRequiredField)?;
+                    let vals = vals.ok_or($crate::DecodeError::MissingRequiredField)?;
+                    $crate::Decoder::decode_header_list::<$hl_ty>(tpl, vals)?
+                },
+            )*
+        })
+    }};
+}
+
 /// Internal helper: implements `Decode` and `Encode` for `tlv_struct!`.
 #[doc(hidden)]
 #[macro_export]
@@ -368,50 +448,16 @@ macro_rules! __tlv_impl_codec {
         hl_fields: [ $( ( $tpl_tag:expr, $val_tag:expr, $hl_name:ident, $hl_ty:ty ) )* ]
     ) => {
         impl <$impl_lt> $crate::Decode<$impl_lt> for $name $(<$struct_lt>)? {
-            fn decode(decoder: $crate::Decoder<$impl_lt>) -> Result<Self, $crate::DecodeError> {
-                $( $crate::__tlv_field!(@init $kind, $tlv_name, $tlv_ty); )*
-                $(
-                    let mut $hl_name: (Option<&$impl_lt [u8]>, Option<&$impl_lt [u8]>) =
-                        (None, None);
-                )*
-
-                for entry in decoder.into_iter_tags::<$tag_ty, $len_ty>() {
-                    let (tag, value_bytes) = entry?;
-                    match tag {
-                        $(
-                            $tag_ty($tag) => {
-                                $crate::__tlv_field!(@decode $kind, $tlv_name, $tlv_ty, value_bytes);
-                            }
-                        )*
-                        $(
-                            $tag_ty($tpl_tag) => {
-                                if $hl_name.0.is_some() {
-                                    return Err($crate::DecodeError::DuplicateTag);
-                                }
-                                $hl_name.0 = Some(value_bytes);
-                            }
-                            $tag_ty($val_tag) => {
-                                if $hl_name.1.is_some() {
-                                    return Err($crate::DecodeError::DuplicateTag);
-                                }
-                                $hl_name.1 = Some(value_bytes);
-                            }
-                        )*
-                        _ => return Err($crate::DecodeError::InvalidTag),
-                    }
-                }
-
-                Ok(Self {
-                    $( $tlv_name: $crate::__tlv_field!(@unwrap $kind, $tlv_name), )*
-                    $(
-                        $hl_name: {
-                            let (tpl, vals) = $hl_name;
-                            let tpl = tpl.ok_or($crate::DecodeError::MissingRequiredField)?;
-                            let vals = vals.ok_or($crate::DecodeError::MissingRequiredField)?;
-                            $crate::Decoder::decode_header_list::<$hl_ty>(tpl, vals)?
-                        },
-                    )*
-                })
+            fn decode(decoder: &$crate::Decoder<$impl_lt>) -> Result<Self, $crate::DecodeError> {
+                $crate::__tlv_decode_fields!(
+                    tag_type: [ $tag_ty ],
+                    length: [ $len_ty ],
+                    impl_lt: [ $impl_lt ],
+                    decoder: decoder,
+                    ctor: [ Self ],
+                    tlv_fields: [ $( ( $kind, $tag, $tlv_name, $tlv_ty ) )* ],
+                    hl_fields: [ $( ( $tpl_tag, $val_tag, $hl_name, $hl_ty ) )* ]
+                )
             }
         }
 
@@ -474,6 +520,619 @@ macro_rules! __tlv_field {
     };
     (@as_slice rep, $field:expr) => {
         $field.as_slice()
+    };
+}
+
+/// Declarative macro to generate an enum and corresponding [`crate::Decode`] /
+/// [`crate::Encode`] implementations for non-discriminated TLV unions.
+///
+/// Decoding tries each variant in declaration order and returns the first one
+/// that succeeds, or [`crate::DecodeError::InvalidValue`] if all variants fail.
+/// Both tuple variants wrapping existing [`crate::Decode`] / [`crate::Encode`]
+/// types and inline struct variants (with the same field attributes as
+/// [`tlv_struct!`]) are supported and may be mixed in the same enum.
+///
+/// # Examples
+///
+/// Inline struct variants with custom length encoding:
+///
+/// ```
+/// use sftcrd_tlv::{BerLength, Decode, Encode, tlv_enum};
+///
+/// tlv_enum! {
+///     #[derive(Debug, PartialEq)]
+///     #[length(BerLength)]
+///     enum PublicKey<'a> {
+///         Ec {
+///             #[tag(0x86)]
+///             point: &'a [u8],
+///         },
+///         Rsa {
+///             #[tag(0x81)]
+///             modulus: &'a [u8],
+///             #[tag(0x82)]
+///             exponent: &'a [u8],
+///         },
+///     }
+/// }
+///
+/// let key = PublicKey::Rsa { modulus: &[0xAA], exponent: &[0x01, 0x00, 0x01] };
+/// let encoded = key.encode_tlv().unwrap();
+/// assert_eq!(PublicKey::decode_tlv(&encoded), Ok(key));
+/// ```
+///
+/// Tuple variants wrapping [`tlv_struct!`] types:
+///
+/// ```
+/// use sftcrd_tlv::{Decode, Encode, tlv_enum, tlv_struct};
+///
+/// tlv_struct! {
+///     #[derive(Debug, PartialEq)]
+///     struct Alpha {
+///         #[tag(0x01)]
+///         a: u8,
+///     }
+/// }
+///
+/// tlv_struct! {
+///     #[derive(Debug, PartialEq)]
+///     struct Beta {
+///         #[tag(0x02)]
+///         b: u16,
+///     }
+/// }
+///
+/// tlv_enum! {
+///     #[derive(Debug, PartialEq)]
+///     enum Choice {
+///         Alpha(Alpha),
+///         Beta(Beta),
+///     }
+/// }
+///
+/// let choice = Choice::Beta(Beta { b: 0x1234 });
+/// let encoded = choice.encode_tlv().unwrap();
+/// assert_eq!(Choice::decode_tlv(&encoded), Ok(choice));
+/// ```
+#[macro_export]
+macro_rules! tlv_enum {
+    // Enum WITH a lifetime parameter (e.g. `enum Foo<'a>`)
+    (
+        $(#[$($attr:tt)*])*
+        $vis:vis enum $name:ident <$lt:lifetime> {
+            $($variants:tt)*
+        }
+    ) => {
+        $crate::__tlv_parse_attrs!(
+            tag_type: [ $crate::U8Tag ],
+            length: [ $crate::U8Length ],
+            impl_lt: [ $lt ],
+            struct_lt: [ $lt ],
+            retained: [],
+            input: [ $(#[$($attr)*])* $vis enum $name <$lt> { $($variants)* } ]
+        );
+    };
+
+    // Enum WITHOUT a lifetime parameter
+    (
+        $(#[$($attr:tt)*])*
+        $vis:vis enum $name:ident {
+            $($variants:tt)*
+        }
+    ) => {
+        $crate::__tlv_parse_attrs!(
+            tag_type: [ $crate::U8Tag ],
+            length: [ $crate::U8Length ],
+            impl_lt: [ 'a ],
+            struct_lt: [],
+            retained: [],
+            input: [ $(#[$($attr)*])* $vis enum $name { $($variants)* } ]
+        );
+    };
+}
+
+/// Internal helper: munches enum variants for `tlv_enum!`.
+#[doc(hidden)]
+#[macro_export]
+macro_rules! __tlv_enum_parse_variants {
+    // Tuple variant: `Variant(InnerTy)`
+    (
+        tag_type: [ $tag_ty:path ],
+        length: [ $len_ty:ty ],
+        impl_lt: [ $impl_lt:lifetime ],
+        enum_lt: [ $($enum_lt:lifetime)? ],
+        header: [ $($header:tt)* ],
+        name: [ $name:ident ],
+        variant_defs: [ $($defs:tt)* ],
+        decode_variants: [ $($codec:tt)* ],
+        remaining: [
+            $(#[$v_meta:meta])*
+            $v_name:ident ( $v_ty:ty )
+            $(, $($rest:tt)*)?
+        ]
+    ) => {
+        $crate::__tlv_enum_parse_variants!(
+            tag_type: [ $tag_ty ],
+            length: [ $len_ty ],
+            impl_lt: [ $impl_lt ],
+            enum_lt: [ $($enum_lt)? ],
+            header: [ $($header)* ],
+            name: [ $name ],
+            variant_defs: [
+                $($defs)*
+                $(#[$v_meta])*
+                $v_name($v_ty),
+            ],
+            decode_variants: [
+                $($codec)*
+                (tuple, $v_name, $v_ty)
+            ],
+            remaining: [ $($($rest)*)? ]
+        );
+    };
+
+    // Inline struct variant: `Variant { ... }`
+    (
+        tag_type: [ $tag_ty:path ],
+        length: [ $len_ty:ty ],
+        impl_lt: [ $impl_lt:lifetime ],
+        enum_lt: [ $($enum_lt:lifetime)? ],
+        header: [ $($header:tt)* ],
+        name: [ $name:ident ],
+        variant_defs: [ $($defs:tt)* ],
+        decode_variants: [ $($codec:tt)* ],
+        remaining: [
+            $(#[$v_meta:meta])*
+            $v_name:ident { $($v_fields:tt)* }
+            $(, $($rest:tt)*)?
+        ]
+    ) => {
+        $crate::__tlv_enum_parse_struct_fields!(
+            tag_type: [ $tag_ty ],
+            length: [ $len_ty ],
+            impl_lt: [ $impl_lt ],
+            enum_lt: [ $($enum_lt)? ],
+            header: [ $($header)* ],
+            name: [ $name ],
+            variant_defs: [ $($defs)* ],
+            decode_variants: [ $($codec)* ],
+            v_meta: [ $(#[$v_meta])* ],
+            v_name: [ $v_name ],
+            tlv_fields: [],
+            hl_fields: [],
+            v_remaining: [ $($v_fields)* ],
+            rest_variants: [ $($($rest)*)? ]
+        );
+    };
+
+    // Base case: emit enum definition and Decode/Encode impls
+    (
+        tag_type: [ $tag_ty:path ],
+        length: [ $len_ty:ty ],
+        impl_lt: [ $impl_lt:lifetime ],
+        enum_lt: [ $($enum_lt:lifetime)? ],
+        header: [ $(#[$meta:meta])* $vis:vis enum $name_header:ident $(<$lt_header:lifetime>)? ],
+        name: [ $name:ident ],
+        variant_defs: [ $($defs:tt)* ],
+        decode_variants: [ $($codec:tt)* ],
+        remaining: []
+    ) => {
+        $(#[$meta])*
+        $vis enum $name $(<$enum_lt>)? {
+            $($defs)*
+        }
+
+        impl <$impl_lt> $crate::Decode<$impl_lt> for $name $(<$enum_lt>)? {
+            fn decode(decoder: &$crate::Decoder<$impl_lt>) -> Result<Self, $crate::DecodeError> {
+                $crate::__tlv_enum_decode!(
+                    tag_type: [ $tag_ty ],
+                    length: [ $len_ty ],
+                    impl_lt: [ $impl_lt ],
+                    decoder: decoder,
+                    remaining: [ $($codec)* ]
+                )
+            }
+        }
+
+        impl <$impl_lt> $crate::Encode for $name $(<$enum_lt>)? {
+            fn encode(&self, encoder: &mut $crate::Encoder<'_>) -> Result<(), $crate::EncodeError> {
+                $crate::__tlv_enum_encode!(
+                    self: self,
+                    encoder: encoder,
+                    tag_type: [ $tag_ty ],
+                    length: [ $len_ty ],
+                    arms: [],
+                    remaining: [ $($codec)* ]
+                )
+            }
+        }
+    };
+}
+
+/// Internal helper: munches fields of an inline struct variant in `tlv_enum!`.
+#[doc(hidden)]
+#[macro_export]
+macro_rules! __tlv_enum_parse_struct_fields {
+    // Repeated TLV field (`Vec<T>`)
+    (
+        tag_type: [ $tag_ty:path ],
+        length: [ $len_ty:ty ],
+        impl_lt: [ $impl_lt:lifetime ],
+        enum_lt: [ $($enum_lt:lifetime)? ],
+        header: [ $($header:tt)* ],
+        name: [ $name:ident ],
+        variant_defs: [ $($defs:tt)* ],
+        decode_variants: [ $($codec:tt)* ],
+        v_meta: [ $($v_meta:tt)* ],
+        v_name: [ $v_name:ident ],
+        tlv_fields: [ $($tlv:tt)* ],
+        hl_fields: [ $($hl:tt)* ],
+        v_remaining: [
+            #[tag($tag:expr, repeated)]
+            $(#[$field_meta:meta])*
+            $field_name:ident : Vec < $inner_ty:ty >
+            $(, $($v_rest:tt)*)?
+        ],
+        rest_variants: [ $($rest:tt)* ]
+    ) => {
+        $crate::__tlv_enum_parse_struct_fields!(
+            tag_type: [ $tag_ty ],
+            length: [ $len_ty ],
+            impl_lt: [ $impl_lt ],
+            enum_lt: [ $($enum_lt)? ],
+            header: [ $($header)* ],
+            name: [ $name ],
+            variant_defs: [ $($defs)* ],
+            decode_variants: [ $($codec)* ],
+            v_meta: [ $($v_meta)* ],
+            v_name: [ $v_name ],
+            tlv_fields: [
+                $($tlv)*
+                (rep, $tag, [ $(#[$field_meta])* ], $field_name, Vec<$inner_ty>, $inner_ty)
+            ],
+            hl_fields: [ $($hl)* ],
+            v_remaining: [ $($($v_rest)*)? ],
+            rest_variants: [ $($rest)* ]
+        );
+    };
+
+    // Paired header-list field (`#[header_list(tpl_tag, val_tag)]`)
+    (
+        tag_type: [ $tag_ty:path ],
+        length: [ $len_ty:ty ],
+        impl_lt: [ $impl_lt:lifetime ],
+        enum_lt: [ $($enum_lt:lifetime)? ],
+        header: [ $($header:tt)* ],
+        name: [ $name:ident ],
+        variant_defs: [ $($defs:tt)* ],
+        decode_variants: [ $($codec:tt)* ],
+        v_meta: [ $($v_meta:tt)* ],
+        v_name: [ $v_name:ident ],
+        tlv_fields: [ $($tlv:tt)* ],
+        hl_fields: [ $($hl:tt)* ],
+        v_remaining: [
+            #[header_list($tpl_tag:expr, $val_tag:expr)]
+            $(#[$field_meta:meta])*
+            $field_name:ident : $field_ty:ty
+            $(, $($v_rest:tt)*)?
+        ],
+        rest_variants: [ $($rest:tt)* ]
+    ) => {
+        $crate::__tlv_enum_parse_struct_fields!(
+            tag_type: [ $tag_ty ],
+            length: [ $len_ty ],
+            impl_lt: [ $impl_lt ],
+            enum_lt: [ $($enum_lt)? ],
+            header: [ $($header)* ],
+            name: [ $name ],
+            variant_defs: [ $($defs)* ],
+            decode_variants: [ $($codec)* ],
+            v_meta: [ $($v_meta)* ],
+            v_name: [ $v_name ],
+            tlv_fields: [ $($tlv)* ],
+            hl_fields: [
+                $($hl)*
+                ($tpl_tag, $val_tag, [ $(#[$field_meta])* ], $field_name, $field_ty)
+            ],
+            v_remaining: [ $($($v_rest)*)? ],
+            rest_variants: [ $($rest)* ]
+        );
+    };
+
+    // Optional TLV field (`Option<T>`)
+    (
+        tag_type: [ $tag_ty:path ],
+        length: [ $len_ty:ty ],
+        impl_lt: [ $impl_lt:lifetime ],
+        enum_lt: [ $($enum_lt:lifetime)? ],
+        header: [ $($header:tt)* ],
+        name: [ $name:ident ],
+        variant_defs: [ $($defs:tt)* ],
+        decode_variants: [ $($codec:tt)* ],
+        v_meta: [ $($v_meta:tt)* ],
+        v_name: [ $v_name:ident ],
+        tlv_fields: [ $($tlv:tt)* ],
+        hl_fields: [ $($hl:tt)* ],
+        v_remaining: [
+            #[tag($tag:expr)]
+            $(#[$field_meta:meta])*
+            $field_name:ident : Option < $inner_ty:ty >
+            $(, $($v_rest:tt)*)?
+        ],
+        rest_variants: [ $($rest:tt)* ]
+    ) => {
+        $crate::__tlv_enum_parse_struct_fields!(
+            tag_type: [ $tag_ty ],
+            length: [ $len_ty ],
+            impl_lt: [ $impl_lt ],
+            enum_lt: [ $($enum_lt)? ],
+            header: [ $($header)* ],
+            name: [ $name ],
+            variant_defs: [ $($defs)* ],
+            decode_variants: [ $($codec)* ],
+            v_meta: [ $($v_meta)* ],
+            v_name: [ $v_name ],
+            tlv_fields: [
+                $($tlv)*
+                (opt, $tag, [ $(#[$field_meta])* ], $field_name, Option<$inner_ty>, $inner_ty)
+            ],
+            hl_fields: [ $($hl)* ],
+            v_remaining: [ $($($v_rest)*)? ],
+            rest_variants: [ $($rest)* ]
+        );
+    };
+
+    // Required TLV field (`T`)
+    (
+        tag_type: [ $tag_ty:path ],
+        length: [ $len_ty:ty ],
+        impl_lt: [ $impl_lt:lifetime ],
+        enum_lt: [ $($enum_lt:lifetime)? ],
+        header: [ $($header:tt)* ],
+        name: [ $name:ident ],
+        variant_defs: [ $($defs:tt)* ],
+        decode_variants: [ $($codec:tt)* ],
+        v_meta: [ $($v_meta:tt)* ],
+        v_name: [ $v_name:ident ],
+        tlv_fields: [ $($tlv:tt)* ],
+        hl_fields: [ $($hl:tt)* ],
+        v_remaining: [
+            #[tag($tag:expr)]
+            $(#[$field_meta:meta])*
+            $field_name:ident : $field_ty:ty
+            $(, $($v_rest:tt)*)?
+        ],
+        rest_variants: [ $($rest:tt)* ]
+    ) => {
+        $crate::__tlv_enum_parse_struct_fields!(
+            tag_type: [ $tag_ty ],
+            length: [ $len_ty ],
+            impl_lt: [ $impl_lt ],
+            enum_lt: [ $($enum_lt)? ],
+            header: [ $($header)* ],
+            name: [ $name ],
+            variant_defs: [ $($defs)* ],
+            decode_variants: [ $($codec)* ],
+            v_meta: [ $($v_meta)* ],
+            v_name: [ $v_name ],
+            tlv_fields: [
+                $($tlv)*
+                (req, $tag, [ $(#[$field_meta])* ], $field_name, $field_ty, $field_ty)
+            ],
+            hl_fields: [ $($hl)* ],
+            v_remaining: [ $($($v_rest)*)? ],
+            rest_variants: [ $($rest)* ]
+        );
+    };
+
+    // Base case: return parsed struct variant back to `__tlv_enum_parse_variants!`
+    (
+        tag_type: [ $tag_ty:path ],
+        length: [ $len_ty:ty ],
+        impl_lt: [ $impl_lt:lifetime ],
+        enum_lt: [ $($enum_lt:lifetime)? ],
+        header: [ $($header:tt)* ],
+        name: [ $name:ident ],
+        variant_defs: [ $($defs:tt)* ],
+        decode_variants: [ $($codec:tt)* ],
+        v_meta: [ $($v_meta:tt)* ],
+        v_name: [ $v_name:ident ],
+        tlv_fields: [
+            $( ( $kind:ident, $tag:expr, [ $(#[$tlv_meta:meta])* ], $tlv_name:ident, $tlv_full_ty:ty, $tlv_parse_ty:ty ) )*
+        ],
+        hl_fields: [
+            $( ( $tpl_tag:expr, $val_tag:expr, [ $(#[$hl_meta:meta])* ], $hl_name:ident, $hl_ty:ty ) )*
+        ],
+        v_remaining: [],
+        rest_variants: [ $($rest:tt)* ]
+    ) => {
+        $crate::__tlv_enum_parse_variants!(
+            tag_type: [ $tag_ty ],
+            length: [ $len_ty ],
+            impl_lt: [ $impl_lt ],
+            enum_lt: [ $($enum_lt)? ],
+            header: [ $($header)* ],
+            name: [ $name ],
+            variant_defs: [
+                $($defs)*
+                $($v_meta)*
+                $v_name {
+                    $(
+                        $(#[$tlv_meta])*
+                        $tlv_name : $tlv_full_ty,
+                    )*
+                    $(
+                        $(#[$hl_meta])*
+                        $hl_name : $hl_ty,
+                    )*
+                },
+            ],
+            decode_variants: [
+                $($codec)*
+                (
+                    struct,
+                    $v_name,
+                    [ $( ( $kind, $tag, $tlv_name, $tlv_parse_ty ) )* ],
+                    [ $( ( $tpl_tag, $val_tag, $hl_name, $hl_ty ) )* ]
+                )
+            ],
+            remaining: [ $($rest)* ]
+        );
+    };
+}
+
+/// Internal helper: emits first-match-wins decode attempts for `tlv_enum!`.
+#[doc(hidden)]
+#[macro_export]
+macro_rules! __tlv_enum_decode {
+    (
+        tag_type: [ $tag_ty:path ],
+        length: [ $len_ty:ty ],
+        impl_lt: [ $impl_lt:lifetime ],
+        decoder: $decoder:ident,
+        remaining: [ (tuple, $v_name:ident, $v_ty:ty) $($rest:tt)* ]
+    ) => {{
+        if let Ok(value) = <$v_ty as $crate::Decode<$impl_lt>>::decode($decoder) {
+            return Ok(Self::$v_name(value));
+        }
+        $crate::__tlv_enum_decode!(
+            tag_type: [ $tag_ty ],
+            length: [ $len_ty ],
+            impl_lt: [ $impl_lt ],
+            decoder: $decoder,
+            remaining: [ $($rest)* ]
+        )
+    }};
+
+    (
+        tag_type: [ $tag_ty:path ],
+        length: [ $len_ty:ty ],
+        impl_lt: [ $impl_lt:lifetime ],
+        decoder: $decoder:ident,
+        remaining: [
+            (
+                struct,
+                $v_name:ident,
+                [ $( ( $kind:ident, $tag:expr, $tlv_name:ident, $tlv_ty:ty ) )* ],
+                [ $( ( $tpl_tag:expr, $val_tag:expr, $hl_name:ident, $hl_ty:ty ) )* ]
+            )
+            $($rest:tt)*
+        ]
+    ) => {{
+        let decode_variant = |d: &$crate::Decoder<$impl_lt>| -> Result<Self, $crate::DecodeError> {
+            $crate::__tlv_decode_fields!(
+                tag_type: [ $tag_ty ],
+                length: [ $len_ty ],
+                impl_lt: [ $impl_lt ],
+                decoder: d,
+                ctor: [ Self::$v_name ],
+                tlv_fields: [ $( ( $kind, $tag, $tlv_name, $tlv_ty ) )* ],
+                hl_fields: [ $( ( $tpl_tag, $val_tag, $hl_name, $hl_ty ) )* ]
+            )
+        };
+        if let Ok(value) = decode_variant($decoder) {
+            return Ok(value);
+        }
+        $crate::__tlv_enum_decode!(
+            tag_type: [ $tag_ty ],
+            length: [ $len_ty ],
+            impl_lt: [ $impl_lt ],
+            decoder: $decoder,
+            remaining: [ $($rest)* ]
+        )
+    }};
+
+    (
+        tag_type: [ $tag_ty:path ],
+        length: [ $len_ty:ty ],
+        impl_lt: [ $impl_lt:lifetime ],
+        decoder: $decoder:ident,
+        remaining: []
+    ) => {
+        Err($crate::DecodeError::InvalidValue)
+    };
+}
+
+/// Internal helper: emits `match self` encoding for `tlv_enum!`.
+#[doc(hidden)]
+#[macro_export]
+macro_rules! __tlv_enum_encode {
+    (
+        self: $self:ident,
+        encoder: $encoder:ident,
+        tag_type: [ $tag_ty:path ],
+        length: [ $len_ty:ty ],
+        arms: [ $($arms:tt)* ],
+        remaining: [ (tuple, $v_name:ident, $v_ty:ty) $($rest:tt)* ]
+    ) => {
+        $crate::__tlv_enum_encode!(
+            self: $self,
+            encoder: $encoder,
+            tag_type: [ $tag_ty ],
+            length: [ $len_ty ],
+            arms: [
+                $($arms)*
+                Self::$v_name(value) => $crate::Encode::encode(value, $encoder),
+            ],
+            remaining: [ $($rest)* ]
+        )
+    };
+
+    (
+        self: $self:ident,
+        encoder: $encoder:ident,
+        tag_type: [ $tag_ty:path ],
+        length: [ $len_ty:ty ],
+        arms: [ $($arms:tt)* ],
+        remaining: [
+            (
+                struct,
+                $v_name:ident,
+                [ $( ( $kind:ident, $tag:expr, $tlv_name:ident, $tlv_ty:ty ) )* ],
+                [ $( ( $tpl_tag:expr, $val_tag:expr, $hl_name:ident, $hl_ty:ty ) )* ]
+            )
+            $($rest:tt)*
+        ]
+    ) => {
+        $crate::__tlv_enum_encode!(
+            self: $self,
+            encoder: $encoder,
+            tag_type: [ $tag_ty ],
+            length: [ $len_ty ],
+            arms: [
+                $($arms)*
+                Self::$v_name { $($tlv_name,)* $($hl_name,)* } => {
+                    let _ = &mut *$encoder;
+                    $(
+                        for value in $crate::__tlv_field!(@as_slice $kind, $tlv_name) {
+                            $encoder.write_tlv::<$tag_ty, $len_ty, $tlv_ty>(&$tag_ty($tag), value)?;
+                        }
+                    )*
+                    $(
+                        $encoder.write_header_list::<$tag_ty, $len_ty, $hl_ty>(
+                            &$tag_ty($tpl_tag),
+                            &$tag_ty($val_tag),
+                            $hl_name,
+                        )?;
+                    )*
+                    Ok(())
+                }
+            ],
+            remaining: [ $($rest)* ]
+        )
+    };
+
+    (
+        self: $self:ident,
+        encoder: $encoder:ident,
+        tag_type: [ $tag_ty:path ],
+        length: [ $len_ty:ty ],
+        arms: [ $($arms:tt)* ],
+        remaining: []
+    ) => {
+        match $self {
+            $($arms)*
+        }
     };
 }
 
@@ -829,6 +1488,160 @@ mod tests {
         assert_eq!(
             KeyHeaderList::decode_header_list(&[0x91, 0x01], &[0x03]),
             Err(DecodeError::MissingRequiredField)
+        );
+    }
+
+    #[test]
+    fn test_tlv_enum_inline_struct_variants() {
+        tlv_enum! {
+            #[derive(Debug, PartialEq)]
+            #[length(BerLength)]
+            enum PublicKey<'a> {
+                Ec {
+                    #[tag(0x86)]
+                    point: &'a [u8],
+                },
+                Rsa {
+                    #[tag(0x81)]
+                    modulus: &'a [u8],
+                    #[tag(0x82)]
+                    exponent: &'a [u8],
+                },
+            }
+        }
+
+        let ec = PublicKey::Ec {
+            point: &[0x04, 0x11, 0x22],
+        };
+        let ec_encoded = ec.encode_tlv().unwrap();
+        assert_eq!(ec_encoded, [0x86, 0x03, 0x04, 0x11, 0x22]);
+        assert_eq!(PublicKey::decode_tlv(&ec_encoded), Ok(ec));
+
+        let rsa = PublicKey::Rsa {
+            modulus: &[0xAA; 128],
+            exponent: &[0x01, 0x00, 0x01],
+        };
+        let rsa_encoded = rsa.encode_tlv().unwrap();
+        assert_eq!(PublicKey::decode_tlv(&rsa_encoded), Ok(rsa));
+
+        // Missing required field for RSA and wrong tag for EC
+        assert_eq!(
+            PublicKey::decode_tlv(&[0x81, 0x01, 0xAA]),
+            Err(DecodeError::InvalidValue)
+        );
+        // Mixed EC + RSA tags match neither branch
+        assert_eq!(
+            PublicKey::decode_tlv(&[0x86, 0x01, 0x04, 0x81, 0x01, 0xAA, 0x82, 0x01, 0x03]),
+            Err(DecodeError::InvalidValue)
+        );
+        // Unknown tag
+        assert_eq!(
+            PublicKey::decode_tlv(&[0x99, 0x01, 0x00]),
+            Err(DecodeError::InvalidValue)
+        );
+    }
+
+    #[test]
+    fn test_tlv_enum_tuple_and_mixed_variants() {
+        tlv_struct! {
+            #[derive(Debug, PartialEq)]
+            #[tag_type(BerTag)]
+            #[length(BerLength)]
+            struct Alpha<'a> {
+                #[tag(0x5F20)]
+                name: &'a [u8],
+            }
+        }
+
+        tlv_enum! {
+            #[derive(Debug, PartialEq)]
+            #[tag_type(BerTag)]
+            #[length(BerLength)]
+            enum Mixed<'a> {
+                Alpha(Alpha<'a>),
+                Beta {
+                    #[tag(0x81)]
+                    code: u8,
+                    #[tag(0x82)]
+                    extra: Option<u16>,
+                },
+            }
+        }
+
+        let a = Mixed::Alpha(Alpha { name: b"hi" });
+        let a_enc = a.encode_tlv().unwrap();
+        assert_eq!(a_enc, [0x5F, 0x20, 0x02, b'h', b'i']);
+        assert_eq!(Mixed::decode_tlv(&a_enc), Ok(a));
+
+        let b = Mixed::Beta {
+            code: 0x07,
+            extra: Some(0x1234),
+        };
+        let b_enc = b.encode_tlv().unwrap();
+        assert_eq!(b_enc, [0x81, 0x01, 0x07, 0x82, 0x02, 0x12, 0x34]);
+        assert_eq!(Mixed::decode_tlv(&b_enc), Ok(b));
+    }
+
+    #[test]
+    fn test_tlv_enum_header_list_and_branch_order() {
+        tlv_enum! {
+            #[derive(Debug, PartialEq)]
+            #[tag_type(BerTag)]
+            #[length(BerLength)]
+            enum KeyFields<'a> {
+                Rsa {
+                    #[tag(0x91)]
+                    exp: &'a [u8],
+                    #[tag(0x92)]
+                    p: &'a [u8],
+                    #[tag(0x93)]
+                    q: &'a [u8],
+                },
+                Ecc {
+                    #[tag(0x92)]
+                    scalar: &'a [u8],
+                    #[tag(0x99)]
+                    public: Option<&'a [u8]>,
+                },
+            }
+        }
+
+        let rsa = KeyFields::Rsa {
+            exp: &[0x01, 0x00, 0x01],
+            p: &[0x11, 0x22],
+            q: &[0x33, 0x44],
+        };
+        let (tpl, vals) = rsa.encode_header_list().unwrap();
+        assert_eq!(KeyFields::decode_header_list(&tpl, &vals), Ok(rsa));
+
+        let ecc = KeyFields::Ecc {
+            scalar: &[0xAA; 32],
+            public: None,
+        };
+        let (tpl, vals) = ecc.encode_header_list().unwrap();
+        assert_eq!(KeyFields::decode_header_list(&tpl, &vals), Ok(ecc));
+
+        // Branch order precedence: when two variants can decode the same input,
+        // the first declared variant wins.
+        tlv_enum! {
+            #[derive(Debug, PartialEq)]
+            enum OrderTest {
+                First {
+                    #[tag(0x01)]
+                    a: u8,
+                    #[tag(0x02)]
+                    b: Option<u8>,
+                },
+                Second {
+                    #[tag(0x01)]
+                    a: u8,
+                },
+            }
+        }
+
+        assert_eq!(
+            OrderTest::decode_tlv(&[0x01, 0x01, 0x42]),
+            Ok(OrderTest::First { a: 0x42, b: None })
         );
     }
 }

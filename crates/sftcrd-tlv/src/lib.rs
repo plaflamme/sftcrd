@@ -29,7 +29,7 @@
 //! Types implement [`Decode`] and [`Encode`] to read from a [`Decoder`] and write to an
 //! [`Encoder`]. Primitive leaf types (`bool`, `u8`, `u16`, `u32`, `&[u8]`, `Vec<u8>`) implement
 //! these traits out of the box; composite types iterate over `(tag, value_bytes)` pairs via
-//! [`Decoder::into_iter_tags`] and write fields via [`Encoder::write_tlv`].
+//! [`Decoder::iter_tags`] and write fields via [`Encoder::write_tlv`].
 //!
 //! Because `Decoder` and `Encoder` abstract over standard TLV streams and ISO/IEC 7816-4
 //! header-list `(template, values)` pairs, the same [`Decode`] / [`Encode`] implementation
@@ -48,10 +48,10 @@
 //! }
 //!
 //! impl Decode<'_> for Record {
-//!     fn decode(decoder: Decoder<'_>) -> Result<Self, DecodeError> {
+//!     fn decode(decoder: &Decoder<'_>) -> Result<Self, DecodeError> {
 //!         let mut version = None;
 //!         let mut payload = None;
-//!         for entry in decoder.into_iter_tags::<U8Tag, U8Length>() {
+//!         for entry in decoder.iter_tags::<U8Tag, U8Length>() {
 //!             match entry? {
 //!                 (U8Tag(0x01), bytes) => version = Some(u8::decode_tlv(bytes)?),
 //!                 (U8Tag(0x02), bytes) => payload = Some(Vec::<u8>::decode_tlv(bytes)?),
@@ -157,6 +157,37 @@
 //! let fields = KeyFields { exp: &[0x01, 0x00, 0x01], prime: &[0xAA] };
 //! let (tpl, vals) = fields.encode_header_list().unwrap();
 //! assert_eq!(KeyFields::decode_header_list(&tpl, &vals), Ok(fields));
+//! ```
+//!
+//! # Defining non-discriminated TLV unions with `tlv_enum!`
+//!
+//! Use [`tlv_enum!`] to generate an enum with [`Decode`] and [`Encode`] implementations
+//! for untagged / non-discriminated unions. Decoding tries each variant in declaration order
+//! and returns the first one that succeeds:
+//!
+//! ```
+//! use sftcrd_tlv::{BerLength, Decode, Encode, tlv_enum};
+//!
+//! tlv_enum! {
+//!     #[derive(Debug, PartialEq)]
+//!     #[length(BerLength)]
+//!     enum PublicKey<'a> {
+//!         Ec {
+//!             #[tag(0x86)]
+//!             point: &'a [u8],
+//!         },
+//!         Rsa {
+//!             #[tag(0x81)]
+//!             modulus: &'a [u8],
+//!             #[tag(0x82)]
+//!             exponent: &'a [u8],
+//!         },
+//!     }
+//! }
+//!
+//! let key = PublicKey::Ec { point: &[0x04, 0xAA, 0xBB] };
+//! let bytes = key.encode_tlv().unwrap();
+//! assert_eq!(PublicKey::decode_tlv(&bytes), Ok(key));
 //! ```
 
 mod decoder;
