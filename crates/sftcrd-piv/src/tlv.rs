@@ -1,3 +1,1 @@
-pub use sftcrd_tlv::{ValueDecoder, ValueEncoder};
-
-pub use sftcrd_tlv::tlv_struct;
+pub use sftcrd_tlv::{DecodeValue, EncodeValue, tlv_struct};

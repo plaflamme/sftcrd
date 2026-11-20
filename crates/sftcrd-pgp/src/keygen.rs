@@ -2,7 +2,7 @@
 
 use iso7816::Status;
 use sftcrd_apdu::CommandView;
-use sftcrd_tlv::{BerLength, BerTag, ValueDecoder, ValueEncoder, tlv_struct};
+use sftcrd_tlv::{BerLength, BerTag, Decode, Encode, tlv_struct};
 
 use crate::{
     PgpApplet, Response,
@@ -54,7 +54,7 @@ fn encode_public_key(key: &SlotKey) -> Result<Vec<u8>, Status> {
     GenerateKeyResponse {
         public_key: key.public_key().into(),
     }
-    .encode_top_level()
+    .encode_tlv()
     .map_err(|_| Status::MemoryFailure)
 }
 
@@ -74,7 +74,6 @@ tlv_struct! {
 tlv_struct! {
     #[tag_type(BerTag)]
     #[length(BerLength)]
-    #[header_list]
     struct KeyImportFields<'a> {
         #[tag(0x91)]
         exp: Option<&'a [u8]>,
@@ -192,7 +191,7 @@ impl PgpApplet {
     }
 
     fn import_extended_header_list(&mut self, data: &[u8]) -> Result<(), Status> {
-        let Ok(body) = PutDataOddBody::decode(data) else {
+        let Ok(body) = PutDataOddBody::decode_tlv(data) else {
             return Err(Status::IncorrectDataParameter);
         };
         let ehl = body.header_list;
@@ -228,7 +227,7 @@ fn resolve_crt(
 }
 
 fn parse_crt(data: &[u8]) -> Result<KeySlotId, Status> {
-    let Ok(crt) = ControlReferenceTemplate::decode(data) else {
+    let Ok(crt) = ControlReferenceTemplate::decode_tlv(data) else {
         return Err(Status::IncorrectDataParameter);
     };
     resolve_crt(crt.sig, crt.dec, crt.aut)

@@ -13,7 +13,7 @@ use figment::Figment;
 use figment::providers::{Format, Toml};
 use pkcs8::der::{Decode, Encode};
 use serde::Deserialize;
-use sftcrd_tlv::{BerLength, EncodeError, ValueDecoder, ValueEncoder, tlv_struct};
+use sftcrd_tlv::{BerLength, DecodeValue, Encode as _, EncodeError, EncodeValue, tlv_struct};
 use toml_example::TomlExample;
 
 use crate::PivApplet;
@@ -362,7 +362,7 @@ pub(crate) fn parse_pem_cert_object(pem_str: &str) -> Result<Vec<u8>, ConfigErro
     };
 
     cert_data
-        .encode_top_level()
+        .encode_tlv()
         .map_err(|e| ConfigError::CertError(format!("cannot encode certificate: {e:?}")))
 }
 
@@ -372,8 +372,8 @@ enum CertInfo {
     Gzip = 0x01,
 }
 
-impl ValueDecoder<'_> for CertInfo {
-    fn decode(bytes: &'_ [u8]) -> Result<Self, sftcrd_tlv::DecodeError> {
+impl DecodeValue<'_> for CertInfo {
+    fn decode_bytes(bytes: &'_ [u8]) -> Result<Self, sftcrd_tlv::DecodeError> {
         let [byte] = bytes else {
             return Err(sftcrd_tlv::DecodeError::InvalidValue);
         };
@@ -386,12 +386,12 @@ impl ValueDecoder<'_> for CertInfo {
     }
 }
 
-impl ValueEncoder for CertInfo {
+impl EncodeValue for CertInfo {
     fn length(&self) -> usize {
         1
     }
 
-    fn encode(&self, buf: &mut [u8]) -> Result<(), EncodeError> {
+    fn encode_bytes(&self, buf: &mut [u8]) -> Result<(), EncodeError> {
         buf[0] = *self as u8;
         Ok(())
     }
@@ -681,7 +681,7 @@ EwEB/wQFMAMBAf8wCgYIKoZIzj0EAwIDRwAwRAIgbr2Vrt04qfVTfniWYaVIZHUT
     #[test]
     fn parse_cert_object() {
         let obj = parse_pem_cert_object(TEST_CERT).expect("valid cert");
-        assert!(CertificateData::decode(&obj).is_ok());
+        assert!(<CertificateData as sftcrd_tlv::Decode>::decode_tlv(&obj).is_ok());
     }
 
     #[test]

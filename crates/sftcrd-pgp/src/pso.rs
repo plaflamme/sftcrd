@@ -3,7 +3,7 @@
 
 use iso7816::Status;
 use sftcrd_apdu::CommandView;
-use sftcrd_tlv::{BerLength, BerTag, ValueDecoder, tlv_struct};
+use sftcrd_tlv::{BerLength, BerTag, Decode, tlv_struct};
 
 use sftcrd_key::{EcdsaFormat, KeyError, RsaSignMode};
 
@@ -42,7 +42,7 @@ tlv_struct! {
 }
 
 fn decode_ecdh_point(data: &[u8]) -> Result<&[u8], Status> {
-    let req = EcdhRequest::decode(data).map_err(|_| Status::IncorrectDataParameter)?;
+    let req = EcdhRequest::decode_tlv(data).map_err(|_| Status::IncorrectDataParameter)?;
     Ok(req.cipher_do.public_key.point)
 }
 

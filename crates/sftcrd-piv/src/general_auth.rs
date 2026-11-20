@@ -7,7 +7,7 @@ use sftcrd_key::{EcdsaFormat, RsaSignMode};
 
 use crate::piv::{MgmtAlg, PivKeyAlg};
 use crate::{PivApplet, Response};
-use sftcrd_tlv::{BerLength, ValueDecoder, tlv_struct};
+use sftcrd_tlv::{BerLength, Decode, tlv_struct};
 
 /// SP 800-73-4 §4.1.3 dynamic-authentication tags: the `7C` wrapper and its
 /// witness / challenge / response / exponent members.
@@ -89,7 +89,7 @@ impl PivApplet {
         if p1 != PivKeyAlg(key.alg()).into_u8() {
             return iso7816::Status::IncorrectP1OrP2Parameter.into();
         }
-        let Ok(request) = GaRequest::decode(body) else {
+        let Ok(request) = GaRequest::decode_tlv(body) else {
             return iso7816::Status::IncorrectDataParameter.into();
         };
         let t = request.ga_template;
@@ -119,7 +119,7 @@ impl PivApplet {
     /// dynamic-auth template.
     fn ga_management(&mut self, p1: u8, body: &[u8]) -> Response {
         #[allow(clippy::manual_let_else)]
-        let request = match GaRequest::decode(body) {
+        let request = match GaRequest::decode_tlv(body) {
             Ok(t) => t,
             Err(_) => return iso7816::Status::IncorrectDataParameter.into(),
         };

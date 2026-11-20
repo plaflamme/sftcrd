@@ -12,9 +12,9 @@
 
 use crate::{
     PivApplet, Response,
-    tlv::{ValueDecoder, ValueEncoder, tlv_struct},
+    tlv::{DecodeValue, EncodeValue, tlv_struct},
 };
-use sftcrd_tlv::EncodeError;
+use sftcrd_tlv::{Decode as _, Encode as _, EncodeError};
 use x509_cert::der::{Decode, Encode};
 
 const OBJECT_CHUID: [u8; 3] = [0x5F, 0xC1, 0x02];
@@ -51,12 +51,12 @@ impl PivApplet {
         if command.p1 != 0x3F || command.p2 != 0xFF {
             return iso7816::Status::IncorrectP1OrP2Parameter.into();
         }
-        let Ok(get_data) = GetDataRequest::decode(command.data()) else {
+        let Ok(get_data) = GetDataRequest::decode_tlv(command.data()) else {
             return iso7816::Status::IncorrectDataParameter.into();
         };
         match self.data_object_value(get_data.selector) {
             Some(value) => {
-                let response = GetDataResponse { data: &value }.encode_top_level();
+                let response = GetDataResponse { data: &value }.encode_tlv();
                 match response {
                     Ok(response) => response.into(),
                     Err(_) => iso7816::Status::MemoryFailure.into(),
@@ -82,7 +82,7 @@ impl PivApplet {
             return sw.into();
         }
 
-        let Ok(put_data) = PutDataRequest::decode(command.data()) else {
+        let Ok(put_data) = PutDataRequest::decode_tlv(command.data()) else {
             return iso7816::Status::IncorrectDataParameter.into();
         };
 
@@ -140,8 +140,8 @@ enum Selector {
     AttestationCert,
 }
 
-impl ValueDecoder<'_> for Selector {
-    fn decode(bytes: &'_ [u8]) -> Result<Self, sftcrd_tlv::DecodeError> {
+impl DecodeValue<'_> for Selector {
+    fn decode_bytes(bytes: &'_ [u8]) -> Result<Self, sftcrd_tlv::DecodeError> {
         fn cert_slot_index(tag: u8) -> Option<crate::piv::Slot> {
             match tag {
                 0x05 => Some(crate::piv::Slot::Authentication),
@@ -170,12 +170,12 @@ impl ValueDecoder<'_> for Selector {
     }
 }
 
-impl ValueEncoder for Selector {
+impl EncodeValue for Selector {
     fn length(&self) -> usize {
         3
     }
 
-    fn encode(&self, buf: &mut [u8]) -> Result<(), EncodeError> {
+    fn encode_bytes(&self, buf: &mut [u8]) -> Result<(), EncodeError> {
         fn cert_slot_index(slot: crate::piv::Slot) -> u8 {
             match slot {
                 crate::piv::Slot::Authentication => 0x05,
@@ -262,23 +262,23 @@ mod tests {
     #[test]
     fn test_decode_selector() {
         assert_eq!(
-            Selector::decode(&[0x5F, 0xC1, 0x05]),
+            Selector::decode_tlv(&[0x5F, 0xC1, 0x05]),
             Ok(Selector::Slot(crate::piv::Slot::Authentication))
         );
         assert_eq!(
-            Selector::decode(&[0x5F, 0xC1, 0x0A]),
+            Selector::decode_tlv(&[0x5F, 0xC1, 0x0A]),
             Ok(Selector::Slot(crate::piv::Slot::Signature))
         );
         assert_eq!(
-            Selector::decode(&[0x5F, 0xC1, 0x0B]),
+            Selector::decode_tlv(&[0x5F, 0xC1, 0x0B]),
             Ok(Selector::Slot(crate::piv::Slot::KeyManagement))
         );
         assert_eq!(
-            Selector::decode(&[0x5F, 0xC1, 0x01]),
+            Selector::decode_tlv(&[0x5F, 0xC1, 0x01]),
             Ok(Selector::Slot(crate::piv::Slot::CardAuthentication))
         );
         assert_eq!(
-            Selector::decode(&[0x5F, 0xC1, 0x0D]),
+            Selector::decode_tlv(&[0x5F, 0xC1, 0x0D]),
             Ok(Selector::Slot(
                 crate::piv::Slot::retired(1).expect("retired 1")
             ))

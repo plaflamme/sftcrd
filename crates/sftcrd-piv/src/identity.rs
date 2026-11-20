@@ -10,9 +10,10 @@ use crate::piv::TouchPolicy;
 use crate::slot::{KeyOrigin, factory_pin_policy};
 use crate::{PivApplet, Response};
 use sftcrd_tlv::BerLength;
+use sftcrd_tlv::DecodeValue;
+use sftcrd_tlv::Encode;
 use sftcrd_tlv::EncodeError;
-use sftcrd_tlv::ValueDecoder;
-use sftcrd_tlv::ValueEncoder;
+use sftcrd_tlv::EncodeValue;
 use sftcrd_tlv::tlv_struct;
 
 impl PivApplet {
@@ -45,11 +46,11 @@ impl PivApplet {
             return iso7816::Status::IncorrectP1OrP2Parameter.into();
         }
         let body = match command.p2 {
-            0x80 => PivApplet::pin_reference_metadata(&self.pin).encode_top_level(),
-            0x81 => PivApplet::pin_reference_metadata(&self.puk).encode_top_level(),
+            0x80 => PivApplet::pin_reference_metadata(&self.pin).encode_tlv(),
+            0x81 => PivApplet::pin_reference_metadata(&self.puk).encode_tlv(),
             reference => match crate::piv::Slot::from_u8(reference) {
                 Some(slot) => match self.key_reference_metadata(slot) {
-                    Some(body) => body.encode_top_level(),
+                    Some(body) => body.encode_tlv(),
                     None => return iso7816::Status::KeyReferenceNotFound.into(),
                 },
                 None => return iso7816::Status::IncorrectP1OrP2Parameter.into(),
@@ -116,20 +117,20 @@ tlv_struct! {
     }
 }
 
-impl ValueEncoder for KeyOrigin {
+impl EncodeValue for KeyOrigin {
     fn length(&self) -> usize {
         1
     }
 
-    fn encode(&self, buf: &mut [u8]) -> Result<(), EncodeError> {
+    fn encode_bytes(&self, buf: &mut [u8]) -> Result<(), EncodeError> {
         buf[0] = *self as u8;
         Ok(())
     }
 }
 
-impl ValueDecoder<'_> for KeyOrigin {
-    fn decode(bytes: &'_ [u8]) -> Result<Self, sftcrd_tlv::DecodeError> {
-        match u8::decode(bytes)? {
+impl DecodeValue<'_> for KeyOrigin {
+    fn decode_bytes(bytes: &'_ [u8]) -> Result<Self, sftcrd_tlv::DecodeError> {
+        match u8::decode_bytes(bytes)? {
             0x01 => Ok(KeyOrigin::Generated),
             0x02 => Ok(KeyOrigin::Imported),
             _ => Err(sftcrd_tlv::DecodeError::InvalidValue),

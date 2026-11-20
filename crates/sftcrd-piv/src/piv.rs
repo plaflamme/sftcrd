@@ -1,4 +1,4 @@
-use sftcrd_tlv::{ConstLength, DecodeError, EncodeError, ValueDecoder, ValueEncoder};
+use sftcrd_tlv::{ConstLength, DecodeError, DecodeValue, EncodeError, EncodeValue};
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct RetiredIndex(u8);
@@ -162,19 +162,19 @@ impl PivKeyAlg {
     }
 }
 
-impl ValueDecoder<'_> for PivKeyAlg {
-    fn decode(bytes: &[u8]) -> Result<Self, sftcrd_tlv::DecodeError> {
-        u8::decode(bytes)
+impl DecodeValue<'_> for PivKeyAlg {
+    fn decode_bytes(bytes: &[u8]) -> Result<Self, sftcrd_tlv::DecodeError> {
+        u8::decode_bytes(bytes)
             .and_then(|value| Self::from_u8(value).ok_or(sftcrd_tlv::DecodeError::InvalidValue))
     }
 }
 
-impl ValueEncoder for PivKeyAlg {
+impl EncodeValue for PivKeyAlg {
     fn length(&self) -> usize {
         1
     }
 
-    fn encode(&self, buf: &mut [u8]) -> Result<(), EncodeError> {
+    fn encode_bytes(&self, buf: &mut [u8]) -> Result<(), EncodeError> {
         buf[0] = self.into_u8();
         Ok(())
     }
@@ -206,9 +206,10 @@ impl TryFrom<u8> for PinPolicy {
     }
 }
 
-impl ValueDecoder<'_> for PinPolicy {
-    fn decode(bytes: &'_ [u8]) -> Result<Self, sftcrd_tlv::DecodeError> {
-        PinPolicy::try_from(u8::decode(bytes)?).map_err(|()| sftcrd_tlv::DecodeError::InvalidValue)
+impl DecodeValue<'_> for PinPolicy {
+    fn decode_bytes(bytes: &'_ [u8]) -> Result<Self, sftcrd_tlv::DecodeError> {
+        PinPolicy::try_from(u8::decode_bytes(bytes)?)
+            .map_err(|()| sftcrd_tlv::DecodeError::InvalidValue)
     }
 }
 
@@ -216,12 +217,12 @@ impl ConstLength for PinPolicy {
     const LENGTH: usize = 1;
 }
 
-impl ValueEncoder for PinPolicy {
+impl EncodeValue for PinPolicy {
     fn length(&self) -> usize {
         1
     }
 
-    fn encode(&self, buf: &mut [u8]) -> Result<(), EncodeError> {
+    fn encode_bytes(&self, buf: &mut [u8]) -> Result<(), EncodeError> {
         buf[0] = *self as u8;
         Ok(())
     }
@@ -253,9 +254,9 @@ impl TryFrom<u8> for TouchPolicy {
     }
 }
 
-impl ValueDecoder<'_> for TouchPolicy {
-    fn decode(bytes: &'_ [u8]) -> Result<Self, sftcrd_tlv::DecodeError> {
-        TouchPolicy::try_from(u8::decode(bytes)?)
+impl DecodeValue<'_> for TouchPolicy {
+    fn decode_bytes(bytes: &'_ [u8]) -> Result<Self, sftcrd_tlv::DecodeError> {
+        TouchPolicy::try_from(u8::decode_bytes(bytes)?)
             .map_err(|()| sftcrd_tlv::DecodeError::InvalidValue)
     }
 }
@@ -264,12 +265,12 @@ impl ConstLength for TouchPolicy {
     const LENGTH: usize = 1;
 }
 
-impl ValueEncoder for TouchPolicy {
+impl EncodeValue for TouchPolicy {
     fn length(&self) -> usize {
         1
     }
 
-    fn encode(&self, buf: &mut [u8]) -> Result<(), EncodeError> {
+    fn encode_bytes(&self, buf: &mut [u8]) -> Result<(), EncodeError> {
         buf[0] = *self as u8;
         Ok(())
     }
@@ -301,31 +302,31 @@ where
     }
 }
 
-impl<'a, T> ValueDecoder<'a> for Defaultable<T>
+impl<'a, T> DecodeValue<'a> for Defaultable<T>
 where
     T: TryFrom<u8>,
     (): std::convert::From<<T as std::convert::TryFrom<u8>>::Error>,
 {
-    fn decode(bytes: &'a [u8]) -> Result<Self, sftcrd_tlv::DecodeError> {
-        match u8::decode(bytes) {
+    fn decode_bytes(bytes: &'a [u8]) -> Result<Self, sftcrd_tlv::DecodeError> {
+        match u8::decode_bytes(bytes) {
             Ok(value) => Ok(Self::try_from(value).map_err(|()| DecodeError::InvalidValue)?),
             Err(_) => Err(DecodeError::InvalidValue),
         }
     }
 }
 
-impl<T> ValueEncoder for Defaultable<T>
+impl<T> EncodeValue for Defaultable<T>
 where
-    T: ValueEncoder,
+    T: EncodeValue,
 {
     fn length(&self) -> usize {
         1
     }
 
-    fn encode(&self, buf: &mut [u8]) -> Result<(), EncodeError> {
+    fn encode_bytes(&self, buf: &mut [u8]) -> Result<(), EncodeError> {
         match self {
             Defaultable::Default => buf[0] = 0x00,
-            Defaultable::Specified(value) => value.encode(buf)?,
+            Defaultable::Specified(value) => value.encode_bytes(buf)?,
         }
         Ok(())
     }

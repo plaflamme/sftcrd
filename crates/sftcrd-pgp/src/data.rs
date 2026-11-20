@@ -3,7 +3,8 @@
 use iso7816::Status;
 use sftcrd_apdu::CommandView;
 use sftcrd_tlv::{
-    BerLength, BerTag, DecodeError, EncodeError, ValueDecoder, ValueEncoder, tlv_struct,
+    BerLength, BerTag, Decode, DecodeError, DecodeValue, Encode, EncodeError, EncodeValue,
+    tlv_struct,
 };
 
 use crate::{
@@ -73,7 +74,7 @@ impl KeySlotMeta {
     }
 
     pub(crate) fn slot_alg(&self) -> Result<SlotAlg, Status> {
-        let Ok(attr) = AlgoAttr::decode(&self.algo_attr) else {
+        let Ok(attr) = AlgoAttr::decode_tlv(&self.algo_attr) else {
             return Err(Status::IncorrectDataParameter);
         };
         attr.to_slot_alg()
@@ -175,8 +176,8 @@ impl AlgoAttr<'_> {
     }
 }
 
-impl<'a> ValueDecoder<'a> for AlgoAttr<'a> {
-    fn decode(bytes: &'a [u8]) -> Result<Self, DecodeError> {
+impl<'a> DecodeValue<'a> for AlgoAttr<'a> {
+    fn decode_bytes(bytes: &'a [u8]) -> Result<Self, DecodeError> {
         let Some(&raw_algo_id) = bytes.first() else {
             return Err(DecodeError::BufferUnderrun);
         };
@@ -203,7 +204,7 @@ impl<'a> ValueDecoder<'a> for AlgoAttr<'a> {
     }
 }
 
-impl ValueEncoder for AlgoAttr<'_> {
+impl EncodeValue for AlgoAttr<'_> {
     fn length(&self) -> usize {
         match self {
             Self::Rsa { .. } => 6,
@@ -211,7 +212,7 @@ impl ValueEncoder for AlgoAttr<'_> {
         }
     }
 
-    fn encode(&self, buf: &mut [u8]) -> Result<(), EncodeError> {
+    fn encode_bytes(&self, buf: &mut [u8]) -> Result<(), EncodeError> {
         let len = self.length();
         if buf.len() < len {
             return Err(EncodeError::BufferUnderrun);
@@ -532,21 +533,21 @@ impl PgpApplet {
             GetDataSelector::CardholderRelatedData => self
                 .data
                 .cardholder_related_data()
-                .encode_top_level()
+                .encode_tlv()
                 .map_or_else(|_| Status::MemoryFailure.into(), Response::from),
             GetDataSelector::ApplicationRelatedData => self
                 .data
                 .application_related_data(&self.aid, &self.pins)
-                .encode_top_level()
+                .encode_tlv()
                 .map_or_else(|_| Status::MemoryFailure.into(), Response::from),
             GetDataSelector::SecuritySupport => self
                 .data
                 .security_support()
-                .encode_top_level()
+                .encode_tlv()
                 .map_or_else(|_| Status::MemoryFailure.into(), Response::from),
             GetDataSelector::PwStatus => self.pins.pw_status_bytes().into(),
             GetDataSelector::AlgorithmInformation => CardData::algorithm_information()
-                .encode_top_level()
+                .encode_tlv()
                 .map_or_else(|_| Status::MemoryFailure.into(), Response::from),
             GetDataSelector::Uif(slot) => self.data.slot(slot).uif.into(),
         }
@@ -625,7 +626,7 @@ impl PgpApplet {
         if data.is_empty() {
             return Status::WrongLength.into();
         }
-        let Ok(attr) = AlgoAttr::decode(data) else {
+        let Ok(attr) = AlgoAttr::decode_tlv(data) else {
             return Status::IncorrectDataParameter.into();
         };
         if let Err(status) = attr.validate_for_slot(slot) {

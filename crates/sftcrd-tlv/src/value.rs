@@ -11,6 +11,24 @@ pub trait Decode<'a>: Sized {
     ///
     /// Returns [`DecodeError`] if decoding fails or the decoder mode is incompatible with `Self`.
     fn decode(decoder: Decoder<'a>) -> Result<Self, DecodeError>;
+
+    /// Decodes `Self` from a standard TLV stream or raw byte slice.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`DecodeError`] if decoding fails.
+    fn decode_tlv(bytes: &'a [u8]) -> Result<Self, DecodeError> {
+        Decoder::decode_tlv(bytes)
+    }
+
+    /// Decodes `Self` from an ISO/IEC 7816-4 header list `(template, values)` pair.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`DecodeError`] if decoding fails or `Self` does not support header lists.
+    fn decode_header_list(template: &'a [u8], values: &'a [u8]) -> Result<Self, DecodeError> {
+        Decoder::decode_header_list(template, values)
+    }
 }
 
 /// Implemented by types that can be encoded into an [`Encoder`] (either a TLV stream / raw bytes
@@ -30,6 +48,24 @@ pub trait Encode {
     /// Returns [`EncodeError`] if measuring fails.
     fn encoded_length(&self) -> Result<usize, EncodeError> {
         Encoder::measure_tlv(self)
+    }
+
+    /// Encodes `self` to a newly allocated buffer in standard TLV mode.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`EncodeError`] if encoding fails.
+    fn encode_tlv(&self) -> Result<Vec<u8>, EncodeError> {
+        Encoder::encode_tlv(self)
+    }
+
+    /// Encodes `self` into a `(template, values)` byte-vector pair in header-list mode.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`EncodeError`] if encoding fails or `Self` does not support header lists.
+    fn encode_header_list(&self) -> Result<(Vec<u8>, Vec<u8>), EncodeError> {
+        Encoder::encode_header_list(self)
     }
 }
 
@@ -301,43 +337,40 @@ mod tests {
     #[test]
     fn test_fixed_array_and_u32_codec() {
         let arr: [[u8; 2]; 3] = [[0x01, 0x02], [0x03, 0x04], [0x05, 0x06]];
-        let encoded = Encoder::encode_tlv(&arr).unwrap();
+        let encoded = arr.encode_tlv().unwrap();
         assert_eq!(encoded, [0x01, 0x02, 0x03, 0x04, 0x05, 0x06]);
-        assert_eq!(Decoder::decode_tlv::<[[u8; 2]; 3]>(&encoded), Ok(arr));
+        assert_eq!(<[[u8; 2]; 3]>::decode_tlv(&encoded), Ok(arr));
         assert_eq!(
-            Decoder::decode_tlv::<[[u8; 2]; 3]>(&[0x01, 0x02, 0x03]),
+            <[[u8; 2]; 3]>::decode_tlv(&[0x01, 0x02, 0x03]),
             Err(DecodeError::BufferUnderrun)
         );
         assert_eq!(
-            Decoder::decode_tlv::<[[u8; 2]; 3]>(&[0x01, 0x02, 0x03, 0x04, 0x05, 0x06, 0x07]),
+            <[[u8; 2]; 3]>::decode_tlv(&[0x01, 0x02, 0x03, 0x04, 0x05, 0x06, 0x07]),
             Err(DecodeError::InvalidValue)
         );
 
         let nums: [u32; 2] = [0x0102_0304, 0xAABB_CCDD];
-        let encoded_nums = Encoder::encode_tlv(&nums).unwrap();
+        let encoded_nums = nums.encode_tlv().unwrap();
         assert_eq!(
             encoded_nums,
             [0x01, 0x02, 0x03, 0x04, 0xAA, 0xBB, 0xCC, 0xDD]
         );
-        assert_eq!(Decoder::decode_tlv::<[u32; 2]>(&encoded_nums), Ok(nums));
+        assert_eq!(<[u32; 2]>::decode_tlv(&encoded_nums), Ok(nums));
     }
 
     #[test]
     fn test_leaf_rejects_header_list() {
         assert_eq!(
-            Decoder::decode_header_list::<u8>(&[0x01, 0x01], &[0x42]),
+            u8::decode_header_list(&[0x01, 0x01], &[0x42]),
+            Err(DecodeError::InvalidValue)
+        );
+        assert_eq!(0x42u8.encode_header_list(), Err(EncodeError::InvalidValue));
+        assert_eq!(
+            <&[u8]>::decode_header_list(&[0x01, 0x01], &[0x42]),
             Err(DecodeError::InvalidValue)
         );
         assert_eq!(
-            Encoder::encode_header_list(&0x42u8),
-            Err(EncodeError::InvalidValue)
-        );
-        assert_eq!(
-            Decoder::decode_header_list::<&[u8]>(&[0x01, 0x01], &[0x42]),
-            Err(DecodeError::InvalidValue)
-        );
-        assert_eq!(
-            Encoder::encode_header_list(&[0x42u8].as_slice()),
+            [0x42u8].as_slice().encode_header_list(),
             Err(EncodeError::InvalidValue)
         );
     }

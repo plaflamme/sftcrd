@@ -29,8 +29,7 @@ use crate::piv::{PinPolicy, PivKeyAlg, TouchPolicy};
 use crate::PivApplet;
 use crate::Response;
 use crate::slot::{KeyAlg, KeyMaterial, KeyOrigin, PublicKey, SlotKey, import_piv_key};
-use sftcrd_tlv::tlv_struct;
-use sftcrd_tlv::{BerLength, ValueDecoder, ValueEncoder};
+use sftcrd_tlv::{BerLength, Decode, Encode, tlv_struct};
 
 tlv_struct! {
     #[length(BerLength)]
@@ -94,7 +93,7 @@ impl PivApplet {
             [0xAC, len, control @ ..] if usize::from(*len) == control.len() => control,
             _ => return iso7816::Status::IncorrectDataParameter.into(),
         };
-        let Ok(ctrl) = Control::decode(control) else {
+        let Ok(ctrl) = Control::decode_tlv(control) else {
             return iso7816::Status::IncorrectDataParameter.into();
         };
         // The `F9` attestation key: P-256 only, and a regeneration
@@ -126,7 +125,7 @@ impl PivApplet {
             let response = GenerateResponse {
                 public_key: PublicKey::Point(point).into(),
             };
-            let Ok(response) = response.encode_top_level() else {
+            let Ok(response) = response.encode_tlv() else {
                 return iso7816::Status::MemoryFailure.into();
             };
             return response.into();
@@ -150,7 +149,7 @@ impl PivApplet {
             ctrl.touch_policy,
         );
 
-        let Ok(response) = response.encode_top_level() else {
+        let Ok(response) = response.encode_tlv() else {
             return iso7816::Status::MemoryFailure.into();
         };
         response.into()
@@ -177,7 +176,7 @@ impl PivApplet {
         let Some(alg) = PivKeyAlg::from_u8(command.p1) else {
             return iso7816::Status::IncorrectDataParameter.into();
         };
-        let Ok(import) = ImportTemplate::decode(command.data()) else {
+        let Ok(import) = ImportTemplate::decode_tlv(command.data()) else {
             return iso7816::Status::IncorrectDataParameter.into();
         };
 

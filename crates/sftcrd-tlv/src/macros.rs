@@ -479,7 +479,7 @@ macro_rules! __tlv_field {
 
 #[cfg(test)]
 mod tests {
-    use crate::{BerLength, BerTag, DecodeError, Decoder, Encode, Encoder, U16Tag};
+    use crate::{BerLength, BerTag, Decode, DecodeError, Encode, U16Tag};
 
     #[test]
     fn test_tlv_struct_default() {
@@ -495,7 +495,7 @@ mod tests {
             }
         }
         assert_eq!(
-            Decoder::decode_tlv::<Packet>(&[0x01, 0x01, 0xFF, 0x02, 0x02, 0xFF, 0xFE]),
+            Packet::decode_tlv(&[0x01, 0x01, 0xFF, 0x02, 0x02, 0xFF, 0xFE]),
             Ok(Packet {
                 version: 0xFF,
                 payload_len: 0xFFFE,
@@ -503,39 +503,41 @@ mod tests {
             })
         );
         assert_eq!(
-            Decoder::decode_tlv::<Packet>(&[0x01, 0x01, 0xFF, 0x02, 0x02, 0xFF, 0xFE, 0x04, 0x00]),
+            Packet::decode_tlv(&[0x01, 0x01, 0xFF, 0x02, 0x02, 0xFF, 0xFE, 0x04, 0x00]),
             Err(DecodeError::InvalidTag)
         );
         assert_eq!(
-            Decoder::decode_tlv::<Packet>(&[
+            Packet::decode_tlv(&[
                 0x01, 0x01, 0xFF, 0x02, 0x02, 0xFF, 0xFE, 0x01, 0x01, 0xFF
             ]),
             Err(DecodeError::DuplicateTag)
         );
         assert_eq!(
-            Decoder::decode_tlv::<Packet>(&[0x01, 0x01]),
+            Packet::decode_tlv(&[0x01, 0x01]),
             Err(DecodeError::BufferUnderrun)
         );
         assert_eq!(
-            Decoder::decode_tlv::<Packet>(&[0x01, 0x01, 0xFF]),
+            Packet::decode_tlv(&[0x01, 0x01, 0xFF]),
             Err(DecodeError::MissingRequiredField)
         );
 
         // encode
         assert_eq!(
-            Encoder::encode_tlv(&Packet {
+            Packet {
                 version: 0xFF,
                 payload_len: 0xFFFE,
                 opt: None
-            }),
+            }
+            .encode_tlv(),
             Ok(vec![0x01, 0x01, 0xFF, 0x02, 0x02, 0xFF, 0xFE])
         );
         assert_eq!(
-            Encoder::encode_tlv(&Packet {
+            Packet {
                 version: 0xFF,
                 payload_len: 0xFFFE,
                 opt: Some(0xFDFC)
-            }),
+            }
+            .encode_tlv(),
             Ok(vec![
                 0x01, 0x01, 0xFF, 0x02, 0x02, 0xFF, 0xFE, 0x03, 0x02, 0xFD, 0xFC
             ])
@@ -555,17 +557,18 @@ mod tests {
             }
         }
         assert_eq!(
-            Decoder::decode_tlv::<Packet>(&[0x01, 0x01, 0x01, 0xFF, 0x01, 0x02, 0x01, 0xFE]),
+            Packet::decode_tlv(&[0x01, 0x01, 0x01, 0xFF, 0x01, 0x02, 0x01, 0xFE]),
             Ok(Packet {
                 version: 0xFF,
                 payload_len: 0xFE,
             })
         );
         assert_eq!(
-            Encoder::encode_tlv(&Packet {
+            Packet {
                 version: 0xFF,
                 payload_len: 0xFE,
-            }),
+            }
+            .encode_tlv(),
             Ok(vec![0x01, 0x01, 0x01, 0xFF, 0x01, 0x02, 0x01, 0xFE])
         );
     }
@@ -600,11 +603,11 @@ mod tests {
             key: Some(vec![0x86, 0x00]),
             fingerprints: Some(&[0xAA]),
         };
-        assert_eq!(Decoder::decode_tlv::<Packet>(&bytes), Ok(packet));
+        assert_eq!(Packet::decode_tlv(&bytes), Ok(packet));
 
         // decoding in a different order works
         assert_eq!(
-            Decoder::decode_tlv::<Packet>(&[0x5F, 0x52, 0x01, 0x00, 0x4F, 0x01, 0xD2]),
+            Packet::decode_tlv(&[0x5F, 0x52, 0x01, 0x00, 0x4F, 0x01, 0xD2]),
             Ok(Packet {
                 aid: &[0xD2],
                 historical: Some(&[0x00]),
@@ -622,7 +625,7 @@ mod tests {
         };
         assert_eq!(packet.encoded_length(), Ok(16));
         assert_eq!(
-            Encoder::encode_tlv(&packet),
+            packet.encode_tlv(),
             Ok(vec![
                 0x4F, 0x02, 0xD2, 0x76, 0x5F, 0x52, 0x01, 0x00, 0x7F, 0x49, 0x02, 0x86, 0x00, 0xC5,
                 0x01, 0xAA,
@@ -631,17 +634,17 @@ mod tests {
 
         // unknown 2-byte tag
         assert_eq!(
-            Decoder::decode_tlv::<Packet>(&[0x4F, 0x00, 0x5F, 0x2D, 0x00]),
+            Packet::decode_tlv(&[0x4F, 0x00, 0x5F, 0x2D, 0x00]),
             Err(DecodeError::InvalidTag)
         );
         // duplicate 2-byte tag
         assert_eq!(
-            Decoder::decode_tlv::<Packet>(&[0x4F, 0x00, 0x5F, 0x52, 0x00, 0x5F, 0x52, 0x00]),
+            Packet::decode_tlv(&[0x4F, 0x00, 0x5F, 0x52, 0x00, 0x5F, 0x52, 0x00]),
             Err(DecodeError::DuplicateTag)
         );
         // truncated multi-byte tag
         assert_eq!(
-            Decoder::decode_tlv::<Packet>(&[0x4F, 0x00, 0x5F]),
+            Packet::decode_tlv(&[0x4F, 0x00, 0x5F]),
             Err(DecodeError::BufferUnderrun)
         );
     }
@@ -659,21 +662,21 @@ mod tests {
             }
         }
         assert_eq!(
-            Decoder::decode_tlv::<Packet>(&[0x01, 0x01, 0xFF, 0x02, 0x81, 0x01, 0xFE]),
+            Packet::decode_tlv(&[0x01, 0x01, 0xFF, 0x02, 0x81, 0x01, 0xFE]),
             Ok(Packet {
                 version: 0xFF,
                 payload_len: vec![0xFE],
             })
         );
         assert_eq!(
-            Decoder::decode_tlv::<Packet>(&[0x01, 0x01, 0xFF, 0x02, 0x82, 0x00, 0x01, 0xFE]),
+            Packet::decode_tlv(&[0x01, 0x01, 0xFF, 0x02, 0x82, 0x00, 0x01, 0xFE]),
             Ok(Packet {
                 version: 0xFF,
                 payload_len: vec![0xFE],
             })
         );
         assert_eq!(
-            Decoder::decode_tlv::<Packet>(&[0x01, 0x01, 0xFF, 0x02, 0x80, 0xFE, 0x00, 0x00]),
+            Packet::decode_tlv(&[0x01, 0x01, 0xFF, 0x02, 0x80, 0xFE, 0x00, 0x00]),
             Err(DecodeError::InvalidLength)
         );
     }
@@ -691,21 +694,21 @@ mod tests {
             }
         }
         assert_eq!(
-            Decoder::decode_tlv::<Packet>(&[0x01, 0x01, 0xFF, 0x02, 0x81, 0x01, 0xFE]),
+            Packet::decode_tlv(&[0x01, 0x01, 0xFF, 0x02, 0x81, 0x01, 0xFE]),
             Ok(Packet {
                 version: 0xFF,
                 payload_len: &[0xFE],
             })
         );
         assert_eq!(
-            Decoder::decode_tlv::<Packet>(&[0x01, 0x01, 0xFF, 0x02, 0x82, 0x00, 0x01, 0xFE]),
+            Packet::decode_tlv(&[0x01, 0x01, 0xFF, 0x02, 0x82, 0x00, 0x01, 0xFE]),
             Ok(Packet {
                 version: 0xFF,
                 payload_len: &[0xFE],
             })
         );
         assert_eq!(
-            Decoder::decode_tlv::<Packet>(&[0x01, 0x01, 0xFF, 0x02, 0x80, 0xFE, 0x00, 0x00]),
+            Packet::decode_tlv(&[0x01, 0x01, 0xFF, 0x02, 0x80, 0xFE, 0x00, 0x00]),
             Err(DecodeError::InvalidLength)
         );
     }
@@ -728,7 +731,7 @@ mod tests {
             sig: vec![vec![0xAA], vec![0xBB, 0xCC]],
             dec: vec![0x0102, 0x0304],
         };
-        let encoded = Encoder::encode_tlv(&packet).unwrap();
+        let encoded = packet.encode_tlv().unwrap();
         assert_eq!(
             encoded,
             [
@@ -736,9 +739,9 @@ mod tests {
                 0x04
             ]
         );
-        assert_eq!(Decoder::decode_tlv::<RepeatedPacket>(&encoded), Ok(packet));
+        assert_eq!(RepeatedPacket::decode_tlv(&encoded), Ok(packet));
         assert_eq!(
-            Decoder::decode_tlv::<RepeatedPacket>(&[]),
+            RepeatedPacket::decode_tlv(&[]),
             Ok(RepeatedPacket {
                 sig: Vec::new(),
                 dec: Vec::new(),
@@ -782,7 +785,7 @@ mod tests {
                 n: None,
             },
         };
-        let encoded = Encoder::encode_tlv(&outer).unwrap();
+        let encoded = outer.encode_tlv().unwrap();
         let mut expected_vals = vec![0x01, 0x00, 0x01];
         expected_vals.extend_from_slice(&[0xAA; 128]);
         let mut expected_encoded = vec![
@@ -793,41 +796,38 @@ mod tests {
         expected_encoded.extend_from_slice(&expected_vals);
         assert_eq!(outer.encoded_length(), Ok(expected_encoded.len()));
         assert_eq!(encoded, expected_encoded);
-        assert_eq!(
-            Decoder::decode_tlv::<OuterHeaderList>(&encoded),
-            Ok(outer)
-        );
+        assert_eq!(OuterHeaderList::decode_tlv(&encoded), Ok(outer));
 
-        // Direct Decoder::decode_header_list / Encoder::encode_header_list
+        // Direct Decode::decode_header_list / Encode::encode_header_list
         let key = KeyHeaderList {
             e: &[0x01, 0x00, 0x01],
             p: &[0xAA; 128],
             n: None,
         };
-        let (tpl, vals) = Encoder::encode_header_list(&key).unwrap();
+        let (tpl, vals) = key.encode_header_list().unwrap();
         assert_eq!(tpl, [0x91, 0x03, 0x92, 0x81, 0x80]);
         assert_eq!(vals, expected_vals);
 
         // Same struct also decodes/encodes as standard TLV
-        let tlv_encoded = Encoder::encode_tlv(&key).unwrap();
-        assert_eq!(Decoder::decode_tlv::<KeyHeaderList>(&tlv_encoded), Ok(key));
+        let tlv_encoded = key.encode_tlv().unwrap();
+        assert_eq!(KeyHeaderList::decode_tlv(&tlv_encoded), Ok(key));
 
         let mut extra = vals.clone();
         extra.push(0x00);
         assert_eq!(
-            Decoder::decode_header_list::<KeyHeaderList>(&tpl, &extra),
+            KeyHeaderList::decode_header_list(&tpl, &extra),
             Err(DecodeError::InvalidLength)
         );
         assert_eq!(
-            Decoder::decode_header_list::<KeyHeaderList>(&tpl, &vals[..10]),
+            KeyHeaderList::decode_header_list(&tpl, &vals[..10]),
             Err(DecodeError::BufferUnderrun)
         );
         assert_eq!(
-            Decoder::decode_header_list::<KeyHeaderList>(&[0x99, 0x01], &[0x00]),
+            KeyHeaderList::decode_header_list(&[0x99, 0x01], &[0x00]),
             Err(DecodeError::InvalidTag)
         );
         assert_eq!(
-            Decoder::decode_header_list::<KeyHeaderList>(&[0x91, 0x01], &[0x03]),
+            KeyHeaderList::decode_header_list(&[0x91, 0x01], &[0x03]),
             Err(DecodeError::MissingRequiredField)
         );
     }
