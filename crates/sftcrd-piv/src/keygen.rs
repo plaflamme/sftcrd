@@ -176,15 +176,12 @@ impl PivApplet {
             return iso7816::Status::IncorrectDataParameter.into();
         };
 
-        let Ok(key_material) = import.key_material(alg.0) else {
-            return iso7816::Status::IncorrectDataParameter.into();
-        };
+        let (key_material, pin_policy, touch_policy) = import.into_parts();
 
         let Ok(slot_key) = import_piv_key(alg.0, &key_material) else {
             return iso7816::Status::IncorrectDataParameter.into();
         };
 
-        let (pin_policy, touch_policy) = import.policies();
         self.commit_slot_key(
             index,
             slot_key,
@@ -291,30 +288,32 @@ tlv_enum! {
 }
 
 impl<'a> ImportTemplate<'a> {
-    fn policies(&self) -> (Option<Defaultable<PinPolicy>>, Option<Defaultable<TouchPolicy>>) {
+    fn into_parts(
+        self,
+    ) -> (
+        KeyMaterial<'a>,
+        Option<Defaultable<PinPolicy>>,
+        Option<Defaultable<TouchPolicy>>,
+    ) {
         match self {
             Self::Rsa {
+                p,
+                q,
+                dp,
+                dq,
+                n,
                 pin_policy,
                 touch_policy,
-                ..
-            }
-            | Self::Ec {
+            } => (
+                KeyMaterial::Rsa { p, q, dp, dq, n },
                 pin_policy,
                 touch_policy,
-                ..
-            } => (*pin_policy, *touch_policy),
-        }
-    }
-
-    fn key_material(&self, key_alg: KeyAlg) -> Result<KeyMaterial<'a>, ()> {
-        match (self, key_alg) {
-            (Self::Rsa { p, q, dp, dq, n, .. }, KeyAlg::Rsa(_)) => {
-                Ok(KeyMaterial::Rsa { p, q, dp, dq, n })
-            }
-            (Self::Ec { scalar, .. }, alg) if !matches!(alg, KeyAlg::Rsa(_)) => {
-                Ok(KeyMaterial::Scalar(scalar))
-            }
-            _ => Err(()),
+            ),
+            Self::Ec {
+                scalar,
+                pin_policy,
+                touch_policy,
+            } => (KeyMaterial::Scalar(scalar), pin_policy, touch_policy),
         }
     }
 }
