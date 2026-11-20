@@ -162,32 +162,55 @@
 //! # Defining non-discriminated TLV unions with `tlv_enum!`
 //!
 //! Use [`tlv_enum!`] to generate an enum with [`Decode`] and [`Encode`] implementations
-//! for untagged / non-discriminated unions. Decoding tries each variant in declaration order
-//! and returns the first one that succeeds:
+//! for untagged / non-discriminated unions, such as mutually exclusive sets of TLVs or
+//! header lists whose tag layout varies by variant.
+//!
+//! Variants may be **inline struct variants** (supporting the same `#[tag_type(...)]`,
+//! `#[length(...)]`, `#[tag(...)]`, `#[header_list(...)]`, `Option<T>`, and `Vec<T>` syntax
+//! as [`tlv_struct!`]) or **tuple variants** wrapping any existing [`Decode`] / [`Encode`]
+//! type, and both forms can be mixed in the same enum.
+//!
+//! Decoding tries each variant in declaration order against the same [`Decoder`] and returns
+//! the first one that succeeds, or [`DecodeError::InvalidValue`] if all variants fail. When
+//! variants have overlapping tag sets, place the more specific variant first. Like
+//! [`tlv_struct!`], generated enums work in both standard TLV and ISO/IEC 7816-4 header-list
+//! modes:
 //!
 //! ```
-//! use sftcrd_tlv::{BerLength, Decode, Encode, tlv_enum};
+//! use sftcrd_tlv::{BerLength, Decode, DecodeError, Encode, tlv_enum, tlv_struct};
+//!
+//! tlv_struct! {
+//!     #[derive(Debug, PartialEq)]
+//!     #[length(BerLength)]
+//!     struct Pair<'a> {
+//!         #[tag(0x81)]
+//!         first: &'a [u8],
+//!         #[tag(0x82)]
+//!         second: &'a [u8],
+//!     }
+//! }
 //!
 //! tlv_enum! {
 //!     #[derive(Debug, PartialEq)]
 //!     #[length(BerLength)]
-//!     enum PublicKey<'a> {
-//!         Ec {
+//!     enum Payload<'a> {
+//!         Single {
 //!             #[tag(0x86)]
-//!             point: &'a [u8],
+//!             data: &'a [u8],
 //!         },
-//!         Rsa {
-//!             #[tag(0x81)]
-//!             modulus: &'a [u8],
-//!             #[tag(0x82)]
-//!             exponent: &'a [u8],
-//!         },
+//!         Pair(Pair<'a>),
 //!     }
 //! }
 //!
-//! let key = PublicKey::Ec { point: &[0x04, 0xAA, 0xBB] };
-//! let bytes = key.encode_tlv().unwrap();
-//! assert_eq!(PublicKey::decode_tlv(&bytes), Ok(key));
+//! let single = Payload::Single { data: &[0x04, 0xAA, 0xBB] };
+//! let bytes = single.encode_tlv().unwrap();
+//! assert_eq!(Payload::decode_tlv(&bytes), Ok(single));
+//!
+//! let pair = Payload::Pair(Pair { first: &[0xAA], second: &[0x01, 0x00, 0x01] });
+//! let (tpl, vals) = pair.encode_header_list().unwrap();
+//! assert_eq!(Payload::decode_header_list(&tpl, &vals), Ok(pair));
+//!
+//! assert_eq!(Payload::decode_tlv(&[0x99, 0x01, 0x00]), Err(DecodeError::InvalidValue));
 //! ```
 
 mod decoder;

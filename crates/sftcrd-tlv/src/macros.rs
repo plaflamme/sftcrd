@@ -526,73 +526,113 @@ macro_rules! __tlv_field {
 /// Declarative macro to generate an enum and corresponding [`crate::Decode`] /
 /// [`crate::Encode`] implementations for non-discriminated TLV unions.
 ///
-/// Decoding tries each variant in declaration order and returns the first one
-/// that succeeds, or [`crate::DecodeError::InvalidValue`] if all variants fail.
-/// Both tuple variants wrapping existing [`crate::Decode`] / [`crate::Encode`]
-/// types and inline struct variants (with the same field attributes as
-/// [`tlv_struct!`]) are supported and may be mixed in the same enum.
+/// # Variant forms
+///
+/// Both of the following variant forms are supported and may be freely mixed in
+/// the same enum:
+///
+/// - **Tuple (newtype) variants** (`Variant(InnerTy)`): delegate directly to
+///   `InnerTy`'s [`crate::Decode`] and [`crate::Encode`] implementations.
+/// - **Inline struct variants** (`Variant { ... }`): support the same field
+///   syntax and attributes as [`tlv_struct!`] (`#[tag(expr)]`,
+///   `#[tag(expr, repeated)]`, `#[header_list(tpl_tag, val_tag)]`, `Option<T>`,
+///   and `Vec<T>`).
+///
+/// # Attributes and lifetimes
+///
+/// - `#[tag_type(...)]` (default [`crate::U8Tag`]) and `#[length(...)]`
+///   (default [`crate::U8Length`]) configure the wire format for inline struct
+///   variants.
+/// - An optional single lifetime parameter (`enum Name<'a>`) is supported for
+///   zero-copy borrowed fields.
+/// - Other attributes (such as `#[derive(...)]` and doc comments) are preserved
+///   on the generated enum, variants, and fields.
+///
+/// # Decoding semantics
+///
+/// [`crate::Decode::decode`] attempts each variant in declaration order against
+/// the same [`crate::Decoder`] and returns the first one that succeeds. If no
+/// variant matches, it returns `Err(`[`crate::DecodeError::InvalidValue`]`)`.
+///
+/// Because each inline struct variant (and [`tlv_struct!`]) rejects unknown
+/// tags and missing required fields, variants with disjoint required tags are
+/// unambiguous. When variants have overlapping tag sets (for instance, one
+/// variant only adds optional fields on top of another), list the more specific
+/// variant first.
+///
+/// Both standard TLV streams ([`crate::Decode::decode_tlv`] /
+/// [`crate::Encode::encode_tlv`]) and ISO/IEC 7816-4 header lists
+/// ([`crate::Decode::decode_header_list`] /
+/// [`crate::Encode::encode_header_list`]) are supported automatically.
 ///
 /// # Examples
 ///
 /// Inline struct variants with custom length encoding:
 ///
 /// ```
-/// use sftcrd_tlv::{BerLength, Decode, Encode, tlv_enum};
+/// use sftcrd_tlv::{BerLength, Decode, DecodeError, Encode, tlv_enum};
 ///
 /// tlv_enum! {
 ///     #[derive(Debug, PartialEq)]
 ///     #[length(BerLength)]
-///     enum PublicKey<'a> {
-///         Ec {
+///     enum Payload<'a> {
+///         Single {
 ///             #[tag(0x86)]
-///             point: &'a [u8],
+///             data: &'a [u8],
 ///         },
-///         Rsa {
+///         Pair {
 ///             #[tag(0x81)]
-///             modulus: &'a [u8],
+///             first: &'a [u8],
 ///             #[tag(0x82)]
-///             exponent: &'a [u8],
+///             second: &'a [u8],
 ///         },
 ///     }
 /// }
 ///
-/// let key = PublicKey::Rsa { modulus: &[0xAA], exponent: &[0x01, 0x00, 0x01] };
-/// let encoded = key.encode_tlv().unwrap();
-/// assert_eq!(PublicKey::decode_tlv(&encoded), Ok(key));
+/// let pair = Payload::Pair { first: &[0xAA], second: &[0x01, 0x00, 0x01] };
+/// let encoded = pair.encode_tlv().unwrap();
+/// assert_eq!(Payload::decode_tlv(&encoded), Ok(pair));
+/// assert_eq!(Payload::decode_tlv(&[0x99, 0x01, 0x00]), Err(DecodeError::InvalidValue));
 /// ```
 ///
-/// Tuple variants wrapping [`tlv_struct!`] types:
+/// Mixing a tuple variant (wrapping a [`tlv_struct!`]) with an inline struct
+/// variant, decoded from an ISO/IEC 7816-4 header list:
 ///
 /// ```
-/// use sftcrd_tlv::{Decode, Encode, tlv_enum, tlv_struct};
+/// use sftcrd_tlv::{BerLength, BerTag, Decode, Encode, tlv_enum, tlv_struct};
 ///
 /// tlv_struct! {
 ///     #[derive(Debug, PartialEq)]
-///     struct Alpha {
-///         #[tag(0x01)]
-///         a: u8,
-///     }
-/// }
-///
-/// tlv_struct! {
-///     #[derive(Debug, PartialEq)]
-///     struct Beta {
-///         #[tag(0x02)]
-///         b: u16,
+///     #[tag_type(BerTag)]
+///     #[length(BerLength)]
+///     struct FullRecord<'a> {
+///         #[tag(0x91)]
+///         a: &'a [u8],
+///         #[tag(0x92)]
+///         b: &'a [u8],
+///         #[tag(0x93)]
+///         c: &'a [u8],
 ///     }
 /// }
 ///
 /// tlv_enum! {
 ///     #[derive(Debug, PartialEq)]
-///     enum Choice {
-///         Alpha(Alpha),
-///         Beta(Beta),
+///     #[tag_type(BerTag)]
+///     #[length(BerLength)]
+///     enum Record<'a> {
+///         Full(FullRecord<'a>),
+///         Compact {
+///             #[tag(0x92)]
+///             b: &'a [u8],
+///             #[tag(0x99)]
+///             extra: Option<&'a [u8]>,
+///         },
 ///     }
 /// }
 ///
-/// let choice = Choice::Beta(Beta { b: 0x1234 });
-/// let encoded = choice.encode_tlv().unwrap();
-/// assert_eq!(Choice::decode_tlv(&encoded), Ok(choice));
+/// let record = Record::Compact { b: &[0x11, 0x22], extra: None };
+/// let (tpl, vals) = record.encode_header_list().unwrap();
+/// assert_eq!(Record::decode_header_list(&tpl, &vals), Ok(record));
 /// ```
 #[macro_export]
 macro_rules! tlv_enum {
