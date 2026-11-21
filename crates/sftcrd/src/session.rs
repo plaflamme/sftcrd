@@ -133,8 +133,9 @@ impl<'a> CardSession<'a> {
         debug!("power off");
     }
 
-    /// Reset the card.
+    /// Reset the card and ensure it is powered on.
     pub fn reset(&mut self) {
+        self.power_on = true;
         debug!("reset");
     }
 

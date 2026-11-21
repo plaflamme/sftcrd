@@ -2,9 +2,10 @@
 name = "sftcrd"
 version = "0.1.0"
 edition = "2024"
-description = "Smartcard server for PIV applet via VSmartCard protocol."
+description = "Software smartcard server supporting PIV and OpenPGP applets via PC/SC IFD and VSmartCard."
 
 [dependencies]
+sftcrd-ifd-proto = { workspace = true }
 sftcrd-pgp = { workspace = true }
 sftcrd-piv = { workspace = true }
 sftcrd-tlv = { workspace = true }

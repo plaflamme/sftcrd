@@ -34,6 +34,7 @@ rand = "0.10"
 rsa = { version = "0.10", features = ["hazmat", "pkcs1v15"] }
 serde = { version = "1.0", features = ["derive"] }
 sftcrd-apdu = { path = "crates/sftcrd-apdu" }
+sftcrd-ifd-proto = { path = "crates/sftcrd-ifd-proto" }
 sftcrd-key = { path = "crates/sftcrd-key" }
 sftcrd-pgp = { path = "crates/sftcrd-pgp" }
 sftcrd-piv = { path = "crates/sftcrd-piv" }

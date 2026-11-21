@@ -1,18 +1,19 @@
-//! Smartcard server for PIV applet via `VSmartCard` protocol.
+//! Software smartcard server presenting PIV and `OpenPGP` applets via
+//! direct PC/SC (IFD Unix socket) or `VSmartCard` (TCP).
 //!
-//! This crate provides the `sftcrd` binary that acts as a `VSmartCard` server,
-//! presenting a PIV applet as a PC/SC card. It listens on a TCP port and
-//! handles the low-level APDU protocol for the [`sftcrd_piv`] applet.
+//! This crate provides the `sftcrd` binary and its transport-agnostic
+//! [`CardSession`] abstraction.
 //!
 //! # Architecture
 //!
-//! This crate contains only the server infrastructure:
+//! This crate contains the server infrastructure:
 //!
-//! - TCP listener for `VSmartCard` protocol
-//! - APDU dispatch between the host and the PIV applet
+//! - `sftcrd pcsc`: Unix domain socket listener speaking [`sftcrd_ifd_proto`]
+//!   (with systemd socket activation support)
+//! - `sftcrd vpcd`: TCP listener speaking the `VSmartCard` protocol
+//! - APDU dispatch between the host and the [`sftcrd_piv`] / [`sftcrd_pgp`]
+//!   applets
 //! - Power state management
-//!
-//! The PIV applet implementation lives in the [`sftcrd_piv`] crate.
 
 pub mod session;
 

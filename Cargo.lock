@@ -1055,6 +1055,7 @@ dependencies = [
  "iso7816",
  "keyroost-piv",
  "serde",
+ "sftcrd-ifd-proto",
  "sftcrd-pgp",
  "sftcrd-piv",
  "sftcrd-tlv",
