@@ -1,0 +1,14 @@
+[package]
+name = "sftcrd-ifd"
+version = "0.1.0"
+edition = "2024"
+description = "PC/SC-Lite IFD Handler v3 shared library shim connecting pcscd to the sftcrd daemon."
+
+[lib]
+crate-type = ["cdylib", "rlib"]
+
+[dependencies]
+sftcrd-ifd-proto = { workspace = true }
+
+[lints]
+workspace = true

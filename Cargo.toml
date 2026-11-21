@@ -1,6 +1,7 @@
 [workspace]
 members = [
     "crates/sftcrd-apdu",
+    "crates/sftcrd-ifd",
     "crates/sftcrd-ifd-proto",
     "crates/sftcrd-key",
     "crates/sftcrd-tlv",

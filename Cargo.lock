@@ -1074,6 +1074,13 @@ dependencies = [
 ]
 
 [[package]]
+name = "sftcrd-ifd"
+version = "0.1.0"
+dependencies = [
+ "sftcrd-ifd-proto",
+]
+
+[[package]]
 name = "sftcrd-ifd-proto"
 version = "0.1.0"
 dependencies = [
