@@ -25,10 +25,10 @@ use std::process::ExitCode;
 use clap::{Parser, Subcommand};
 use figment::Figment;
 use figment::providers::{Format, Toml};
-use tracing::{info, trace, warn};
+use tracing::{info, warn};
 use tracing_subscriber::EnvFilter;
 
-use sftcrd::{CardConfig, DEFAULT_SERIAL, PgpApplet, PivApplet};
+use sftcrd::{CardChannels, CardConfig, DEFAULT_SERIAL, PgpApplet, PivApplet};
 use toml_example::TomlExample;
 
 /// The ATR of a `YubiKey` 5.7
@@ -157,17 +157,8 @@ fn serve_connection(
     piv_applet: &mut PivApplet,
     pgp_applet: &mut PgpApplet,
 ) -> io::Result<()> {
-    let mut power_on = false;
-
-    let contact = apdu_dispatch::interchanges::Channel::new();
-    let Some((mut contact_requester, contact_rp)) = contact.split() else {
-        return Err(io::Error::other("cannot create channel"));
-    };
-    let contactless = apdu_dispatch::interchanges::Channel::new();
-    let Some((_, contactless_rp)) = contactless.split() else {
-        return Err(io::Error::other("cannot create channel"));
-    };
-    let mut dispatch = apdu_dispatch::dispatch::ApduDispatch::new(contact_rp, contactless_rp);
+    let mut channels = CardChannels::new();
+    let mut session = channels.session(atr, piv_applet, pgp_applet)?;
 
     loop {
         let Some(msg) = read_msg(&mut stream)? else {
@@ -178,54 +169,19 @@ fn serve_connection(
         if msg.len() == 1 {
             // A control command: answered, at most, with an ATR.
             match msg[0] {
-                CTRL_POWER_OFF => {
-                    power_on = false;
-                    tracing::debug!("power off");
-                }
-                CTRL_POWER_ON => {
-                    power_on = true;
-                    tracing::debug!("power on");
-                }
-                CTRL_RESET => tracing::debug!("reset"),
-                CTRL_GET_ATR => write_msg(&mut stream, atr)?,
+                CTRL_POWER_OFF => session.power_off(),
+                CTRL_POWER_ON => session.power_on(),
+                CTRL_RESET => session.reset(),
+                CTRL_GET_ATR => write_msg(&mut stream, session.atr())?,
                 other => warn!("unknown control command 0x{other:02x}"),
             }
             continue;
         }
 
-        if power_on {
-            let Ok(data) = apdu_dispatch::interchanges::Data::from_slice(&msg) else {
-                warn!(
-                    "command too large. Expected up to {}, got {} bytes",
-                    apdu_dispatch::interchanges::SIZE,
-                    msg.len(),
-                );
-                continue;
-            };
-
-            trace!(apdu = hex::encode_upper(&data), "APDU command");
-
-            // NOTE: presumably, reading and writing should run in their own thread.
-            match contact_requester.request(data) {
-                Ok(()) => (),
-                Err(e) => {
-                    warn!("failed to send request: {e:?}");
-                    continue;
-                }
-            }
-
-            let response = match dispatch.poll(&mut [piv_applet, pgp_applet]) {
-                Some(iso7816::Interface::Contact) => contact_requester.take_response(),
-                Some(iso7816::Interface::Contactless) => unreachable!("contactless is unused"),
-                None => continue,
-            };
-
-            if let Some(response) = response {
-                trace!(sw = hex::encode_upper(&response), "APDU response");
-                write_msg(&mut stream, &response)?;
-            }
-        } else {
-            warn!("command APDU while powered off");
+        match session.transmit(&msg) {
+            Ok(Some(response)) => write_msg(&mut stream, &response)?,
+            Ok(None) => {}
+            Err(e) => warn!("{e}"),
         }
     }
 }

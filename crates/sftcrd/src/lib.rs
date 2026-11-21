@@ -14,7 +14,10 @@
 //!
 //! The PIV applet implementation lives in the [`sftcrd_piv`] crate.
 
+pub mod session;
+
 use serde::Deserialize;
+pub use session::{CardChannels, CardSession, TransmitError};
 use sftcrd_pgp::PgpConfig;
 pub use sftcrd_pgp::PgpApplet;
 use sftcrd_piv::PivConfig;
