@@ -6,7 +6,8 @@
 //!
 //! - [`Tag`]: [`U8Tag`] (1-byte), [`U16Tag`] (2-byte big-endian), and [`BerTag`] (BER-TLV
 //!   multi-byte tags).
-//! - [`Length`]: [`U8Length`] (1-byte) and [`BerLength`] (BER-TLV definite-form lengths).
+//! - [`Length`]: [`U8Length`] (1-byte), [`U32Length`] (4-byte big-endian), and [`BerLength`]
+//!   (BER-TLV definite-form lengths).
 //!
 //! ```
 //! use sftcrd_tlv::{BerLength, BerTag, Length, Tag};
@@ -268,6 +269,6 @@ pub use decoder::{Decoder, TagIter};
 pub use encoder::__EncodeFn;
 pub use encoder::Encoder;
 pub use error::{DecodeError, EncodeError};
-pub use length::{BerLength, Length, U8Length};
+pub use length::{BerLength, Length, U8Length, U32Length};
 pub use tag::{BerTag, Tag, U8Tag, U16Tag};
 pub use value::{ConstLength, Decode, DecodeValue, Encode, EncodeValue};

@@ -43,6 +43,36 @@ impl Length for U8Length {
     }
 }
 
+/// Fixed 4-byte big-endian `u32` length encoding.
+pub struct U32Length;
+impl Length for U32Length {
+    fn length(_value: usize) -> u8 {
+        4
+    }
+
+    fn encode(length: usize, buf: &mut [u8]) -> Result<(), EncodeError> {
+        if buf.len() != 4 {
+            return Err(EncodeError::BufferUnderrun);
+        }
+        let length = u32::try_from(length).map_err(|_| EncodeError::InvalidLength)?;
+        buf.copy_from_slice(&length.to_be_bytes());
+        Ok(())
+    }
+
+    fn decode(buf: &[u8]) -> Result<(usize, usize), DecodeError>
+    where
+        Self: Sized,
+    {
+        let Some(bytes) = buf.get(..4) else {
+            return Err(DecodeError::BufferUnderrun);
+        };
+        let arr: [u8; 4] = bytes.try_into().expect("slice has length 4");
+        let len =
+            usize::try_from(u32::from_be_bytes(arr)).map_err(|_| DecodeError::InvalidLength)?;
+        Ok((len, 4))
+    }
+}
+
 /// ASN.1 Basic Encoding Rules (BER) length form.
 ///
 /// The first byte indicates the form of the length field:
@@ -130,7 +160,27 @@ impl Length for BerLength {
 
 #[cfg(test)]
 mod tests {
-    use crate::{BerLength, DecodeError, Length, error::EncodeError};
+    use crate::{BerLength, DecodeError, Length, U32Length, error::EncodeError};
+
+    #[test]
+    fn test_u32_length() {
+        assert_eq!(U32Length::length(0), 4);
+        assert_eq!(U32Length::length(65_544), 4);
+
+        let mut buf = [0u8; 4];
+        U32Length::encode(0x0001_0008, &mut buf).unwrap();
+        assert_eq!(buf, [0x00, 0x01, 0x00, 0x08]);
+        assert_eq!(U32Length::decode(&buf), Ok((0x0001_0008, 4)));
+
+        assert_eq!(
+            U32Length::encode(1, &mut [0u8; 3]),
+            Err(EncodeError::BufferUnderrun)
+        );
+        assert_eq!(
+            U32Length::decode(&[0x00, 0x01, 0x02]),
+            Err(DecodeError::BufferUnderrun)
+        );
+    }
 
     #[test]
     fn test_ber_length_decode() {

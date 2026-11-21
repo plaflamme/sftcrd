@@ -449,7 +449,7 @@ macro_rules! __tlv_impl_codec {
         hl_fields: [ $( ( $tpl_tag:expr, $val_tag:expr, $hl_name:ident, $hl_ty:ty ) )* ]
     ) => {
         impl <$impl_lt> $crate::Decode<$impl_lt> for $name $(<$struct_lt>)? {
-            fn decode(decoder: &$crate::Decoder<$impl_lt>) -> Result<Self, $crate::DecodeError> {
+            fn decode(decoder: &$crate::Decoder<$impl_lt>) -> ::core::result::Result<Self, $crate::DecodeError> {
                 $crate::__tlv_decode_fields!(
                     tag_type: [ $tag_ty ],
                     length: [ $len_ty ],
@@ -463,7 +463,7 @@ macro_rules! __tlv_impl_codec {
         }
 
         impl <$impl_lt> $crate::Encode for $name $(<$struct_lt>)? {
-            fn encode(&self, encoder: &mut $crate::Encoder<'_>) -> Result<(), $crate::EncodeError> {
+            fn encode(&self, encoder: &mut $crate::Encoder<'_>) -> ::core::result::Result<(), $crate::EncodeError> {
                 $(
                     for value in $crate::__tlv_field!(@as_slice $kind, &self.$tlv_name) {
                         encoder.write_tlv::<$tag_ty, $len_ty, $tlv_ty>(&$tag_ty($tag), value)?;
@@ -741,7 +741,7 @@ macro_rules! __tlv_enum_parse_variants {
         }
 
         impl <$impl_lt> $crate::Decode<$impl_lt> for $name $(<$enum_lt>)? {
-            fn decode(decoder: &$crate::Decoder<$impl_lt>) -> Result<Self, $crate::DecodeError> {
+            fn decode(decoder: &$crate::Decoder<$impl_lt>) -> ::core::result::Result<Self, $crate::DecodeError> {
                 let mut iter = decoder.iter_tags::<$tag_ty, $len_ty>();
                 let (tag, bytes) = iter.next().ok_or($crate::DecodeError::BufferUnderrun)??;
                 if iter.next().is_some() {
@@ -759,7 +759,7 @@ macro_rules! __tlv_enum_parse_variants {
         }
 
         impl <$impl_lt> $crate::Encode for $name $(<$enum_lt>)? {
-            fn encode(&self, encoder: &mut $crate::Encoder<'_>) -> Result<(), $crate::EncodeError> {
+            fn encode(&self, encoder: &mut $crate::Encoder<'_>) -> ::core::result::Result<(), $crate::EncodeError> {
                 $crate::__tlv_enum_tagged_encode!(
                     self: self,
                     encoder: encoder,
@@ -791,7 +791,7 @@ macro_rules! __tlv_enum_parse_variants {
         }
 
         impl <$impl_lt> $crate::Decode<$impl_lt> for $name $(<$enum_lt>)? {
-            fn decode(decoder: &$crate::Decoder<$impl_lt>) -> Result<Self, $crate::DecodeError> {
+            fn decode(decoder: &$crate::Decoder<$impl_lt>) -> ::core::result::Result<Self, $crate::DecodeError> {
                 $crate::__tlv_enum_decode!(
                     tag_type: [ $tag_ty ],
                     length: [ $len_ty ],
@@ -803,7 +803,7 @@ macro_rules! __tlv_enum_parse_variants {
         }
 
         impl <$impl_lt> $crate::Encode for $name $(<$enum_lt>)? {
-            fn encode(&self, encoder: &mut $crate::Encoder<'_>) -> Result<(), $crate::EncodeError> {
+            fn encode(&self, encoder: &mut $crate::Encoder<'_>) -> ::core::result::Result<(), $crate::EncodeError> {
                 $crate::__tlv_enum_encode!(
                     self: self,
                     encoder: encoder,
@@ -1768,7 +1768,7 @@ macro_rules! __tlv_enum_decode {
             $($rest:tt)*
         ]
     ) => {{
-        let decode_variant = |d: &$crate::Decoder<$impl_lt>| -> Result<Self, $crate::DecodeError> {
+        let decode_variant = |d: &$crate::Decoder<$impl_lt>| -> ::core::result::Result<Self, $crate::DecodeError> {
             $crate::__tlv_decode_fields!(
                 tag_type: [ $tag_ty ],
                 length: [ $len_ty ],
