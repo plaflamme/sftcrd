@@ -76,5 +76,11 @@ let
     );
 in
 pkgs.lib.optionalAttrs (system == "x86_64-linux") (
-  mkChecks "piv" [ pkgs.yubico-piv-tool ] // mkChecks "pgp" [ pkgs.gnupg ]
+  mkChecks "piv" [ pkgs.yubico-piv-tool ]
+  // mkChecks "pgp" [ pkgs.gnupg ]
+  // mkChecks "ifd" [
+    pkgs.opensc
+    pkgs.yubico-piv-tool
+    pkgs.gnupg
+  ]
 )

@@ -53,6 +53,10 @@ struct ChannelState {
     stream: Option<UnixStream>,
     atr: Vec<u8>,
     protocol: Dword,
+    /// Set when an active daemon connection drops so the next
+    /// `IFDHICCPresence` call always reports `IFD_ICC_NOT_PRESENT` to `pcscd`
+    /// before reconnecting, ensuring `pcscd` re-powers the new card session.
+    pending_removal: bool,
 }
 
 impl ChannelState {
@@ -62,11 +66,14 @@ impl ChannelState {
             stream: None,
             atr: Vec::new(),
             protocol: SCARD_PROTOCOL_T1,
+            pending_removal: false,
         }
     }
 
     fn disconnect(&mut self) {
-        self.stream = None;
+        if self.stream.take().is_some() {
+            self.pending_removal = true;
+        }
         self.atr.clear();
     }
 
@@ -541,10 +548,20 @@ pub extern "C" fn IFDHICCPresence(lun: Dword) -> ResponseCode {
             return IFD_COMMUNICATION_ERROR;
         };
 
+        if state.pending_removal {
+            state.pending_removal = false;
+            return IFD_ICC_NOT_PRESENT;
+        }
+
         let resp = if state.stream.is_some() {
             // Existing connection: if it broke, report absence now and let the
             // next poll reconnect so pcscd detects the removal/reinsertion.
-            state.exchange_connected(&Request::Presence)
+            let resp = state.exchange_connected(&Request::Presence);
+            if resp.is_none() {
+                // Already reporting absence on this poll; don't report twice.
+                state.pending_removal = false;
+            }
+            resp
         } else {
             state.ensure_connected_and_exchange(&Request::Presence)
         };
