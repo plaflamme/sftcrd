@@ -234,6 +234,18 @@ impl<'a> Encoder<'a> {
     }
 }
 
+/// Internal helper used by [`crate::tlv_enum!`] to encode an inline struct
+/// variant's nested TLV fields directly into a parent [`Encoder`] without
+/// intermediate allocations.
+#[doc(hidden)]
+pub struct __EncodeFn<F>(pub F);
+
+impl<F: Fn(&mut Encoder<'_>) -> Result<(), EncodeError>> Encode for __EncodeFn<F> {
+    fn encode(&self, encoder: &mut Encoder<'_>) -> Result<(), EncodeError> {
+        (self.0)(encoder)
+    }
+}
+
 #[cfg(test)]
 mod test {
     use super::*;

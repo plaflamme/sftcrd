@@ -114,6 +114,20 @@ pub trait ConstLength {
     const LENGTH: usize;
 }
 
+impl DecodeValue<'_> for () {
+    fn decode_bytes(bytes: &[u8]) -> Result<Self, DecodeError> {
+        if bytes.is_empty() {
+            Ok(())
+        } else {
+            Err(DecodeError::InvalidValue)
+        }
+    }
+}
+
+impl ConstLength for () {
+    const LENGTH: usize = 0;
+}
+
 impl DecodeValue<'_> for bool {
     fn decode_bytes(bytes: &[u8]) -> Result<Self, DecodeError> {
         if let [byte] = bytes {
@@ -208,6 +222,20 @@ impl<'a> DecodeValue<'a> for &'a [u8] {
     }
 }
 
+impl<'a> DecodeValue<'a> for &'a str {
+    fn decode_bytes(bytes: &'a [u8]) -> Result<Self, DecodeError> {
+        std::str::from_utf8(bytes).map_err(|_| DecodeError::InvalidValue)
+    }
+}
+
+impl DecodeValue<'_> for String {
+    fn decode_bytes(bytes: &[u8]) -> Result<Self, DecodeError> {
+        std::str::from_utf8(bytes)
+            .map(str::to_owned)
+            .map_err(|_| DecodeError::InvalidValue)
+    }
+}
+
 impl<'a, A, B> DecodeValue<'a> for (A, B)
 where
     A: DecodeValue<'a> + ConstLength,
@@ -218,6 +246,20 @@ where
             .split_at_checked(A::LENGTH)
             .ok_or(DecodeError::BufferUnderrun)?;
         Ok((A::decode_bytes(left)?, B::decode_bytes(right)?))
+    }
+}
+
+impl EncodeValue for () {
+    fn length(&self) -> usize {
+        0
+    }
+
+    fn encode_bytes(&self, buf: &mut [u8]) -> Result<(), EncodeError> {
+        if buf.is_empty() {
+            Ok(())
+        } else {
+            Err(EncodeError::BufferUnderrun)
+        }
     }
 }
 
@@ -314,6 +356,26 @@ impl EncodeValue for Vec<u8> {
     }
 }
 
+impl EncodeValue for &str {
+    fn length(&self) -> usize {
+        self.len()
+    }
+
+    fn encode_bytes(&self, buf: &mut [u8]) -> Result<(), EncodeError> {
+        self.as_bytes().encode_bytes(buf)
+    }
+}
+
+impl EncodeValue for String {
+    fn length(&self) -> usize {
+        self.len()
+    }
+
+    fn encode_bytes(&self, buf: &mut [u8]) -> Result<(), EncodeError> {
+        self.as_bytes().encode_bytes(buf)
+    }
+}
+
 impl<T: Encode> Encode for Option<T> {
     fn encode(&self, encoder: &mut Encoder<'_>) -> Result<(), EncodeError> {
         if let Some(v) = self {
@@ -372,6 +434,32 @@ mod tests {
         assert_eq!(
             [0x42u8].as_slice().encode_header_list(),
             Err(EncodeError::InvalidValue)
+        );
+    }
+
+    #[test]
+    fn test_unit_and_string_codecs() {
+        assert_eq!(().encode_tlv(), Ok(vec![]));
+        assert_eq!(<()>::decode_tlv(&[]), Ok(()));
+        assert_eq!(<()>::decode_tlv(&[0x00]), Err(DecodeError::InvalidValue));
+
+        let s = "hello tlv";
+        let encoded = s.encode_tlv().unwrap();
+        assert_eq!(encoded, b"hello tlv");
+        assert_eq!(<&str>::decode_tlv(&encoded), Ok("hello tlv"));
+        assert_eq!(
+            String::decode_tlv(&encoded),
+            Ok(String::from("hello tlv"))
+        );
+        assert_eq!(String::from(s).encode_tlv(), Ok(encoded));
+
+        assert_eq!(
+            <&str>::decode_tlv(&[0xFF, 0xFE]),
+            Err(DecodeError::InvalidValue)
+        );
+        assert_eq!(
+            String::decode_tlv(&[0xFF, 0xFE]),
+            Err(DecodeError::InvalidValue)
         );
     }
 }

@@ -96,6 +96,20 @@ impl<'a> Decoder<'a> {
         V::decode(&Self::header_list(template, values))
     }
 
+    /// Internal helper used by [`crate::tlv_enum!`] to decode a nested TLV body
+    /// from a raw byte slice.
+    ///
+    /// # Errors
+    ///
+    /// Propagates any [`DecodeError`] returned by `f`.
+    #[doc(hidden)]
+    pub fn __decode_with<T, F>(buf: &'a [u8], f: F) -> Result<T, DecodeError>
+    where
+        F: FnOnce(&Self) -> Result<T, DecodeError>,
+    {
+        f(&Self::new(buf))
+    }
+
     /// Returns the underlying byte slice if the decoder is in standard TLV/raw mode.
     ///
     /// # Errors

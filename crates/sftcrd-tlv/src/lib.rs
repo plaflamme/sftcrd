@@ -27,9 +27,10 @@
 //! # Decoding and encoding values
 //!
 //! Types implement [`Decode`] and [`Encode`] to read from a [`Decoder`] and write to an
-//! [`Encoder`]. Primitive leaf types (`bool`, `u8`, `u16`, `u32`, `&[u8]`, `Vec<u8>`) implement
-//! these traits out of the box; composite types iterate over `(tag, value_bytes)` pairs via
-//! [`Decoder::iter_tags`] and write fields via [`Encoder::write_tlv`].
+//! [`Encoder`]. Primitive leaf types (`()`, `bool`, `u8`, `u16`, `u32`, `&[u8]`, `Vec<u8>`,
+//! `&str`, `String`) implement these traits out of the box; composite types iterate over
+//! `(tag, value_bytes)` pairs via [`Decoder::iter_tags`] and write fields via
+//! [`Encoder::write_tlv`].
 //!
 //! Because `Decoder` and `Encoder` abstract over standard TLV streams and ISO/IEC 7816-4
 //! header-list `(template, values)` pairs, the same [`Decode`] / [`Encode`] implementation
@@ -159,22 +160,63 @@
 //! assert_eq!(KeyFields::decode_header_list(&tpl, &vals), Ok(fields));
 //! ```
 //!
-//! # Defining non-discriminated TLV unions with `tlv_enum!`
+//! # Defining TLV unions with `tlv_enum!`
 //!
-//! Use [`tlv_enum!`] to generate an enum with [`Decode`] and [`Encode`] implementations
-//! for untagged / non-discriminated unions, such as mutually exclusive sets of TLVs or
-//! header lists whose tag layout varies by variant.
+//! Use [`tlv_enum!`] to generate an enum with [`Decode`] and [`Encode`] implementations.
+//! Two union styles are supported depending on whether variants carry a `#[tag(...)]`
+//! attribute:
 //!
-//! Variants may be **inline struct variants** (supporting the same `#[tag_type(...)]`,
-//! `#[length(...)]`, `#[tag(...)]`, `#[header_list(...)]`, `Option<T>`, and `Vec<T>` syntax
-//! as [`tlv_struct!`]) or **tuple variants** wrapping any existing [`Decode`] / [`Encode`]
-//! type, and both forms can be mixed in the same enum.
+//! ## Discriminated (tagged) unions
 //!
-//! Decoding tries each variant in declaration order against the same [`Decoder`] and returns
-//! the first one that succeeds, or [`DecodeError::InvalidValue`] if all variants fail. When
-//! variants have overlapping tag sets, place the more specific variant first. Like
-//! [`tlv_struct!`], generated enums work in both standard TLV and ISO/IEC 7816-4 header-list
-//! modes:
+//! Annotate every variant with `#[tag(expr)]` to wrap each variant in a single outer TLV
+//! whose tag identifies the variant. Unit variants (empty value), tuple variants (any
+//! [`Decode`] / [`Encode`] payload), and inline struct variants (nested TLV fields) are
+//! all supported. Decoding performs a single-pass dispatch on the outer tag and preserves
+//! exact [`DecodeError`] variants (`InvalidTag`, `MissingRequiredField`, `DuplicateTag`,
+//! `InvalidValue`, `BufferUnderrun`):
+//!
+//! ```
+//! use sftcrd_tlv::{BerLength, Decode, DecodeError, Encode, tlv_enum};
+//!
+//! tlv_enum! {
+//!     #[derive(Debug, PartialEq)]
+//!     #[length(BerLength)]
+//!     enum Message {
+//!         #[tag(0x01)]
+//!         Ping,
+//!         #[tag(0x02)]
+//!         Data(Vec<u8>),
+//!         #[tag(0xFF)]
+//!         Error {
+//!             #[tag(0x01)]
+//!             code: u8,
+//!             #[tag(0x02)]
+//!             detail: Option<String>,
+//!         },
+//!     }
+//! }
+//!
+//! let ping = Message::Ping.encode_tlv().unwrap();
+//! assert_eq!(ping, [0x01, 0x00]);
+//! assert_eq!(Message::decode_tlv(&ping), Ok(Message::Ping));
+//!
+//! let err = Message::Error { code: 0x05, detail: Some("boom".into()) };
+//! let bytes = err.encode_tlv().unwrap();
+//! assert_eq!(Message::decode_tlv(&bytes), Ok(err));
+//! assert_eq!(Message::decode_tlv(&[0x99, 0x00]), Err(DecodeError::InvalidTag));
+//! ```
+//!
+//! ## Non-discriminated (untagged) unions
+//!
+//! Omit `#[tag(...)]` on variants for untagged unions, such as mutually exclusive sets of
+//! TLVs or header lists whose tag layout varies by variant. Variants may be **inline
+//! struct variants** or **tuple variants** wrapping any existing [`Decode`] / [`Encode`]
+//! type, and both forms can be mixed in the same enum. Decoding tries each variant in
+//! declaration order against the same [`Decoder`] and returns the first one that succeeds,
+//! or [`DecodeError::InvalidValue`] if all variants fail.
+//!
+//! Like [`tlv_struct!`], both discriminated and non-discriminated enums work in standard
+//! TLV and ISO/IEC 7816-4 header-list modes:
 //!
 //! ```
 //! use sftcrd_tlv::{BerLength, Decode, DecodeError, Encode, tlv_enum, tlv_struct};
@@ -222,6 +264,8 @@ mod tag;
 mod value;
 
 pub use decoder::{Decoder, TagIter};
+#[doc(hidden)]
+pub use encoder::__EncodeFn;
 pub use encoder::Encoder;
 pub use error::{DecodeError, EncodeError};
 pub use length::{BerLength, Length, U8Length};
