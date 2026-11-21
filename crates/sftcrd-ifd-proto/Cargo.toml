@@ -1,0 +1,13 @@
+[package]
+name = "sftcrd-ifd-proto"
+version = "0.1.0"
+edition = "2024"
+description = "Wire protocol between the sftcrd PC/SC IFD handler and daemon."
+
+[dependencies]
+sftcrd-tlv = { workspace = true }
+
+[dev-dependencies]
+
+[lints]
+workspace = true
