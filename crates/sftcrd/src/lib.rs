@@ -8,7 +8,7 @@
 //!
 //! This crate contains the server infrastructure:
 //!
-//! - `sftcrd pcsc`: Unix domain socket listener speaking [`sftcrd_ifd_proto`]
+//! - `sftcrd pcscd`: Unix domain socket listener speaking [`sftcrd_ifd_proto`]
 //!   (with systemd socket activation support)
 //! - `sftcrd vpcd`: TCP listener speaking the `VSmartCard` protocol
 //! - APDU dispatch between the host and the [`sftcrd_piv`] / [`sftcrd_pgp`]

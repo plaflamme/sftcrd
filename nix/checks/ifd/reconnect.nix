@@ -1,6 +1,6 @@
 {
   nodes.host.services.sftcrd = {
-    mode = "ifd";
+    mode = "pcscd";
     config = {
       serial = 43210;
       piv.slots."9a".key = "p256";

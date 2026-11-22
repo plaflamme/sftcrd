@@ -3,7 +3,7 @@
 [![check](https://github.com/plaflamme/sftcrd/actions/workflows/check.yaml/badge.svg)](https://github.com/plaflamme/sftcrd/actions/workflows/check.yaml)
 [![rustdoc](https://img.shields.io/badge/docs-rustdoc-blue)](https://plaflamme.github.io/sftcrd/rustdoc/index.html)
 
-`sftcrd` (*sftcard*) is a pure-Rust software implementation of a [Smart Card](https://en.wikipedia.org/wiki/Smart_card) designed to make testing software that relies on smart cards easier. It connects directly to `pcscd` via a custom PC/SC-Lite IFD Handler (`libsftcrd_ifd.so`) over a Unix domain socket, or via the [VSmartCard](https://github.com/frankmorgner/vsmartcard) (`vpcd`) TCP protocol, and can run either as a NixOS service or as a standalone binary.
+`sftcrd` (*soft card*) is a pure-Rust software implementation of a [Smart Card](https://en.wikipedia.org/wiki/Smart_card) designed to make testing software that relies on smart cards easier. It connects directly to `pcscd` via a custom PC/SC-Lite [IFD Handler](https://pcsclite.apdu.fr/api/group__IFDHandler.html#details) (`libsftcrd_ifd.so`) over a Unix domain socket, or via the [VSmartCard](https://github.com/frankmorgner/vsmartcard) (`vpcd`) TCP protocol, and can run either as a NixOS service or as a standalone binary.
 
 > [!WARNING]
 > This project makes no guarantees about the correctness of its cryptographic functionalities. Do not use this project for production or physical smart card deployments.
@@ -23,7 +23,7 @@
   - NIST ECC (`P-256`, `P-384`, `P-521`)
   - `Ed25519` and `X25519`
 - **Multiple PC/SC Transports**:
-  - **Direct PC/SC (`ifd`, default)**: Custom PC/SC-Lite IFD Handler v3 shared library (`libsftcrd_ifd.so`) communicating with `sftcrd pcsc` over a Unix domain socket (with systemd socket activation support and no `vsmartcard-vpcd` dependency)
+  - **Direct `pcscd` (`pcscd`, default)**: Custom PC/SC-Lite IFD Handler v3 shared library (`libsftcrd_ifd.so`) communicating with `sftcrd pcscd` over a Unix domain socket (with systemd socket activation support and no `vsmartcard-vpcd` dependency)
   - **VSmartCard (`vpcd`)**: TCP listener (`sftcrd vpcd`) compatible with `vsmartcard-vpcd`
 - **Declarative Initial State**: Pre-populate keys, certificates, PINs, serial number, and policies from a TOML file or NixOS configuration.
 
@@ -48,7 +48,7 @@ When started without overrides in `--config`:
 
 ### NixOS Module
 
-Enable `services.sftcrd` in your NixOS configuration. By default (`mode = "ifd"`), the module configures `services.pcscd` with `libsftcrd_ifd.so` and a socket-activated `sftcrd.socket` / `sftcrd.service` — no `vsmartcard-vpcd` required:
+Enable `services.sftcrd` in your NixOS configuration. By default (`mode = "pcscd"`), the module configures `services.pcscd` with `libsftcrd_ifd.so` and a socket-activated `sftcrd.socket` / `sftcrd.service` — no `vsmartcard-vpcd` required:
 
 ```nix
 {
@@ -62,7 +62,7 @@ Enable `services.sftcrd` in your NixOS configuration. By default (`mode = "ifd"`
       ];
       services.sftcrd = {
         enable = true;
-        # mode = "ifd"; # default (direct PC/SC over Unix socket); or "vpcd" for VSmartCard TCP
+        # mode = "pcscd"; # default (direct pcscd over Unix socket); or "vpcd" for VSmartCard TCP
 
         # Optionally configure the card's initial state
         config = {
@@ -125,20 +125,20 @@ $ gpg --card-status
 
 `sftcrd` exposes two transport subcommands:
 
-- **`sftcrd pcsc`**: Listens on a Unix domain socket (or uses systemd socket activation via `LISTEN_PID` / `LISTEN_FDS`) for `libsftcrd_ifd.so` connections.
+- **`sftcrd pcscd`**: Listens on a Unix domain socket (or uses systemd socket activation via `LISTEN_PID` / `LISTEN_FDS`) for `libsftcrd_ifd.so` connections.
 - **`sftcrd vpcd`**: Listens on a TCP socket for `vsmartcard-vpcd` (configured in connect mode).
 
 Run directly with Nix or Cargo:
 
 ```bash
-# Direct PC/SC (IFD Unix socket) mode:
-nix run github:plaflamme/sftcrd -- pcsc --socket /run/sftcrd/sftcrd.sock --config ./card.toml
+# Direct pcscd (Unix socket) mode:
+nix run github:plaflamme/sftcrd -- pcscd --socket /run/sftcrd/sftcrd.sock --config ./card.toml
 
 # VSmartCard (vpcd TCP) mode:
 nix run github:plaflamme/sftcrd -- vpcd --host 127.0.0.1 --port 35963 --config ./card.toml
 
 # Or inside the repo devShell:
-cargo run -p sftcrd -- pcsc --socket /tmp/sftcrd.sock --config ./card.toml
+cargo run -p sftcrd -- pcscd --socket /tmp/sftcrd.sock --config ./card.toml
 ```
 
 Available CLI options:
@@ -147,7 +147,7 @@ Available CLI options:
   - `--atr <HEX>`: ATR presented to PC/SC clients as a hex string (default: YubiKey 5.7 ATR)
   - `-c, --config <PATH>`: Path to a TOML configuration file to initialize card state
   - `RUST_LOG`: Controls log verbosity via `tracing` (default: `info`, e.g. `RUST_LOG=trace` to inspect APDUs)
-- `sftcrd pcsc`:
+- `sftcrd pcscd`:
   - `--socket <PATH>`: Unix domain socket path to bind (default: `/run/sftcrd/sftcrd.sock`; ignored when systemd socket activation is active)
 - `sftcrd vpcd`:
   - `--host <HOST>`: Host address to bind the TCP listener on (default: `127.0.0.1`)

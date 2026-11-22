@@ -1,5 +1,5 @@
 //! Software smartcard daemon presenting PIV and `OpenPGP` applets over
-//! either a direct PC/SC IFD Unix domain socket (`sftcrd pcsc`) or the
+//! either a direct PC/SC IFD Unix domain socket (`sftcrd pcscd`) or the
 //! `VSmartCard` TCP protocol (`sftcrd vpcd`).
 
 use std::io::{self, Read, Write};
@@ -23,7 +23,7 @@ use sftcrd::{CardChannels, CardConfig, DEFAULT_SERIAL, PgpApplet, PivApplet, Tra
 /// The ATR of a `YubiKey` 5.7
 const DEFAULT_ATR: &str = "3BFD1300008131FE158073C021C057597562694B657940";
 
-/// Default Unix domain socket path for `sftcrd pcsc`.
+/// Default Unix domain socket path for `sftcrd pcscd`.
 const DEFAULT_SOCKET_PATH: &str = "/run/sftcrd/sftcrd.sock";
 
 /// First file descriptor passed by systemd socket activation (`SD_LISTEN_FDS_START`).
@@ -67,8 +67,8 @@ enum Command {
         port: u16,
     },
 
-    /// Listen on a Unix domain socket for direct PC/SC IFD handler connections.
-    Pcsc {
+    /// Listen on a Unix domain socket for direct `pcscd` IFD handler connections.
+    Pcscd {
         /// Unix domain socket path to bind (ignored when systemd socket activation is used).
         #[arg(long, default_value = DEFAULT_SOCKET_PATH)]
         socket: PathBuf,
@@ -113,7 +113,7 @@ fn main() -> ExitCode {
 
     match args.command {
         Command::Vpcd { host, port } => run_vpcd(&host, port, &atr, &mut piv_applet, &mut pgp_applet),
-        Command::Pcsc { socket } => run_pcsc(&socket, &atr, &mut piv_applet, &mut pgp_applet),
+        Command::Pcscd { socket } => run_pcscd(&socket, &atr, &mut piv_applet, &mut pgp_applet),
         Command::ConfigReference => unreachable!("handled above"),
     }
 }
@@ -150,14 +150,14 @@ fn run_vpcd(
     }
 }
 
-/// Run the direct PC/SC IFD Unix domain socket listener loop.
-fn run_pcsc(
+/// Run the direct `pcscd` IFD Unix domain socket listener loop.
+fn run_pcscd(
     socket_path: &Path,
     atr: &[u8],
     piv_applet: &mut PivApplet,
     pgp_applet: &mut PgpApplet,
 ) -> ExitCode {
-    let listener = match acquire_pcsc_listener(socket_path) {
+    let listener = match acquire_pcscd_listener(socket_path) {
         Ok(l) => l,
         Err(e) => {
             tracing::error!(socket = %socket_path.display(), "cannot bind Unix socket: {e}");
@@ -168,9 +168,9 @@ fn run_pcsc(
     loop {
         match listener.accept() {
             Ok((stream, _addr)) => {
-                info!("pcsc IFD client connected");
-                if let Err(e) = serve_pcsc_connection(stream, atr, piv_applet, pgp_applet) {
-                    warn!("pcsc connection failed: {e}");
+                info!("pcscd IFD client connected");
+                if let Err(e) = serve_pcscd_connection(stream, atr, piv_applet, pgp_applet) {
+                    warn!("pcscd connection failed: {e}");
                 }
             }
             Err(e) => warn!("accept failed: {e}"),
@@ -180,14 +180,14 @@ fn run_pcsc(
 
 /// Acquire a [`UnixListener`] either from systemd socket activation
 /// (`LISTEN_PID` / `LISTEN_FDS`, fd 3) or by binding `socket_path` directly.
-fn acquire_pcsc_listener(socket_path: &Path) -> io::Result<UnixListener> {
+fn acquire_pcscd_listener(socket_path: &Path) -> io::Result<UnixListener> {
     if let Some(listener) = take_systemd_unix_listener() {
-        info!("listening for pcsc IFD via systemd socket activation (fd 3)");
+        info!("listening for pcscd IFD via systemd socket activation (fd 3)");
         return Ok(listener);
     }
 
     let listener = bind_unix_socket(socket_path)?;
-    info!(socket = %socket_path.display(), "listening for pcsc IFD");
+    info!(socket = %socket_path.display(), "listening for pcscd IFD");
     Ok(listener)
 }
 
@@ -309,8 +309,8 @@ fn serve_vpcd_connection(
     }
 }
 
-/// Serve one direct PC/SC IFD Unix socket connection until it drops.
-fn serve_pcsc_connection(
+/// Serve one direct `pcscd` IFD Unix socket connection until it drops.
+fn serve_pcscd_connection(
     mut stream: UnixStream,
     atr: &[u8],
     piv_applet: &mut PivApplet,
@@ -321,7 +321,7 @@ fn serve_pcsc_connection(
 
     loop {
         let Some(req) = read_request(&mut stream).map_err(io::Error::other)? else {
-            info!("pcsc IFD client disconnected");
+            info!("pcscd IFD client disconnected");
             return Ok(());
         };
 
@@ -407,7 +407,7 @@ mod tests {
     }
 
     #[test]
-    fn cli_parses_vpcd_and_pcsc_subcommands() {
+    fn cli_parses_vpcd_and_pcscd_subcommands() {
         let vpcd = Args::try_parse_from([
             "sftcrd",
             "vpcd",
@@ -425,19 +425,19 @@ mod tests {
             Command::Vpcd { ref host, port: 12345 } if host == "0.0.0.0"
         ));
 
-        let pcsc = Args::try_parse_from([
+        let pcscd = Args::try_parse_from([
             "sftcrd",
             "--config",
             "/etc/sftcrd.toml",
-            "pcsc",
+            "pcscd",
             "--socket",
             "/tmp/test.sock",
         ])
-        .expect("parse pcsc");
-        assert_eq!(pcsc.config, Some(PathBuf::from("/etc/sftcrd.toml")));
+        .expect("parse pcscd");
+        assert_eq!(pcscd.config, Some(PathBuf::from("/etc/sftcrd.toml")));
         assert!(matches!(
-            pcsc.command,
-            Command::Pcsc { ref socket } if socket == Path::new("/tmp/test.sock")
+            pcscd.command,
+            Command::Pcscd { ref socket } if socket == Path::new("/tmp/test.sock")
         ));
 
         let cfg_ref = Args::try_parse_from(["sftcrd", "config-reference"])
@@ -510,9 +510,9 @@ mod tests {
         server.join().expect("server thread");
     }
 
-    fn send_pcsc_apdu(stream: &mut UnixStream, apdu: Vec<u8>) -> Vec<u8> {
+    fn send_pcscd_apdu(stream: &mut UnixStream, apdu: Vec<u8>) -> Vec<u8> {
         let Response::Apdu(resp) =
-            exchange(stream, &Request::Transmit(apdu)).expect("pcsc transmit")
+            exchange(stream, &Request::Transmit(apdu)).expect("pcscd transmit")
         else {
             panic!("expected Response::Apdu");
         };
@@ -520,8 +520,8 @@ mod tests {
     }
 
     #[test]
-    fn pcsc_power_cycle_atr_apdus_and_state_persistence() {
-        let sock_path = unique_socket_path("pcsc-state");
+    fn pcscd_power_cycle_atr_apdus_and_state_persistence() {
+        let sock_path = unique_socket_path("pcscd-state");
         let listener = bind_unix_socket(&sock_path).expect("bind unix socket");
         let atr = hex::decode(DEFAULT_ATR).expect("valid default ATR");
         let expected_atr = atr.clone();
@@ -530,8 +530,8 @@ mod tests {
             let (mut piv_applet, mut pgp_applet) = init_applets(None).expect("init applets");
             for _ in 0..2 {
                 let (stream, _) = listener.accept().expect("accept");
-                serve_pcsc_connection(stream, &atr, &mut piv_applet, &mut pgp_applet)
-                    .expect("serve pcsc connection");
+                serve_pcscd_connection(stream, &atr, &mut piv_applet, &mut pgp_applet)
+                    .expect("serve pcscd connection");
             }
         });
 
@@ -563,12 +563,12 @@ mod tests {
             ));
 
             // Select PIV and change PIN from 123456 to 654321.
-            let resp = send_pcsc_apdu(&mut client, keyroost_piv::select());
+            let resp = send_pcscd_apdu(&mut client, keyroost_piv::select());
             assert!(resp.ends_with(&SW_OK), "PIV select failed: {resp:02X?}");
 
             let change_pin = keyroost_piv::change_reference(0x80, b"123456", b"654321")
                 .expect("change_reference apdu");
-            assert_eq!(send_pcsc_apdu(&mut client, change_pin), SW_OK);
+            assert_eq!(send_pcscd_apdu(&mut client, change_pin), SW_OK);
 
             // Power off -> transmit fails -> warm reset powers back on and returns ATR.
             assert_eq!(
@@ -586,13 +586,13 @@ mod tests {
             );
 
             // Select OpenPGP and fail PW1 verification once (retries 3 -> 2).
-            let resp = send_pcsc_apdu(&mut client, OPENPGP_SELECT.to_vec());
+            let resp = send_pcscd_apdu(&mut client, OPENPGP_SELECT.to_vec());
             assert!(resp.ends_with(&SW_OK), "PGP select failed: {resp:02X?}");
 
             let wrong_pw1 = vec![
                 0x00, 0x20, 0x00, 0x81, 0x06, b'0', b'0', b'0', b'0', b'0', b'0',
             ];
-            assert_eq!(send_pcsc_apdu(&mut client, wrong_pw1), [0x63, 0xC2]);
+            assert_eq!(send_pcscd_apdu(&mut client, wrong_pw1), [0x63, 0xC2]);
         }
 
         // Connection 2: verify both PIV and OpenPGP mutations persisted across reconnect.
@@ -603,14 +603,14 @@ mod tests {
                 exchange(&mut client, &Request::PowerOn).expect("power on 2"),
                 Response::Atr(expected_atr)
             );
-            assert!(send_pcsc_apdu(&mut client, keyroost_piv::select()).ends_with(&SW_OK));
+            assert!(send_pcscd_apdu(&mut client, keyroost_piv::select()).ends_with(&SW_OK));
 
             let verify_pin = keyroost_piv::verify_pin(b"654321").expect("verify_pin apdu");
-            assert_eq!(send_pcsc_apdu(&mut client, verify_pin), SW_OK);
+            assert_eq!(send_pcscd_apdu(&mut client, verify_pin), SW_OK);
 
-            assert!(send_pcsc_apdu(&mut client, OPENPGP_SELECT.to_vec()).ends_with(&SW_OK));
+            assert!(send_pcscd_apdu(&mut client, OPENPGP_SELECT.to_vec()).ends_with(&SW_OK));
             assert_eq!(
-                send_pcsc_apdu(&mut client, vec![0x00, 0x20, 0x00, 0x81]),
+                send_pcscd_apdu(&mut client, vec![0x00, 0x20, 0x00, 0x81]),
                 [0x63, 0xC2]
             );
         }

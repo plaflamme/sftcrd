@@ -14,15 +14,15 @@ in
 
     mode = lib.mkOption {
       type = lib.types.enum [
-        "ifd"
+        "pcscd"
         "vpcd"
       ];
-      default = "ifd";
+      default = "pcscd";
       description = ''
         Transport mode used to connect `sftcrd` to `pcscd`.
 
-        - `"ifd"`: Direct PC/SC connection via `libsftcrd_ifd.so` over a Unix domain
-          socket (does not require `vsmartcard-vpcd`).
+        - `"pcscd"`: Direct `pcscd` connection via `libsftcrd_ifd.so` over a Unix
+          domain socket (does not require `vsmartcard-vpcd`).
         - `"vpcd"`: TCP connection via `services.vsmartcard-vpcd`.
       '';
     };
@@ -45,8 +45,8 @@ in
       );
       defaultText = lib.literalMD "packages.sftcrd-ifd from this flake";
       description = ''
-        The `sftcrd-ifd` PC/SC-Lite IFD handler package loaded by `pcscd` when
-        `mode = "ifd"`.
+        The `sftcrd-ifd` PC/SC-Lite [IFD Handler](https://pcsclite.apdu.fr/api/group__IFDHandler.html#details)
+        package loaded by `pcscd` when `mode = "pcscd"`.
       '';
     };
 
@@ -54,8 +54,8 @@ in
       type = lib.types.str;
       default = "/run/sftcrd/sftcrd.sock";
       description = ''
-        Unix domain socket path used by `sftcrd pcsc` and `libsftcrd_ifd.so` when
-        `mode = "ifd"`.
+        Unix domain socket path used by `sftcrd pcscd` and `libsftcrd_ifd.so`
+        when `mode = "pcscd"`.
       '';
     };
 
@@ -147,7 +147,7 @@ in
           };
         }
 
-        (lib.mkIf (cfg.mode == "ifd") {
+        (lib.mkIf (cfg.mode == "pcscd") {
           services.pcscd.readerConfigs = [
             ''
               FRIENDLYNAME      "sftcrd"
@@ -172,7 +172,7 @@ in
           systemd.services.sftcrd = {
             requires = [ "sftcrd.socket" ];
             after = [ "sftcrd.socket" ];
-            serviceConfig.ExecStart = "${cfg.package}/bin/sftcrd pcsc --socket ${cfg.socket}${commonArgs}";
+            serviceConfig.ExecStart = "${cfg.package}/bin/sftcrd pcscd --socket ${cfg.socket}${commonArgs}";
           };
 
           systemd.services.pcscd = {

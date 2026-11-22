@@ -1,4 +1,4 @@
-//! PC/SC-Lite IFD Handler v3 C ABI types and constants.
+//! PC/SC-Lite [IFD Handler](https://pcsclite.apdu.fr/api/group__IFDHandler.html#details) v3 C ABI types and constants.
 //!
 //! Matches `<PCSC/wintypes.h>`, `<PCSC/pcsclite.h>`, and `<PCSC/ifdhandler.h>`
 //! from `pcsc-lite`.

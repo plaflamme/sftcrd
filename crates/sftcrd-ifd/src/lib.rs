@@ -1,4 +1,4 @@
-//! PC/SC-Lite IFD Handler v3 shared library (`libsftcrd_ifd.so`) connecting
+//! PC/SC-Lite [IFD Handler](https://pcsclite.apdu.fr/api/group__IFDHandler.html#details) v3 shared library (`libsftcrd_ifd.so`) connecting
 //! `pcscd` directly to the `sftcrd` daemon over a Unix domain socket.
 //!
 //! # Architecture
