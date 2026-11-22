@@ -30,7 +30,11 @@ jobs:
         with:
           name: sftcrd
           authToken: "${{ secrets.CACHIX_AUTH_TOKEN }}"
-      - run: nix build
+      - name: build packages
+        run: |
+          set -Eeu
+          pkgs=$(nix flake show --json | jq -r '.packages["${{ matrix.system }}"] | keys | map(".#packages.${{ matrix.system }}." + .) | join(" ")')
+          nix build -L $pkgs
       - name: run non-vm checks
         run: |
           set -Eeu

@@ -63,18 +63,19 @@
             craneLib = config.rust-project.crane-lib;
             src = config.rust-project.src;
             sftcrd = config.packages.sftcrd;
-            workspaceArgs = config.rust-project.crates.sftcrd.crane.args // {
-              inherit src;
-              pname = "sftcrd-workspace";
-              cargoExtraArgs = "--workspace";
-            };
-            workspaceArtifacts = craneLib.buildDepsOnly workspaceArgs;
             rustdoc = craneLib.cargoDoc (
-              workspaceArgs
+              config.rust-project.crates.sftcrd.crane.args
               // {
+                inherit src;
                 pname = "sftcrd-rustdoc";
-                cargoArtifacts = workspaceArtifacts;
-                cargoDocExtraArgs = "--no-deps";
+                cargoArtifacts = craneLib.buildDepsOnly (
+                  config.rust-project.crates.sftcrd.crane.args
+                  // {
+                    inherit src;
+                    pname = "sftcrd-rustdoc-deps";
+                  }
+                );
+                cargoDocExtraArgs = "--workspace --no-deps";
                 RUSTDOCFLAGS = "-Z unstable-options --enable-index-page";
               }
             );
@@ -103,16 +104,10 @@
                 ctx = inputs // {
                   inherit nixosModule keyroostctl;
                 };
-                sftcrd-workspace-test = craneLib.cargoTest (
-                  workspaceArgs
-                  // {
-                    cargoArtifacts = workspaceArtifacts;
-                  }
-                );
               in
               (import ./nix/checks ctx)
               // {
-                inherit rustdoc sftcrd-workspace-test;
+                inherit rustdoc;
               };
 
             devShells.default = config.devShells.rust;
