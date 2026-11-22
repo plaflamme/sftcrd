@@ -3,7 +3,9 @@
 //! Matches `<PCSC/wintypes.h>`, `<PCSC/pcsclite.h>`, and `<PCSC/ifdhandler.h>`
 //! from `pcsc-lite`.
 
-use std::ffi::{c_char, c_long, c_ulong};
+use std::ffi::c_char;
+#[cfg(not(target_os = "macos"))]
+use std::ffi::{c_long, c_ulong};
 
 /// PC/SC-Lite `DWORD` type (`unsigned long` on Linux, `uint32_t` on macOS).
 #[cfg(not(target_os = "macos"))]
