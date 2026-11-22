@@ -1,6 +1,6 @@
 //! `OpenPGP` Card v3.4 applet, in pure Rust.
 //!
-//! This is the card-side counterpart to [`keyroost-openpgp`]: it receives raw
+//! This is the card-side counterpart to [`keyroost-openpgp`](https://docs.rs/keyroost-openpgp): it receives raw
 //! ISO 7816-4 APDUs (or [`apdu_app::App`] calls), maintains PIN state (PW1,
 //! RC, PW3), and produces card responses without performing any I/O.
 

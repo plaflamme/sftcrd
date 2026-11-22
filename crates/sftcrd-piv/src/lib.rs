@@ -1,7 +1,7 @@
 //! PIV (Personal Identity Verification — NIST SP 800-73-4 / FIPS 201)
 //! card-side applet, in pure Rust.
 //!
-//! This is the *applet* half of the PIV protocol. [`keyroost-piv`] is the
+//! This is the *applet* half of the PIV protocol. [`keyroost-piv`](https://docs.rs/keyroost-piv) is the
 //! host-side byte layer (intentions → APDU byte vectors, response bytes →
 //! typed values); this crate is its mirror: it takes a host APDU as it
 //! arrives on the wire and produces the card's response data plus the 2-byte
