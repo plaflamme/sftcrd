@@ -21,10 +21,12 @@ use std::os::unix::net::UnixStream;
 use std::panic::{AssertUnwindSafe, catch_unwind};
 use std::path::PathBuf;
 use std::slice;
-use std::sync::{Mutex, OnceLock};
+use std::sync::{Mutex, Once, OnceLock};
 use std::time::Duration;
 
 use sftcrd_ifd_proto::{ErrorCode, Request, Response, exchange};
+use tracing::{debug, error, info, trace, warn};
+use tracing_subscriber::EnvFilter;
 
 use crate::abi::{
     Dword, IFD_COMMUNICATION_ERROR, IFD_ERROR_INSUFFICIENT_BUFFER, IFD_ERROR_POWER_ACTION,
@@ -72,6 +74,7 @@ impl ChannelState {
 
     fn disconnect(&mut self) {
         if self.stream.take().is_some() {
+            debug!(socket = %self.socket_path.display(), "disconnected from sftcrd daemon");
             self.pending_removal = true;
         }
         self.atr.clear();
@@ -81,17 +84,20 @@ impl ChannelState {
         let stream = UnixStream::connect(&self.socket_path)?;
         stream.set_read_timeout(Some(IO_TIMEOUT))?;
         stream.set_write_timeout(Some(IO_TIMEOUT))?;
+        debug!(socket = %self.socket_path.display(), "connected to sftcrd daemon");
         self.stream = Some(stream);
         Ok(())
     }
 
     fn exchange_connected(&mut self, request: &Request) -> Option<Response> {
         let stream = self.stream.as_mut()?;
-        if let Ok(resp) = exchange(stream, request) {
-            Some(resp)
-        } else {
-            self.disconnect();
-            None
+        match exchange(stream, request) {
+            Ok(resp) => Some(resp),
+            Err(err) => {
+                warn!(socket = %self.socket_path.display(), %err, "daemon exchange failed");
+                self.disconnect();
+                None
+            }
         }
     }
 
@@ -129,8 +135,24 @@ fn resolve_socket_path(device_name: Option<&str>) -> PathBuf {
     PathBuf::from(DEFAULT_SOCKET_PATH)
 }
 
+fn init_tracing() {
+    static INIT: Once = Once::new();
+    INIT.call_once(|| {
+        let filter = EnvFilter::try_from_default_env()
+            .unwrap_or_else(|_| EnvFilter::new("sftcrd_ifd=warn"));
+        let _ = tracing_subscriber::fmt()
+            .with_env_filter(filter)
+            .with_writer(std::io::stderr)
+            .try_init();
+    });
+}
+
 fn ffi_guard(f: impl FnOnce() -> ResponseCode) -> ResponseCode {
-    catch_unwind(AssertUnwindSafe(f)).unwrap_or(IFD_COMMUNICATION_ERROR)
+    init_tracing();
+    catch_unwind(AssertUnwindSafe(f)).unwrap_or_else(|_| {
+        error!("panic caught across IFD FFI boundary");
+        IFD_COMMUNICATION_ERROR
+    })
 }
 
 fn map_error_code(code: ErrorCode) -> ResponseCode {
@@ -172,6 +194,7 @@ pub unsafe extern "C" fn IFDHCreateChannelByName(
         };
 
         let socket_path = resolve_socket_path(name);
+        info!(lun, socket = %socket_path.display(), "IFDHCreateChannelByName");
         let Ok(mut map) = channels().lock() else {
             return IFD_COMMUNICATION_ERROR;
         };
@@ -182,9 +205,10 @@ pub unsafe extern "C" fn IFDHCreateChannelByName(
 
 /// Open a channel for `lun` using the default or `SFTCRD_SOCKET` Unix socket.
 #[unsafe(no_mangle)]
-pub extern "C" fn IFDHCreateChannel(lun: Dword, _channel: Dword) -> ResponseCode {
+pub extern "C" fn IFDHCreateChannel(lun: Dword, channel: Dword) -> ResponseCode {
     ffi_guard(|| {
         let socket_path = resolve_socket_path(None);
+        info!(lun, channel, socket = %socket_path.display(), "IFDHCreateChannel");
         let Ok(mut map) = channels().lock() else {
             return IFD_COMMUNICATION_ERROR;
         };
@@ -197,6 +221,7 @@ pub extern "C" fn IFDHCreateChannel(lun: Dword, _channel: Dword) -> ResponseCode
 #[unsafe(no_mangle)]
 pub extern "C" fn IFDHCloseChannel(lun: Dword) -> ResponseCode {
     ffi_guard(|| {
+        info!(lun, "IFDHCloseChannel");
         let Ok(mut map) = channels().lock() else {
             return IFD_COMMUNICATION_ERROR;
         };
@@ -225,8 +250,11 @@ pub unsafe extern "C" fn IFDHGetCapabilities(
 ) -> ResponseCode {
     ffi_guard(|| {
         if length.is_null() || value.is_null() {
+            warn!(lun, tag = format_args!("0x{tag:04x}"), "IFDHGetCapabilities: null pointer");
             return IFD_COMMUNICATION_ERROR;
         }
+
+        debug!(lun, tag = format_args!("0x{tag:04x}"), "IFDHGetCapabilities");
 
         // SAFETY: caller guarantees `length` is valid for reads and writes.
         let Some(cap) = dword_to_usize(unsafe { *length }) else {
@@ -302,12 +330,15 @@ pub unsafe extern "C" fn IFDHGetCapabilities(
 /// Matches the PC/SC-Lite `IFDHSetCapabilities` C ABI.
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn IFDHSetCapabilities(
-    _lun: Dword,
-    _tag: Dword,
-    _length: Dword,
+    lun: Dword,
+    tag: Dword,
+    length: Dword,
     _value: *mut Uchar,
 ) -> ResponseCode {
-    IFD_ERROR_TAG
+    ffi_guard(|| {
+        debug!(lun, tag = format_args!("0x{tag:04x}"), length, "IFDHSetCapabilities (unsupported)");
+        IFD_ERROR_TAG
+    })
 }
 
 /// Negotiate card communication protocol (T=1 or T=0) for `lun`.
@@ -315,13 +346,15 @@ pub unsafe extern "C" fn IFDHSetCapabilities(
 pub extern "C" fn IFDHSetProtocolParameters(
     lun: Dword,
     protocol: Dword,
-    _flags: Uchar,
+    flags: Uchar,
     _pts1: Uchar,
     _pts2: Uchar,
     _pts3: Uchar,
 ) -> ResponseCode {
     ffi_guard(|| {
+        debug!(lun, protocol, flags, "IFDHSetProtocolParameters");
         if protocol != SCARD_PROTOCOL_T1 && protocol != SCARD_PROTOCOL_T0 {
+            warn!(lun, protocol, "IFDHSetProtocolParameters: unsupported protocol");
             return IFD_PROTOCOL_NOT_SUPPORTED;
         }
         let Ok(mut map) = channels().lock() else {
@@ -350,6 +383,7 @@ pub unsafe extern "C" fn IFDHPowerICC(
     atr_length: *mut Dword,
 ) -> ResponseCode {
     ffi_guard(|| {
+        debug!(lun, action, "IFDHPowerICC");
         let Ok(mut map) = channels().lock() else {
             return IFD_COMMUNICATION_ERROR;
         };
@@ -457,6 +491,8 @@ pub unsafe extern "C" fn IFDHTransmitToICC(
             return IFD_COMMUNICATION_ERROR;
         }
 
+        trace!(lun, protocol = send_pci.protocol, tx_len, max_rx, "IFDHTransmitToICC");
+
         let tx_apdu = if tx_len == 0 {
             Vec::new()
         } else {
@@ -472,12 +508,14 @@ pub unsafe extern "C" fn IFDHTransmitToICC(
         };
 
         if state.stream.is_none() {
+            debug!(lun, "IFDHTransmitToICC: not connected");
             return IFD_ICC_NOT_PRESENT;
         }
 
         match state.exchange_connected(&Request::Transmit(tx_apdu)) {
             Some(Response::Apdu(resp)) => {
                 if resp.len() > max_rx {
+                    warn!(lun, resp_len = resp.len(), max_rx, "IFDHTransmitToICC: insufficient buffer");
                     return IFD_ERROR_INSUFFICIENT_BUFFER;
                 }
                 let Some(out_len) = usize_to_dword(resp.len()) else {
@@ -499,9 +537,13 @@ pub unsafe extern "C" fn IFDHTransmitToICC(
                         (*recv_pci).length = 0;
                     }
                 }
+                trace!(lun, rx_len = resp.len(), "IFDHTransmitToICC: success");
                 IFD_SUCCESS
             }
-            Some(Response::Error { code, .. }) => map_error_code(code),
+            Some(Response::Error { code, message }) => {
+                warn!(lun, %code, ?message, "IFDHTransmitToICC: daemon returned error");
+                map_error_code(code)
+            }
             _ => IFD_COMMUNICATION_ERROR,
         }
     })
@@ -514,8 +556,8 @@ pub unsafe extern "C" fn IFDHTransmitToICC(
 /// `bytes_returned` must either be null or point to a writable `DWORD`.
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn IFDHControl(
-    _lun: Dword,
-    _control_code: Dword,
+    lun: Dword,
+    control_code: Dword,
     _tx_buffer: *mut Uchar,
     _tx_length: Dword,
     _rx_buffer: *mut Uchar,
@@ -523,6 +565,7 @@ pub unsafe extern "C" fn IFDHControl(
     bytes_returned: *mut Dword,
 ) -> ResponseCode {
     ffi_guard(|| {
+        debug!(lun, control_code, "IFDHControl (unsupported)");
         if !bytes_returned.is_null() {
             // SAFETY: `bytes_returned` was checked non-null.
             unsafe { *bytes_returned = 0 };
@@ -549,6 +592,7 @@ pub extern "C" fn IFDHICCPresence(lun: Dword) -> ResponseCode {
         };
 
         if state.pending_removal {
+            debug!(lun, "IFDHICCPresence: reporting card removal after disconnect");
             state.pending_removal = false;
             return IFD_ICC_NOT_PRESENT;
         }
@@ -566,10 +610,12 @@ pub extern "C" fn IFDHICCPresence(lun: Dword) -> ResponseCode {
             state.ensure_connected_and_exchange(&Request::Presence)
         };
 
-        match resp {
+        let status = match resp {
             Some(Response::Presence(true)) => IFD_ICC_PRESENT,
             _ => IFD_ICC_NOT_PRESENT,
-        }
+        };
+        trace!(lun, present = (status == IFD_ICC_PRESENT), "IFDHICCPresence");
+        status
     })
 }
 

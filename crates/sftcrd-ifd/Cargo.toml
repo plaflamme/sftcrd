@@ -9,6 +9,8 @@ crate-type = ["cdylib", "rlib"]
 
 [dependencies]
 sftcrd-ifd-proto = { workspace = true }
+tracing = { workspace = true }
+tracing-subscriber = { workspace = true }
 
 [lints]
 workspace = true

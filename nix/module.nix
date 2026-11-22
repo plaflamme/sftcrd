@@ -178,6 +178,7 @@ in
           systemd.services.pcscd = {
             after = [ "sftcrd.socket" ];
             wants = [ "sftcrd.socket" ];
+            environment.RUST_LOG = "sftcrd_ifd=${cfg.log-level}";
             serviceConfig.ReadWritePaths = [ "-${dirOf cfg.socket}" ];
           };
         })

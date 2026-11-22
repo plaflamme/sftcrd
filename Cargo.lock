@@ -1078,6 +1078,8 @@ name = "sftcrd-ifd"
 version = "0.1.0"
 dependencies = [
  "sftcrd-ifd-proto",
+ "tracing",
+ "tracing-subscriber",
 ]
 
 [[package]]
