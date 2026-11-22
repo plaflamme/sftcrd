@@ -60,57 +60,59 @@
               ];
             };
             optionsDoc = pkgs.nixosOptionsDoc { options = eval.options; };
+            craneLib = config.rust-project.crane-lib;
+            src = config.rust-project.src;
+            sftcrd = config.packages.sftcrd;
+            workspaceArgs = config.rust-project.crates.sftcrd.crane.args // {
+              inherit src;
+              pname = "sftcrd-workspace";
+              cargoExtraArgs = "--workspace";
+            };
+            workspaceArtifacts = craneLib.buildDepsOnly workspaceArgs;
+            rustdoc = craneLib.cargoDoc (
+              workspaceArgs
+              // {
+                pname = "sftcrd-rustdoc";
+                cargoArtifacts = workspaceArtifacts;
+                cargoDocExtraArgs = "--no-deps";
+                RUSTDOCFLAGS = "-Z unstable-options --enable-index-page";
+              }
+            );
           in
           {
 
-            packages =
-              let
-                craneLib = config.rust-project.crane-lib;
-                src = config.rust-project.src;
-                sftcrd = config.packages.sftcrd;
-                rustdoc = craneLib.cargoDoc (
-                  config.rust-project.crates.sftcrd.crane.args
-                  // {
-                    inherit src;
-                    pname = "sftcrd-rustdoc";
-                    cargoArtifacts = craneLib.buildDepsOnly (
-                      config.rust-project.crates.sftcrd.crane.args
-                      // {
-                        inherit src;
-                        pname = "sftcrd-rustdoc-deps";
-                      }
-                    );
-                    cargoDocExtraArgs = "--workspace --no-deps";
-                    RUSTDOCFLAGS = "-Z unstable-options --enable-index-page";
-                  }
-                );
-              in
-              {
-                default = sftcrd;
-                inherit rustdoc;
-                sftcrd-debug = craneLib.buildPackage (
-                  config.rust-project.crates.sftcrd.crane.args
-                  // {
-                    inherit src;
-                    pname = "sftcrd-debug";
-                    CARGO_PROFILE = "dev";
-                  }
-                );
+            packages = {
+              default = sftcrd;
+              inherit rustdoc;
+              sftcrd-debug = craneLib.buildPackage (
+                config.rust-project.crates.sftcrd.crane.args
+                // {
+                  inherit src;
+                  pname = "sftcrd-debug";
+                  CARGO_PROFILE = "dev";
+                }
+              );
 
-                docs = pkgs.callPackage ./nix/docs.nix {
-                  inherit optionsDoc sftcrd rustdoc;
-                };
+              docs = pkgs.callPackage ./nix/docs.nix {
+                inherit optionsDoc sftcrd rustdoc;
               };
+            };
 
             checks =
               let
                 ctx = inputs // {
                   inherit nixosModule keyroostctl;
                 };
+                sftcrd-workspace-test = craneLib.cargoTest (
+                  workspaceArgs
+                  // {
+                    cargoArtifacts = workspaceArtifacts;
+                  }
+                );
               in
               (import ./nix/checks ctx)
               // {
-                inherit (config.packages) rustdoc;
+                inherit rustdoc sftcrd-workspace-test;
               };
 
             devShells.default = config.devShells.rust;
