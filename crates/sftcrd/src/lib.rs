@@ -15,7 +15,9 @@
 //!   applets
 //! - Power state management
 
+pub mod pcscd;
 pub mod session;
+pub mod vpcd;
 
 use serde::Deserialize;
 pub use session::{CardChannels, CardSession, TransmitError};
