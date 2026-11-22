@@ -84,16 +84,6 @@
 
             packages = {
               default = sftcrd;
-              inherit rustdoc;
-              sftcrd-debug = craneLib.buildPackage (
-                config.rust-project.crates.sftcrd.crane.args
-                // {
-                  inherit src;
-                  pname = "sftcrd-debug";
-                  CARGO_PROFILE = "dev";
-                }
-              );
-
               docs = pkgs.callPackage ./nix/docs.nix {
                 inherit optionsDoc sftcrd rustdoc;
               };
@@ -105,10 +95,7 @@
                   inherit nixosModule keyroostctl;
                 };
               in
-              (import ./nix/checks ctx)
-              // {
-                inherit rustdoc;
-              };
+              { } // (import ./nix/checks ctx) // (removeAttrs config.packages [ "default" ]);
 
             devShells.default = config.devShells.rust;
           };
