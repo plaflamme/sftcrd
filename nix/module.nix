@@ -178,7 +178,7 @@ in
           systemd.services.pcscd = {
             after = [ "sftcrd.socket" ];
             wants = [ "sftcrd.socket" ];
-            serviceConfig.ReadWritePaths = [ "-${builtins.dirOf cfg.socket}" ];
+            serviceConfig.ReadWritePaths = [ "-${dirOf cfg.socket}" ];
           };
         })
 
