@@ -51,3 +51,6 @@ zeroize = { version = "1", default-features = false, features = ["alloc"] }
 
 [workspace.lints.clippy]
 pedantic = "warn"
+
+[workspace.lints.rustdoc]
+all = "deny"

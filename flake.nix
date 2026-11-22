@@ -108,7 +108,10 @@
                   inherit nixosModule keyroostctl;
                 };
               in
-              import ./nix/checks ctx;
+              (import ./nix/checks ctx)
+              // {
+                inherit (config.packages) rustdoc;
+              };
 
             devShells.default = config.devShells.rust;
           };
